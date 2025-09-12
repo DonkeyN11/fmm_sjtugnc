@@ -54,6 +54,7 @@ struct MatchedCandidate {
   Candidate c; /**< Candidate matched to a point */
   double ep;  /**< emission probability */
   double tp;  /**< transition probability to previous matched candidate */
+  double cumu_prob; /**< cumulative probability of the point */
   double sp_dist; /**< shortest path distance to previous matched candidate */
 };
 

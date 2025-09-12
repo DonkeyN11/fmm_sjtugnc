@@ -45,6 +45,8 @@ struct OutputConfig {
                               will be exported */
   bool write_tp = false; /**< if true, tp (transition probability) will be
                               exported */
+  bool write_cumu_prob = false; /**< if true, cumu_prob (cumulative probability of each point)
+                                    will be exported */
   bool write_length = false; /**< if true, length (length of each matched edge)
                                   will be exported */
   bool write_duration = false; /**< if true, duration (time difference between
