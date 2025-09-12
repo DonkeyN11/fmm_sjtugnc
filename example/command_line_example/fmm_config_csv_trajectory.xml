@@ -22,5 +22,15 @@
   </parameters>
   <output>
     <file>mr.txt</file>
+    <fields>
+      <opath/>
+      <cpath/>
+      <mgeom/>
+      <tpath/>
+      <spdist/>
+      <ep/>
+      <tp/>
+      <cumu_prob/>
+    </fields>
   </output>
 </config>
