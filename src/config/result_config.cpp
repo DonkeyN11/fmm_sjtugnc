@@ -25,6 +25,8 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "ep ";
   if (output_config.write_tp)
     ss << "tp ";
+  if (output_config.write_cumu_prob)
+    ss << "cumu_prob ";
   if (output_config.write_length)
     ss << "length ";
   if (output_config.write_duration)
@@ -60,6 +62,8 @@ std::string FMM::CONFIG::ResultConfig::to_string() const{
     oss << "ep ";
   if (output_config.write_tp)
     oss << "tp ";
+  if (output_config.write_cumu_prob)
+    oss << "cumu_prob ";
   if (output_config.write_length)
     oss << "length ";
   if (output_config.write_duration)
@@ -107,6 +111,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
     }
     if (xml_data.get_child_optional("config.output.fields.tp")) {
       config.output_config.write_tp = true;
+    }
+    if (xml_data.get_child_optional("config.output.fields.cumu_prob")) {
+      config.output_config.write_cumu_prob = true;
     }
     if (xml_data.get_child_optional("config.output.fields.length")) {
       config.output_config.write_length = true;
