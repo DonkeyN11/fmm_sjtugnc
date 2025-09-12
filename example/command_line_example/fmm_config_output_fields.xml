@@ -26,7 +26,10 @@
       <mgeom/>
       <tpath/>
       <spdist/>
+      <ep/>
+      <tp/>
+      <cumu_prob/>
     </fields>
-    <file>mr.txt</file>
+    <file>mr_cumuprob.txt</file>
   </output>
 </config>
