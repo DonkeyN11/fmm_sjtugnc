@@ -27,10 +27,22 @@ project(fmm)
 
 set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE")
-set(CMAKE_CXX_STANDARD 11)
+set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
+
+if(DEFINED ENV{CONDA_PREFIX})
+  set(CONDA_PREFIX $ENV{CONDA_PREFIX})
+  message(STATUS "Conda environment detected at: ${CONDA_PREFIX}")
+
+  # 提供给 find_package (仅用于Python相关)
+  list(APPEND CMAKE_PREFIX_PATH "${CONDA_PREFIX}")
+  list(APPEND CMAKE_PREFIX_PATH "${CONDA_PREFIX}/lib/cmake")
+  
+  # 不使用conda的C++库，避免版本冲突
+  message(STATUS "Using system libraries for C++ dependencies to avoid conda version conflicts")
+endif()
 
 find_package(Conda)
 if(CONDA_PREFIX)

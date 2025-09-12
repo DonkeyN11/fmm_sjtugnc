@@ -216,6 +216,53 @@ TGOpath backtrack();
 - 时间测量、字符串处理
 - 日志输出、调试信息
 
+### 10. 重要概率计算
+Emission Probability (观测概率)
+
+  核心实现文件：
+  - src/mm/transition_graph.cpp:39-41 -
+  高斯概率计算公式
+  - src/mm/transition_graph.hpp:83 - 函数声明
+
+  计算公式：
+  double TransitionGraph::calc_ep(double dist, double 
+  error) {
+      double a = dist / error;
+      return exp(-0.5 * a * a);  // 高斯分布
+  }
+
+  使用位置：
+  - src/mm/fmm/fmm_algorithm.cpp:313 -
+  FMM算法中的HMM概率计算
+  - src/mm/stmatch/stmatch_algorithm.cpp:300 -
+  STMATCH算法中的HMM概率计算
+
+  Transition Probability (转移概率)
+
+  核心实现文件：
+  - src/mm/transition_graph.cpp:34-37 - 转移概率计算
+  - src/mm/transition_graph.hpp:75 - 函数声明
+
+  计算公式：
+  double TransitionGraph::calc_tp(double sp_dist, 
+  double eu_dist) {
+      // 如果最短路径距离大于欧氏距离，设为1
+      return eu_dist >= sp_dist ? 1.0 : eu_dist /
+  sp_dist;
+  }
+
+  使用位置：
+  - src/mm/fmm/fmm_algorithm.cpp:312 -
+  FMM算法中的转移概率计算
+  - src/mm/stmatch/stmatch_algorithm.cpp:299 -
+  STMATCH算法中的转移概率计算
+
+  HMM概率组合
+
+  两个概率在Viterbi算法中组合使用：
+  double temp = iter_a->cumu_prob + log(tp) +
+  log(iter_b->ep);
+
 ## 数据流和依赖关系
 
 ### 主要数据流

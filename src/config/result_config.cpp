@@ -128,6 +128,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
       config.output_config.write_tpath = true;
       config.output_config.write_ep = true;
       config.output_config.write_tp = true;
+      config.output_config.write_cumu_prob = true;
       config.output_config.write_length = true;
       config.output_config.write_duration = true;
       config.output_config.write_speed = true;
@@ -175,6 +176,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     if (dict.find("tp") != dict.end()) {
       config.output_config.write_tp = true;
     }
+    if (dict.find("cumu_prob") != dict.end()) {
+      config.output_config.write_cumu_prob = true;
+    }
     if (dict.find("length") != dict.end()) {
       config.output_config.write_length = true;
     }
@@ -195,6 +199,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
       config.output_config.write_tpath = true;
       config.output_config.write_ep = true;
       config.output_config.write_tp = true;
+      config.output_config.write_cumu_prob = true;
       config.output_config.write_length = true;
       config.output_config.write_duration = true;
       config.output_config.write_speed = true;
@@ -240,5 +245,5 @@ void FMM::CONFIG::ResultConfig::register_help(std::ostringstream &oss){
   oss<<"--output (required) <string>: Output file name\n";
   oss<<"--output_fields (optional) <string>: Output fields\n";
   oss<<"  opath,cpath,tpath,mgeom,pgeom,\n";
-  oss<<"  offset,error,spdist,tp,ep,length,duration,speed,all\n";
+  oss<<"  offset,error,spdist,tp,ep,cumu_prob,length,duration,speed,all\n";
 };
