@@ -3,11 +3,49 @@ import pdb
 import traceback
 import os
 import numpy as np
+import time
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from multiprocessing import cpu_count
+import threading
 
-def save_graph_shapefile_directional(G, filepath=None, encoding="utf-8"):
+class ProgressTracker:
+    def __init__(self, total_steps=4):
+        self.total_steps = total_steps
+        self.current_step = 0
+        self.start_time = time.time()
+        self.lock = threading.Lock()
+        self.step_names = [
+            "Converting graph to GeoDataFrames",
+            "Stringifying non-numeric columns",
+            "Processing edge IDs",
+            "Saving shapefiles"
+        ]
+
+    def update(self, step_name=None):
+        with self.lock:
+            self.current_step += 1
+            elapsed = time.time() - self.start_time
+            progress = (self.current_step / self.total_steps) * 100
+
+            if step_name:
+                current_name = step_name
+            elif self.current_step <= len(self.step_names):
+                current_name = self.step_names[self.current_step - 1]
+            else:
+                current_name = f"Step {self.current_step}"
+
+            print(f"[{progress:5.1f}%] {current_name}... (Elapsed: {elapsed:.1f}s)")
+
+            if self.current_step == self.total_steps:
+                print(f"[100.0%] Completed! Total time: {elapsed:.1f}s")
+
+def save_graph_shapefile_directional(G, filepath=None, encoding="utf-8", max_workers=None, show_progress=True):
     # default filepath if none was provided
     if filepath is None:
         filepath = os.path.join(ox.settings.data_folder, "graph_shapefile")
+
+    # Initialize progress tracker
+    progress = ProgressTracker() if show_progress else None
 
     # if save folder does not already exist, create it (shapefiles
     # get saved as set of files)
@@ -16,15 +54,52 @@ def save_graph_shapefile_directional(G, filepath=None, encoding="utf-8"):
     filepath_nodes = os.path.join(filepath, "nodes.shp")
     filepath_edges = os.path.join(filepath, "edges.shp")
 
-    # convert undirected graph to gdfs and stringify non-numeric columns
+    # convert undirected graph to gdfs
     gdf_nodes, gdf_edges = ox.graph_to_gdfs(G)
-    gdf_nodes = ox.io._stringify_nonnumeric_cols(gdf_nodes)
-    gdf_edges = ox.io._stringify_nonnumeric_cols(gdf_edges)
+    if progress:
+        progress.update()
+
+    # Use all available CPU cores if not specified
+    if max_workers is None:
+        max_workers = cpu_count()
+
+    def save_gdf_task(gdf, filepath, encoding, task_name=""):
+        """Helper function to save a GeoDataFrame to file"""
+        if progress and show_progress:
+            start_time = time.time()
+        gdf.to_file(filepath, encoding=encoding)
+        if progress and show_progress:
+            elapsed = time.time() - start_time
+            print(f"    └─ Saved {task_name} ({os.path.basename(filepath)}) in {elapsed:.1f}s")
+        return filepath
+
+    # Parallel processing for stringifying non-numeric columns
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        stringify_future_nodes = executor.submit(ox.io._stringify_nonnumeric_cols, gdf_nodes)
+        stringify_future_edges = executor.submit(ox.io._stringify_nonnumeric_cols, gdf_edges)
+
+        gdf_nodes = stringify_future_nodes.result()
+        gdf_edges = stringify_future_edges.result()
+
+    if progress:
+        progress.update()
+
     # We need an unique ID for each edge
     gdf_edges["fid"] = np.arange(0, gdf_edges.shape[0], dtype='int')
-    # save the nodes and edges as separate ESRI shapefiles
-    gdf_nodes.to_file(filepath_nodes, encoding=encoding)
-    gdf_edges.to_file(filepath_edges, encoding=encoding)
+    if progress:
+        progress.update("Processing edge IDs")
+
+    # Parallel processing for saving shapefiles
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        save_nodes_future = executor.submit(save_gdf_task, gdf_nodes, filepath_nodes, encoding, "nodes")
+        save_edges_future = executor.submit(save_gdf_task, gdf_edges, filepath_edges, encoding, "edges")
+
+        # Wait for both operations to complete
+        save_nodes_future.result()
+        save_edges_future.result()
+
+    if progress:
+        progress.update("Saving shapefiles")
 
 def main():
     ########################################################################
@@ -47,9 +122,9 @@ def main():
     # save_graph_shapefile_directional(G, filepath='input/map/haikou', encoding="utf-8")
 
     # Download by place name
-    place ="Haikou, Hainan, China"
+    place ="Shanghai, China"
     G = ox.graph_from_place(place, network_type='drive')
-    save_graph_shapefile_directional(G, filepath='haikou')
+    save_graph_shapefile_directional(G, filepath='../input/map/shanghai')
 
 if __name__ == '__main__':
     try:
