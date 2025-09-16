@@ -10,7 +10,7 @@
 #include "io/gps_reader.hpp"
 #include "io/mm_writer.hpp"
 
-#include <Eigen/Dense>
+// #include <Eigen/Dense>
 #include <cmath>
 #include <algorithm>
 
@@ -99,16 +99,18 @@ double CovarianceMapMatch::calculate_emission_probability(
     // Calculate difference vector
     double dx = obs_x - cand_x;
     double dy = obs_y - cand_y;
-    Eigen::Vector2d diff(dx, dy);
+    Vector2d diff(dx, dy);
 
     // Get 2D covariance matrix
-    Eigen::Matrix2d cov = covariance.to_2d_matrix();
+    Matrix2d cov = covariance.to_2d_matrix();
 
     // Calculate inverse of covariance matrix
-    Eigen::Matrix2d cov_inv = cov.inverse();
+    Matrix2d cov_inv = cov.inverse();
 
-    // Calculate Mahalanobis distance squared
-    double mahalanobis_dist_sq = diff.transpose() * cov_inv * diff;
+    // Calculate Mahalanobis distance squared manually
+    double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
+                                 2 * cov_inv.m[0][1] * dx * dy +
+                                 cov_inv.m[1][1] * dy * dy;
 
     // Calculate emission probability using multivariate Gaussian distribution
     double det = cov.determinant();
@@ -143,8 +145,11 @@ Traj_Candidates CovarianceMapMatch::search_candidates_with_protection_level(
         SPDLOG_TRACE("Point {}: uncertainty={}, protection_level={}, search_radius={}",
                      i, uncertainty, protection_level, search_radius);
 
-        // Search candidates using network's KNN search
-        Point_Candidates point_candidates = network_.search_cs_knn(point, config.k, search_radius);
+        // Search candidates using network's KNN search - create a temporary LineString for this point
+        CORE::LineString single_point_geom;
+        single_point_geom.add_point(point);
+        Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
+        Point_Candidates point_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
 
         // Filter candidates based on Mahalanobis distance
         Point_Candidates filtered_candidates;
@@ -159,11 +164,13 @@ Traj_Candidates CovarianceMapMatch::search_candidates_with_protection_level(
 
             double dx = obs_x - cand_x;
             double dy = obs_y - cand_y;
-            Eigen::Vector2d diff(dx, dy);
+            Vector2d diff(dx, dy);
 
-            Eigen::Matrix2d cov = cov.to_2d_matrix();
-            Eigen::Matrix2d cov_inv = cov.inverse();
-            mahalanobis_dist_sq = diff.transpose() * cov_inv * diff;
+            Matrix2d cov_mat = cov.to_2d_matrix();
+            Matrix2d cov_inv = cov_mat.inverse();
+            mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
+                                 2 * cov_inv.m[0][1] * dx * dy +
+                                 cov_inv.m[1][1] * dy * dy;
 
             // Keep candidate if within reasonable Mahalanobis distance
             double mahalanobis_threshold = protection_level * protection_level;
@@ -254,14 +261,14 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
                                       double reverse_tolerance) {
     NodeIndex s = ca->edge->target;
     NodeIndex e = cb->edge->source;
-    const UBODTRecord *r = ubodt_->look_up(s, e);
-    double sp_dist = ubodt_->get_sp_dist(r);
+    auto *r = ubodt_->look_up(s, e);
+    double sp_dist = r ? r->cost : -1;
     if (sp_dist < 0) {
         // No path exists, try reverse direction
         s = ca->edge->source;
         e = cb->edge->target;
         r = ubodt_->look_up(s, e);
-        sp_dist = ubodt_->get_sp_dist(r);
+        sp_dist = r ? r->cost : -1;
         if (sp_dist >= 0) {
             // Path exists in reverse direction
             double total_length = ca->edge->length + cb->edge->length;
@@ -295,7 +302,7 @@ void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
         // Calculate Euclidean distance between consecutive points
         CORE::Point point_a = traj.geom.get_point(level);
         CORE::Point point_b = traj.geom.get_point(level + 1);
-        double eu_dist = BG::distance(point_a, point_b);
+        double eu_dist = boost::geometry::distance(point_a, point_b);
 
         bool connected = true;
         update_layer_cmm(level, la_ptr, lb_ptr, eu_dist, config.reverse_tolerance,
