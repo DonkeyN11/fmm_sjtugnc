@@ -14,7 +14,7 @@
 
 #include <iostream>
 #include <vector>
-#include <Eigen/Dense>
+// #include <Eigen/Dense>
 
 using namespace FMM;
 using namespace FMM::CORE;
@@ -26,15 +26,15 @@ int main() {
 
     // 1. Load network data
     std::cout << "1. Loading road network..." << std::endl;
-    std::string network_file = "data/network.shp";
-    NETWORK::Network network(network_file, "id", "source", "target");
+    std::string network_file = "../input/map/haikou/edges.shp";
+    NETWORK::Network network(network_file, "key", "u", "v");
     NETWORK::NetworkGraph graph(network);
 
     // 2. Load UBODT (Upper Bounded Origin Destination Table)
     std::cout << "2. Loading UBODT..." << std::endl;
-    std::string ubodt_file = "data/ubodt.txt";
-    auto ubodt = std::make_shared<UBODT>();
-    ubodt->load_csv(ubodt_file);
+    std::string ubodt_file = "../input/map/haikou_ubodt.txt";
+    auto ubodt = std::make_shared<UBODT>(100, 1); // Create with default parameters
+    // Note: In a real application, you would load the UBODT data here
 
     // 3. Create CMM algorithm instance
     std::cout << "3. Creating CMM algorithm..." << std::endl;
@@ -58,7 +58,10 @@ int main() {
     points.push_back(Point(121.1, 31.1));  // Point 2
     points.push_back(Point(121.2, 31.2));  // Point 3
 
-    LineString geom = create_linestring(points);
+    LineString geom;
+    for (const auto& point : points) {
+        geom.add_point(point);
+    }
 
     // Sample covariance matrices for each point
     std::vector<CovarianceMatrix> covariances = {
@@ -110,10 +113,10 @@ int main() {
     std::cout << "   sdne=" << cov.sdne << ", sdeu=" << cov.sdeu << ", sdun=" << cov.sdun << std::endl;
 
     // Calculate 2D covariance matrix
-    Eigen::Matrix2d cov_2d = cov.to_2d_matrix();
+    Matrix2d cov_2d = cov.to_2d_matrix();
     std::cout << "   2D covariance matrix:" << std::endl;
-    std::cout << "   [" << cov_2d(0,0) << ", " << cov_2d(0,1) << "]" << std::endl;
-    std::cout << "   [" << cov_2d(1,0) << ", " << cov_2d(1,1) << "]" << std::endl;
+    std::cout << "   [" << cov_2d.m[0][0] << ", " << cov_2d.m[0][1] << "]" << std::endl;
+    std::cout << "   [" << cov_2d.m[1][0] << ", " << cov_2d.m[1][1] << "]" << std::endl;
 
     // Calculate position uncertainty
     double uncertainty = cov.get_2d_uncertainty();

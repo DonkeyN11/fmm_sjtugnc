@@ -22,11 +22,52 @@
 #include <string>
 #include <vector>
 #include <cmath>
-#include <Eigen/Dense>
+// #include <Eigen/Dense>
+// Temporary simple matrix implementation for demonstration
+#include <vector>
+#include <cmath>
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 #include "cxxopts/cxxopts.hpp"
+
+// Simple 2x2 matrix implementation for CMM
+struct Matrix2d {
+    double m[2][2];
+
+    Matrix2d() {
+        m[0][0] = m[0][1] = m[1][0] = m[1][1] = 0.0;
+    }
+
+    Matrix2d(double a, double b, double c, double d) {
+        m[0][0] = a; m[0][1] = b;
+        m[1][0] = c; m[1][1] = d;
+    }
+
+    Matrix2d inverse() const {
+        double det = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+        if (det == 0) return Matrix2d(); // Return zero matrix if singular
+        double inv_det = 1.0 / det;
+        return Matrix2d(m[1][1] * inv_det, -m[0][1] * inv_det,
+                       -m[1][0] * inv_det, m[0][0] * inv_det);
+    }
+
+    double determinant() const {
+        return m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    }
+};
+
+struct Vector2d {
+    double v[2];
+
+    Vector2d(double x, double y) {
+        v[0] = x; v[1] = y;
+    }
+
+    double operator*(const Vector2d& other) const {
+        return v[0] * other.v[0] + v[1] * other.v[1];
+    }
+};
 
 namespace FMM {
 namespace MM {
@@ -43,16 +84,13 @@ struct CovarianceMatrix {
     double sdun;   // Up-North covariance (m²)
 
     // Convert to 2D covariance matrix (horizontal plane)
-    Eigen::Matrix2d to_2d_matrix() const {
-        Eigen::Matrix2d cov;
-        cov << sdn * sdn, sdne,
-               sdne,      sde * sde;
-        return cov;
+    Matrix2d to_2d_matrix() const {
+        return Matrix2d(sdn * sdn, sdne, sdne, sde * sde);
     }
 
     // Calculate position uncertainty (2D)
     double get_2d_uncertainty() const {
-        Eigen::Matrix2d cov = to_2d_matrix();
+        Matrix2d cov = to_2d_matrix();
         return std::sqrt(cov.determinant());
     }
 };

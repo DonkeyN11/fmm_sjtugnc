@@ -86,6 +86,9 @@ if(OPENMP_FOUND)
 endif()
 link_libraries(${OpenMP_CXX_LIBRARIES})
 
+# CMM now uses simple matrix implementation, no external Eigen3 dependency required
+message(STATUS "CMM using simple matrix implementation")
+
 ### Set RPATH properties
 
 set(CMAKE_SKIP_BUILD_RPATH FALSE)
@@ -122,6 +125,7 @@ file(GLOB UtilGlob src/util/*.cpp)
 file(GLOB MMGlob src/mm/*.cpp)
 file(GLOB FMMGlob src/mm/fmm/*.cpp)
 file(GLOB STMATCHGlob src/mm/stmatch/*.cpp)
+file(GLOB CMMGlob src/mm/cmm/*.cpp)
 file(GLOB h3Glob third_party/h3/lib/*.c)
 
 add_library(CORE OBJECT ${CoreGlob})
@@ -133,12 +137,14 @@ add_library(NETWORK OBJECT ${NetworkGlob})
 add_library(MM_OBJ OBJECT ${MMGlob})
 add_library(FMM_OBJ OBJECT ${FMMGlob})
 add_library(STMATCH_OBJ OBJECT ${STMATCHGlob})
+add_library(CMM_OBJ OBJECT ${CMMGlob})
 add_library(H3_OBJ OBJECT ${h3Glob})
 
 add_library(FMMLIB SHARED
   $<TARGET_OBJECTS:MM_OBJ>
   $<TARGET_OBJECTS:FMM_OBJ>
   $<TARGET_OBJECTS:STMATCH_OBJ>
+  $<TARGET_OBJECTS:CMM_OBJ>
   $<TARGET_OBJECTS:CORE>
   $<TARGET_OBJECTS:CONFIG>
   $<TARGET_OBJECTS:ALGORITHM>
@@ -164,6 +170,9 @@ target_link_libraries(stmatch FMMLIB)
 
 add_executable(h3mm src/app/h3mm.cpp)
 target_link_libraries(h3mm FMMLIB)
+
+add_executable(cmm_example examples/cmm_example.cpp)
+target_link_libraries(cmm_example FMMLIB)
 
 add_executable(performance_test tmp/ubodt_performance_test.cpp)
 target_link_libraries(performance_test FMMLIB)
