@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+  <input>
+    <ubodt>
+      <file>/tmp/shanghai_ubodt_sample_mmap.bin</file>
+    </ubodt>
+    <network>
+      <file>input/map/haikou/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+    <gps>
+      <file>input/trajectory/zhai/rtk_data/20240228/trips_converted.csv</file>
+      <id>id</id>
+    </gps>
+  </input>
+  <parameters>
+    <k>4</k>
+    <r>0.4</r>
+    <pf>0</pf>
+    <gps_error>0.5</gps_error>
+  </parameters>
+  <output>
+    <file>/tmp/fmm_test_mmap_output.txt</file>
+  </output>
+  <other>
+    <use_omp/>
+  </other>
+</config>

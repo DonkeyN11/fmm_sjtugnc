@@ -27,7 +27,7 @@ project(fmm)
 
 set(CMAKE_BUILD_TYPE "Release")
 set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE")
-set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
@@ -146,6 +146,7 @@ add_library(FMMLIB SHARED
   $<TARGET_OBJECTS:NETWORK>
   $<TARGET_OBJECTS:IO>
   $<TARGET_OBJECTS:H3_OBJ>)
+target_link_libraries(FMMLIB stdc++fs)
 
 # Add executables
 
@@ -155,11 +156,17 @@ target_link_libraries(fmm FMMLIB)
 add_executable(ubodt_gen src/app/ubodt_gen_app.cpp)
 target_link_libraries(ubodt_gen FMMLIB)
 
+add_executable(ubodt_converter_simple src/app/ubodt_converter_simple.cpp)
+target_link_libraries(ubodt_converter_simple FMMLIB)
+
 add_executable(stmatch src/app/stmatch.cpp)
 target_link_libraries(stmatch FMMLIB)
 
 add_executable(h3mm src/app/h3mm.cpp)
 target_link_libraries(h3mm FMMLIB)
+
+add_executable(performance_test tmp/ubodt_performance_test.cpp)
+target_link_libraries(performance_test FMMLIB)
 
 message(STATUS "Installation folder ${CMAKE_INSTALL_PREFIX}")
 

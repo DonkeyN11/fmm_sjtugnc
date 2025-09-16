@@ -35,6 +35,10 @@ void UBODTGenAppConfig::load_xml(const std::string &file) {
   // 0-trace,1-debug,2-info,3-warn,4-err,5-critical,6-off
   log_level = tree.get("config.other.log_level", 2);
   use_omp = !(!tree.get_child_optional("config.other.use_omp"));
+  use_chunking = !(!tree.get_child_optional("config.other.use_chunking"));
+  chunk_rows = tree.get("config.other.chunk_rows", 4);
+  chunk_cols = tree.get("config.other.chunk_cols", 4);
+  chunk_threads = tree.get("config.other.chunk_threads", 8);
   SPDLOG_INFO("Read configuration from xml file done");
 }
 
@@ -51,7 +55,11 @@ void UBODTGenAppConfig::load_arg(int argc, char **argv) {
     cxxopts::value<std::string>()->default_value(""))
     ("l,log_level", "Log level", cxxopts::value<int>()->default_value("2"))
     ("h,help",   "Help information")
-    ("use_omp","Use parallel computing if specified");
+    ("use_omp","Use parallel computing if specified")
+    ("use_chunking","Use chunk-based parallel processing if specified")
+    ("chunk_rows","Number of chunk rows for grid partitioning",cxxopts::value<int>()->default_value("4"))
+    ("chunk_cols","Number of chunk columns for grid partitioning",cxxopts::value<int>()->default_value("4"))
+    ("chunk_threads","Number of threads for chunk processing",cxxopts::value<int>()->default_value("8"));
   if (argc==1) {
     help_specified = true;
     return;
@@ -64,6 +72,16 @@ void UBODTGenAppConfig::load_arg(int argc, char **argv) {
   log_level = result["log_level"].as<int>();
   delta = result["delta"].as<double>();
   use_omp = result.count("use_omp")>0;
+  use_chunking = result.count("use_chunking")>0;
+  if (result.count("chunk_rows")>0) {
+    chunk_rows = result["chunk_rows"].as<int>();
+  }
+  if (result.count("chunk_cols")>0) {
+    chunk_cols = result["chunk_cols"].as<int>();
+  }
+  if (result.count("chunk_threads")>0) {
+    chunk_threads = result["chunk_threads"].as<int>();
+  }
   if (result.count("help")>0) {
     help_specified = true;
   }
@@ -77,6 +95,11 @@ void UBODTGenAppConfig::print() const {
   SPDLOG_INFO("Output file {}",result_file);
   SPDLOG_INFO("Log level {}",UTIL::LOG_LEVESLS[log_level]);
   SPDLOG_INFO("Use omp {}",(use_omp ? "true" : "false"));
+  SPDLOG_INFO("Use chunking {}",(use_chunking ? "true" : "false"));
+  if (use_chunking) {
+    SPDLOG_INFO("Chunk grid {}x{}", chunk_rows, chunk_cols);
+    SPDLOG_INFO("Chunk threads {}", chunk_threads);
+  }
   SPDLOG_INFO("---- Print configuration done ----");
 }
 
@@ -88,6 +111,10 @@ void UBODTGenAppConfig::print_help() {
   oss << "-o/--output (required) <string>: Output file name\n";
   oss << "-l/--log_level (optional) <int>: log level (2)\n";
   oss << "--use_omp: use OpenMP or not\n";
+  oss << "--use_chunking: use chunk-based parallel processing\n";
+  oss << "--chunk_rows (optional) <int>: chunk rows (4)\n";
+  oss << "--chunk_cols (optional) <int>: chunk columns (4)\n";
+  oss << "--chunk_threads (optional) <int>: chunk threads (8)\n";
   oss << "-h/--help: help information\n";
   oss << "For xml configuration, check example folder\n";
   std::cout<<oss.str();
