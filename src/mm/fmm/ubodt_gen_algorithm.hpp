@@ -68,6 +68,28 @@ private:
                         NETWORK::NodeIndex s,
                         NETWORK::PredecessorMap &pmap,
                         NETWORK::DistanceMap &dmap) const;
+  /**
+   * Write the routing result to a csv buffer for parallel processing
+   * @param stream output csv buffer
+   * @param s      source node
+   * @param pmap   predecessor map
+   * @param dmap   distance map
+   */
+  void write_result_csv_buffer(std::ostream &stream,
+                        NETWORK::NodeIndex s,
+                        NETWORK::PredecessorMap &pmap,
+                        NETWORK::DistanceMap &dmap) const;
+  /**
+   * Write the routing result to a binary buffer for parallel processing
+   * @param stream output binary buffer
+   * @param s      source node
+   * @param pmap   predecessor map
+   * @param dmap   distance map
+   */
+  void write_result_binary_buffer(std::ostream &stream,
+                        NETWORK::NodeIndex s,
+                        NETWORK::PredecessorMap &pmap,
+                        NETWORK::DistanceMap &dmap) const;
   const NETWORK::Network &network_;
   const NETWORK::NetworkGraph &ng_;
 }; // UBODTGenAlgorithm

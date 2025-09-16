@@ -7,6 +7,30 @@ import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from multiprocessing import cpu_count
 import threading
+import requests
+from functools import wraps
+
+def retry_on_connection_error(max_retries=3, delay=5):
+    """装饰器：在连接错误时自动重试"""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except (requests.exceptions.ConnectionError,
+                        requests.exceptions.Timeout,
+                        requests.exceptions.ProtocolError,
+                        ConnectionResetError) as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    print(f"Connection error (attempt {attempt + 1}/{max_retries}): {e}")
+                    print(f"Retrying in {delay} seconds...")
+                    time.sleep(delay)
+                    delay *= 2  # 指数退避
+            return None
+        return wrapper
+    return decorator
 
 class ProgressTracker:
     def __init__(self, total_steps=4):
@@ -101,6 +125,12 @@ def save_graph_shapefile_directional(G, filepath=None, encoding="utf-8", max_wor
     if progress:
         progress.update("Saving shapefiles")
 
+@retry_on_connection_error(max_retries=5, delay=10)
+def download_graph_with_retry(place_name, network_type='drive'):
+    """下载地图数据，带有重试机制"""
+    print(f"Downloading street network for {place_name}...")
+    return ox.graph_from_place(place_name, network_type=network_type)
+
 def main():
     ########################################################################
     # 地图数据加载
@@ -111,20 +141,34 @@ def main():
     # 下载街道网络数据（指定网络类型为 'drive' 仅包含可行驶的道路）
     # G = ox.graph_from_place(place_name, network_type='drive')
     # ox.save_graphml(G, filepath, gephi=False, encoding='utf-8')
-    
+
     # # 离线加载模式
     # filepath = "input/map/haikou.graphml"  # 替换为目标文件路径
     # G = ox.load_graphml(filepath)
-    # ox.plot_graph(G, ax=None, figsize=(8, 8), bgcolor='#111111', 
-    #                       node_color='w', node_size=15, node_alpha=None, node_edgecolor='none', node_zorder=1, 
-    #                       edge_color='#999999', edge_linewidth=1, edge_alpha=None, 
+    # ox.plot_graph(G, ax=None, figsize=(8, 8), bgcolor='#111111',
+    #                       node_color='w', node_size=15, node_alpha=None, node_edgecolor='none', node_zorder=1,
+    #                       edge_color='#999999', edge_linewidth=1, edge_alpha=None,
     #                       bbox=None, show=True, close=False, save=False, filepath=None, dpi=300)
     # save_graph_shapefile_directional(G, filepath='input/map/haikou', encoding="utf-8")
 
-    # Download by place name
-    place ="Shanghai, China"
-    G = ox.graph_from_place(place, network_type='drive')
-    save_graph_shapefile_directional(G, filepath='../input/map/shanghai')
+    # Download by place name with retry logic
+
+    try:
+        filepath = "input/map/shanghai.graphml"
+        G = ox.load_graphml(filepath)
+        # place = "Shanghai, China"
+        # G = download_graph_with_retry(place, network_type='drive')
+        print("Graph downloaded successfully!")
+
+        # Save the graph with progress tracking
+        save_graph_shapefile_directional(G, filepath='input/map/shanghai', show_progress=True)
+        print("Shapefiles saved successfully!")
+
+    except Exception as e:
+        print(f"Failed to download graph after multiple retries: {e}")
+        print("Please check your internet connection and VPN settings.")
+        print("Alternatively, you can use offline mode by loading from a .graphml file.")
+        raise
 
 if __name__ == '__main__':
     try:
