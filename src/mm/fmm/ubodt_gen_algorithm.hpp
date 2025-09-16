@@ -90,6 +90,7 @@ private:
                         NETWORK::NodeIndex s,
                         NETWORK::PredecessorMap &pmap,
                         NETWORK::DistanceMap &dmap) const;
+  protected:
   const NETWORK::Network &network_;
   const NETWORK::NetworkGraph &ng_;
 }; // UBODTGenAlgorithm

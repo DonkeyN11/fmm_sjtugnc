@@ -62,6 +62,10 @@ class UBODTGenAppConfig
   int log_level = 2; /**< Level level. 0-trace,1-debug,2-info,3-warn,4-err,
                          5-critical,6-off */
   bool use_omp = false; /**< If true, parallel computing performed */
+  bool use_chunking = false; /**< If true, chunk-based parallel processing */
+  int chunk_rows = 4; /**< Number of chunk rows for grid partitioning */
+  int chunk_cols = 4; /**< Number of chunk columns for grid partitioning */
+  int chunk_threads = 8; /**< Number of threads for chunk processing */
   bool help_specified = false; /**< Help is specified or not */
 }; // UBODT_Config
 }
