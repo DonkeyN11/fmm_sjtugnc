@@ -165,8 +165,8 @@ def convert_simple_fast(input_file, output_file):
     print(f"Processing time: {processing_time:.2f} seconds")
 
 if __name__ == "__main__":
-    input_file = "/home/dell/Czhang/fmm_sjtugnc/output/mr_fields_all.txt"
-    output_file = "/home/dell/Czhang/fmm_sjtugnc/output/mr_fields_all_filtered.csv"
+    input_file = "/home/dell/Czhang/fmm_sjtugnc/output/mr_filtered_fields_all.txt"
+    output_file = "/home/dell/Czhang/fmm_sjtugnc/output/mr_filtered_fields_all.csv"
 
     # Check file size
     file_size = os.path.getsize(input_file) / (1024 * 1024)
