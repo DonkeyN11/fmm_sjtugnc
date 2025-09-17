@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-交互式轨迹可视化脚本
-使用Plotly创建可交互的轨迹地图
-鼠标悬停显示轨迹ID和其他详细信息
+过滤后轨迹可视化脚本
+使用Plotly创建可交互的轨迹地图，专门用于mr_low_filtered.csv数据
+鼠标悬停显示轨迹ID、cumu_prob和其他详细信息
 """
 
 import pandas as pd
@@ -27,21 +27,38 @@ def parse_linestring(wkt_str):
         return None
 
 
-def create_interactive_trajectory_visualization(csv_file_path, output_html_path=None, max_trajectories=2000):
-    """创建交互式轨迹可视化"""
-    print(f"开始处理轨迹数据: {csv_file_path}")
+def extract_last_cumu_prob(cumu_prob_str):
+    """提取cumu_prob字符串的最后一个值"""
+    try:
+        if pd.isna(cumu_prob_str):
+            return None
+        str_values = str(cumu_prob_str).split(',')
+        if str_values and str_values[-1].strip():
+            return float(str_values[-1].strip())
+        return None
+    except Exception as e:
+        print(f"解析cumu_prob错误: {e}")
+        return None
+
+
+def create_filtered_trajectory_visualization(csv_file_path, output_html_path=None, max_trajectories=2000):
+    """创建过滤后轨迹的可视化"""
+    print(f"开始处理过滤后轨迹数据: {csv_file_path}")
 
     # 读取CSV文件
     try:
         df = pd.read_csv(csv_file_path, sep=';')
-        print(f"成功读取 {len(df)} 条轨迹数据")
+        print(f"成功读取 {len(df)} 条过滤后轨迹数据")
     except Exception as e:
         print(f"读取CSV文件失败: {e}")
         return False
 
     # 检查数据格式
-    if 'id' not in df.columns or 'geom' not in df.columns:
-        print("CSV文件格式错误，需要包含 'id' 和 'geom' 列")
+    required_columns = ['id', 'mgeom', 'cumu_prob']
+    missing_columns = [col for col in required_columns if col not in df.columns]
+    if missing_columns:
+        print(f"CSV文件格式错误，缺少列: {missing_columns}")
+        print(f"可用列: {list(df.columns)}")
         return False
 
     # 限制轨迹数量以提高性能
@@ -49,7 +66,7 @@ def create_interactive_trajectory_visualization(csv_file_path, output_html_path=
         print(f"限制轨迹数量: 从 {len(df)} 减少到 {max_trajectories}")
         df = df.sample(n=max_trajectories, random_state=42)
 
-    print(f"将显示 {len(df)} 条轨迹")
+    print(f"将显示 {len(df)} 条过滤后轨迹")
 
     # 创建图形
     fig = go.Figure()
@@ -57,18 +74,21 @@ def create_interactive_trajectory_visualization(csv_file_path, output_html_path=
     # 为每条轨迹创建一个轨迹线
     valid_trajectories = 0
     all_coords = []
+    cumu_prob_values = []
 
-    print("开始创建交互式轨迹...")
+    print("开始创建过滤后轨迹可视化...")
     for idx, row in df.iterrows():
-        coords = parse_linestring(row['geom'])
+        coords = parse_linestring(row['mgeom'])
+        last_cumu_prob = extract_last_cumu_prob(row['cumu_prob'])
 
-        if coords and len(coords) >= 2:
+        if coords and len(coords) >= 2 and last_cumu_prob is not None:
             # 分离经纬度
             lons = [coord[0] for coord in coords]
             lats = [coord[1] for coord in coords]
 
             # 收集坐标用于计算范围
             all_coords.extend(coords)
+            cumu_prob_values.append(last_cumu_prob)
 
             # 创建悬停文本
             trajectory_id = row['id']
@@ -79,19 +99,32 @@ def create_interactive_trajectory_visualization(csv_file_path, output_html_path=
             lon_range = max(lons) - min(lons)
             lat_range = max(lats) - min(lats)
 
+            # 获取其他可能的信息
+            spdist = row.get('spdist', 'N/A')
+            opath = row.get('opath', 'N/A')
+
             hover_text = f"""
             <b>轨迹ID: {trajectory_id}</b><br>
             原始ID: {original_id}<br>
+            <b>最后累积概率: {last_cumu_prob:.6f}</b><br>
             坐标点数: {point_count}<br>
+            最短路径距离: {spdist}<br>
+            观测路径长度: {opath}<br>
             经度范围: {min(lons):.6f} ~ {max(lons):.6f}<br>
             纬度范围: {min(lats):.6f} ~ {max(lats):.6f}<br>
             经度跨度: {lon_range:.6f}°<br>
             纬度跨度: {lat_range:.6f}°
             """
 
-            # 生成随机颜色
-            random_color = np.random.rand(3,)
-            color_str = f'rgb({int(random_color[0]*255)}, {int(random_color[1]*255)}, {int(random_color[2]*255)})'
+            # 根据cumu_prob值设置颜色（值越低颜色越红）
+            # cumu_prob都是负值，绝对值越大颜色越红
+            # 范围从-183到-81，归一化到0-1
+            normalized_prob = (last_cumu_prob + 183) / (183 - 81)  # 归一化到0-1
+            normalized_prob = max(0, min(1, normalized_prob))  # 限制在0-1范围内
+
+            red_component = int(255 * (1 - normalized_prob))
+            blue_component = int(255 * normalized_prob)
+            color_str = f'rgb({red_component}, 0, {blue_component})'
 
             # 添加轨迹线
             fig.add_trace(go.Scatter(
@@ -99,19 +132,19 @@ def create_interactive_trajectory_visualization(csv_file_path, output_html_path=
                 y=lats,
                 mode='lines',
                 line=dict(
-                    color=color_str,  # 使用RGB字符串格式
+                    color=color_str,  # 根据概率设置颜色
                     width=2
                 ),
-                name=f'Trajectory {trajectory_id}',
+                name=f'Filtered Trajectory {trajectory_id}',
                 hovertext=hover_text,
                 hoverinfo='text',
                 showlegend=False,  # 不显示图例
-                opacity=0.7
+                opacity=0.8
             ))
 
             valid_trajectories += 1
 
-            if valid_trajectories % 500 == 0:
+            if valid_trajectories % 200 == 0:
                 print(f"已处理 {valid_trajectories} 条轨迹...")
 
     print(f"成功处理 {valid_trajectories} 条轨迹")
@@ -138,10 +171,18 @@ def create_interactive_trajectory_visualization(csv_file_path, output_html_path=
         min_lat, max_lat = 19.8, 20.2
         lon_margin, lat_margin = 0.1, 0.1
 
+    # 统计cumu_prob信息
+    if cumu_prob_values:
+        print(f"\n=== cumu_prob统计 ===")
+        print(f"最小值: {min(cumu_prob_values):.6f}")
+        print(f"最大值: {max(cumu_prob_values):.6f}")
+        print(f"平均值: {np.mean(cumu_prob_values):.6f}")
+        print(f"中位数: {np.median(cumu_prob_values):.6f}")
+
     # 设置图形布局
     fig.update_layout(
         title={
-            'text': 'Interactive Trajectory Visualization',
+            'text': 'Filtered Low Cumulative Probability Trajectories (>-183)',
             'x': 0.5,
             'xanchor': 'center',
             'font': dict(size=20, family='Arial')
@@ -177,13 +218,16 @@ def create_interactive_trajectory_visualization(csv_file_path, output_html_path=
         line_width=0
     )
 
+    # 创建输出目录
+    os.makedirs('output/filtered', exist_ok=True)
+
     # 保存为HTML文件
     if output_html_path:
         fig.write_html(output_html_path)
         print(f"交互式可视化已保存到: {output_html_path}")
     else:
         # 默认保存路径
-        default_path = 'output/interactive_trajectory_visualization.html'
+        default_path = 'output/filtered/mr_filtered_visualization0.html'
         fig.write_html(default_path)
         print(f"交互式可视化已保存到: {default_path}")
 
@@ -196,32 +240,33 @@ def create_interactive_trajectory_visualization(csv_file_path, output_html_path=
 def main():
     """主函数"""
     # 设置输入文件路径（使用过滤后的数据）
-    csv_file_path = 'input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered.csv'
+    csv_file_path = 'output/mr_filtered_fields_all.csv'
 
     # 检查文件是否存在
     if not os.path.exists(csv_file_path):
         print(f"错误: 文件 {csv_file_path} 不存在")
-        print("请先运行 parallel_trajectory_filter.py 来过滤轨迹数据")
+        print("请先运行 filter_mr_low.py 来生成过滤后的数据")
         return
 
     # 可选：设置输出HTML路径
     output_html_path = None  # 设为None使用默认路径
 
     # 可选：调整显示的轨迹数量
-    max_trajectories = 1500  # 减少轨迹数量以提高交互性能
+    max_trajectories = 1000  # 减少轨迹数量以提高性能
 
     # 执行可视化
-    success = create_interactive_trajectory_visualization(csv_file_path, output_html_path, max_trajectories)
+    success = create_filtered_trajectory_visualization(csv_file_path, output_html_path, max_trajectories)
 
     if success:
-        print("交互式轨迹可视化完成！")
+        print("\n过滤后轨迹可视化完成！")
         print("使用说明：")
-        print("- 鼠标悬停在轨迹上可查看详细信息")
+        print("- 鼠标悬停在轨迹上可查看详细信息，包括cumu_prob值")
+        print("- 轨迹颜色根据cumu_prob值设置：红色表示概率极低，蓝色表示相对较高")
         print("- 使用鼠标滚轮缩放")
         print("- 拖动鼠标平移视图")
         print("- 双击重置视图")
     else:
-        print("交互式轨迹可视化失败！")
+        print("过滤后轨迹可视化失败！")
 
 
 if __name__ == "__main__":
