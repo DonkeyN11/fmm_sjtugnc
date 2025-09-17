@@ -162,6 +162,17 @@ for interactive map matching in notebook.
 
 Check [https://cyang-kth.github.io/fmm/](https://cyang-kth.github.io/fmm/)
 
+为了最大化FMM的性能，建议：
+
+  # 设置使用所有核心
+  export OMP_NUM_THREADS=128
+
+  # 或者设置使用特定数量（如64个核心）
+  export OMP_NUM_THREADS=64
+
+  然后运行FMM：
+  ./build/fmm --config input/config/fmm_config_omp.xml
+
 ### Contact and citation
 
 Can Yang, Ph.D. student at KTH, Royal Institute of Technology in Sweden
