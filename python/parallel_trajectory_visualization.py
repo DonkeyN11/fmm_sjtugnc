@@ -2,7 +2,7 @@
 """
 并行轨迹可视化脚本
 使用所有可用的CPU核心绘制CSV中的轨迹数据
-每个轨迹ID使用不同的颜色，不显示颜色图例
+每个轨迹ID使用不同的颜色,不显示颜色图例
 """
 
 import pandas as pd
@@ -23,8 +23,7 @@ def parse_linestring(wkt_str):
         if isinstance(line, LineString):
             return list(line.coords)
         return None
-    except Exception as e:
-        print(f"解析错误: {e}")
+    except:
         return None
 
 
@@ -48,7 +47,7 @@ def plot_single_trajectory(trajectory_data, color_map):
     return idx
 
 
-def visualize_trajectories_parallel(csv_file_path, output_image_path=None, max_trajectories=10000):
+def visualize_trajectories_parallel(csv_file_path, output_image_path=None, max_trajectories=5000):
     """并行可视化轨迹数据"""
     print(f"开始处理轨迹数据: {csv_file_path}")
 
@@ -103,17 +102,12 @@ def visualize_trajectories_parallel(csv_file_path, output_image_path=None, max_t
         plot_func = partial(plot_single_trajectory, color_map=color_map)
 
         # 并行处理所有轨迹
-        _ = list(pool.imap(plot_func, trajectory_data))
+        results = list(pool.imap(plot_func, trajectory_data))
 
     # 设置图形属性
     plt.title('Trajectory Visualization (Parallel Processing)', fontsize=16, fontweight='bold')
-    plt.xlabel('Longitude (°)', fontsize=12)
-    plt.ylabel('Latitude (°)', fontsize=12)
-
-    # 设置坐标轴格式，显示更多小数位
-    ax = plt.gca()
-    ax.xaxis.set_major_formatter(plt.FormatStrFormatter('%.4f'))
-    ax.yaxis.set_major_formatter(plt.FormatStrFormatter('%.4f'))
+    plt.xlabel('Longitude', fontsize=12)
+    plt.ylabel('Latitude', fontsize=12)
 
     # 自动调整坐标轴范围
     all_coords = []
@@ -125,27 +119,8 @@ def visualize_trajectories_parallel(csv_file_path, output_image_path=None, max_t
     if all_coords:
         lons = [coord[0] for coord in all_coords]
         lats = [coord[1] for coord in all_coords]
-
-        # 计算经纬度范围
-        min_lon, max_lon = min(lons), max(lons)
-        min_lat, max_lat = min(lats), max(lats)
-
-        # 计算合适的边距（基于实际地理范围）
-        lon_range = max_lon - min_lon
-        lat_range = max_lat - min_lat
-
-        # 使用较小的边距比例，因为轨迹应该在相对小的地理范围内
-        lon_margin = max(lon_range * 0.05, 0.001)  # 5%边距，最小0.001度
-        lat_margin = max(lat_range * 0.05, 0.001)
-
-        plt.xlim(min_lon - lon_margin, max_lon + lon_margin)
-        plt.ylim(min_lat - lat_margin, max_lat + lat_margin)
-
-        # 显示坐标范围信息
-        print(f"经度范围: {min_lon:.6f} 到 {max_lon:.6f}")
-        print(f"纬度范围: {min_lat:.6f} 到 {max_lat:.6f}")
-        print(f"经度跨度: {lon_range:.6f} 度")
-        print(f"纬度跨度: {lat_range:.6f} 度")
+        plt.xlim(min(lons) - 0.01, max(lons) + 0.01)
+        plt.ylim(min(lats) - 0.01, max(lats) + 0.01)
 
     # 设置图形样式
     plt.tight_layout()
@@ -168,13 +143,12 @@ def visualize_trajectories_parallel(csv_file_path, output_image_path=None, max_t
 
 def main():
     """主函数"""
-    # 设置输入文件路径（使用过滤后的数据）
-    csv_file_path = '../input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered.csv'
+    # 设置输入文件路径
+    csv_file_path = 'input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered.csv'
 
     # 检查文件是否存在
     if not os.path.exists(csv_file_path):
         print(f"错误: 文件 {csv_file_path} 不存在")
-        print("请先运行 parallel_trajectory_filter.py 来过滤轨迹数据")
         return
 
     # 可选：设置输出图像路径
