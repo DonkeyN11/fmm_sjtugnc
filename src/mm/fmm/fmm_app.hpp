@@ -13,6 +13,7 @@
 
 #include "fmm_app_config.hpp"
 #include "fmm_algorithm.hpp"
+#include "ubodt_memory_manager.hpp"
 
 namespace FMM{
 namespace MM{
@@ -26,11 +27,14 @@ class FMMApp {
    * @param config Configuration of the FMMApp defining network, graph
    * and UBODT.
    */
-  FMMApp(const FMMAppConfig &config) :
-      config_(config),
-      network_(config_.network_config),
-      ng_(network_),
-      ubodt_(UBODT::read_ubodt_file(config_.ubodt_file)){};
+  FMMApp(const FMMAppConfig &config);
+
+  /**
+   * Create FMMApp with pre-loaded UBODT
+   * @param config Configuration of the FMMApp defining network, graph
+   * @param preloaded_ubodt Pre-loaded UBODT data
+   */
+  FMMApp(const FMMAppConfig &config, std::shared_ptr<UBODT> preloaded_ubodt);
   /**
    * Run the fmm program
    */

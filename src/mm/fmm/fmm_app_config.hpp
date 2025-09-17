@@ -63,6 +63,7 @@ class FMMAppConfig
   FastMapMatchConfig fmm_config; /**< Map matching configuraiton */
   std::string ubodt_file; /**< UBODT file name */
   bool use_omp = false; /**< If true, parallel map matching performed */
+  bool use_memory_cache = true; /**< If true, check memory cache for UBODT */
   bool help_specified = false;  /**< Help is specified or not */
   int log_level = 2;  /**< log level, 0-trace,1-debug,2-info,
                           3-warn,4-err,5-critical,6-off */

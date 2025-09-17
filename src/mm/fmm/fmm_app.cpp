@@ -86,3 +86,36 @@ void FMMApp::run() {
               points_matched / time_spent_exclude_input);
   SPDLOG_INFO("Time takes {}", time_spent);
 };
+
+// FMMApp constructor implementations
+FMMApp::FMMApp(const FMMAppConfig &config) :
+    config_(config),
+    network_(config_.network_config),
+    ng_(network_) {
+
+    // Check if memory cache is enabled
+    if (config_.use_memory_cache) {
+        // First try to get UBODT from memory cache
+        auto& memory_manager = UBODTMemoryManager::get_instance();
+        auto cached_ubodt = memory_manager.get_ubodt(config_.ubodt_file);
+
+        if (cached_ubodt) {
+            SPDLOG_INFO("Using pre-loaded UBODT from memory cache");
+            ubodt_ = cached_ubodt->ubodt;
+        } else {
+            SPDLOG_INFO("UBODT not found in cache, loading from file");
+            ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
+        }
+    } else {
+        SPDLOG_INFO("Memory cache disabled, loading UBODT from file");
+        ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
+    }
+}
+
+FMMApp::FMMApp(const FMMAppConfig &config, std::shared_ptr<UBODT> preloaded_ubodt) :
+    config_(config),
+    network_(config_.network_config),
+    ng_(network_),
+    ubodt_(preloaded_ubodt) {
+    SPDLOG_INFO("Using provided pre-loaded UBODT");
+}
