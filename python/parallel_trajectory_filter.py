@@ -3,6 +3,7 @@
 并行轨迹过滤脚本
 根据地图范围过滤轨迹中的不合理坐标点
 保留轨迹中在地图范围内的正常点
+并过滤相邻点距离过大的坐标点（最大距离0.005°，以限速200km/h，采样间隔10s计算）
 """
 
 import pandas as pd
@@ -32,10 +33,11 @@ def load_map_bounds(bounds_file='haikou_map_bounds.json'):
         }
 
 
-def filter_trajectory_points(trajectory_row, map_bounds):
+def filter_trajectory_points(trajectory_row, map_bounds, max_distance=0.005):
     """
     过滤单个轨迹中的坐标点
-    保留在地图范围内的正常点
+    保留在地图范围内的正常点，并检查相邻点距离
+    过滤相邻点距离超过max_distance的坐标点
     """
     idx, row = trajectory_row
     trajectory_id = row['id']
@@ -48,24 +50,49 @@ def filter_trajectory_points(trajectory_row, map_bounds):
             return idx, None, "不是LineString类型"
 
         original_coords = list(line.coords)
-        filtered_coords = []
 
+        # 第一步：过滤地图范围外的点
+        range_filtered_coords = []
         for coord in original_coords:
             lon, lat = coord
 
             # 检查坐标是否在地图范围内
             if (map_bounds['min_lon'] <= lon <= map_bounds['max_lon'] and
                 map_bounds['min_lat'] <= lat <= map_bounds['max_lat']):
-                filtered_coords.append(coord)
+                range_filtered_coords.append(coord)
+
+        # 第二步：过滤相邻点距离过大的点
+        filtered_coords = []
+        if range_filtered_coords:
+            # 保留第一个点
+            filtered_coords.append(range_filtered_coords[0])
+
+            # 检查后续点与前一個点的距离
+            for i in range(1, len(range_filtered_coords)):
+                prev_coord = range_filtered_coords[i-1]
+                curr_coord = range_filtered_coords[i]
+
+                # 计算经度和纬度的差距
+                lon_diff = abs(curr_coord[0] - prev_coord[0])
+                lat_diff = abs(curr_coord[1] - prev_coord[1])
+
+                # 检查是否超过最大距离阈值
+                if lon_diff <= max_distance and lat_diff <= max_distance:
+                    filtered_coords.append(curr_coord)
+                else:
+                    # 跳过这个点，距离过大
+                    pass
 
         # 统计过滤结果
         total_points = len(original_coords)
-        valid_points = len(filtered_coords)
-        filtered_points = total_points - valid_points
+        range_valid_points = len(range_filtered_coords)
+        final_valid_points = len(filtered_coords)
+        range_filtered_points = total_points - range_valid_points
+        distance_filtered_points = range_valid_points - final_valid_points
 
         # 如果过滤后没有点或只剩一个点，无法构成LineString
         if len(filtered_coords) < 2:
-            return idx, None, f"过滤后只剩{len(filtered_coords)}个点，无法构成轨迹"
+            return idx, None, f"距离过滤后只剩{len(filtered_coords)}个点，无法构成轨迹"
 
         # 创建新的LineString
         if filtered_coords:
@@ -78,9 +105,12 @@ def filter_trajectory_points(trajectory_row, map_bounds):
                 'original_geom': wkt_str,
                 'filtered_geom': filtered_wkt,
                 'total_points': total_points,
-                'valid_points': valid_points,
-                'filtered_points': filtered_points,
-                'filter_rate': filtered_points / total_points if total_points > 0 else 0
+                'range_valid_points': range_valid_points,
+                'final_valid_points': final_valid_points,
+                'range_filtered_points': range_filtered_points,
+                'distance_filtered_points': distance_filtered_points,
+                'total_filtered_points': range_filtered_points + distance_filtered_points,
+                'filter_rate': (range_filtered_points + distance_filtered_points) / total_points if total_points > 0 else 0
             }
 
             return idx, result, None
@@ -89,9 +119,10 @@ def filter_trajectory_points(trajectory_row, map_bounds):
         return idx, None, f"解析错误: {str(e)}"
 
 
-def filter_trajectories_parallel(input_csv, output_csv, bounds_file='haikou_map_bounds.json'):
+def filter_trajectories_parallel(input_csv, output_csv, bounds_file='haikou_map_bounds.json', max_distance=0.0005):
     """并行过滤轨迹数据"""
     print(f"开始并行过滤轨迹数据: {input_csv}")
+    print(f"相邻点最大距离阈值: {max_distance}°")
 
     # 加载地图边界
     map_bounds = load_map_bounds(bounds_file)
@@ -122,12 +153,15 @@ def filter_trajectories_parallel(input_csv, output_csv, bounds_file='haikou_map_
     # 使用进程池并行处理
     filtered_results = []
     error_count = 0
-    total_filtered_points = 0
-    total_valid_points = 0
+    total_points = 0
+    total_range_valid_points = 0
+    total_final_valid_points = 0
+    total_range_filtered_points = 0
+    total_distance_filtered_points = 0
 
     with mp.Pool(processes=num_cores) as pool:
-        # 使用partial函数传递map_bounds参数
-        filter_func = partial(filter_trajectory_points, map_bounds=map_bounds)
+        # 使用partial函数传递map_bounds和max_distance参数
+        filter_func = partial(filter_trajectory_points, map_bounds=map_bounds, max_distance=max_distance)
 
         # 并行处理所有轨迹
         results = pool.imap(filter_func, trajectory_data)
@@ -142,24 +176,34 @@ def filter_trajectories_parallel(input_csv, output_csv, bounds_file='haikou_map_
 
             if result:
                 filtered_results.append(result)
-                total_valid_points += result['valid_points']
-                total_filtered_points += result['filtered_points']
+                total_points += result['total_points']
+                total_range_valid_points += result['range_valid_points']
+                total_final_valid_points += result['final_valid_points']
+                total_range_filtered_points += result['range_filtered_points']
+                total_distance_filtered_points += result['distance_filtered_points']
 
     # 统计结果
     total_trajectories = len(df)
     filtered_trajectories = len(filtered_results)
     removed_trajectories = total_trajectories - filtered_trajectories
 
-    print(f"\n过滤结果统计:")
+    print(f"\n=== 过滤结果统计 ===")
+    print(f"轨迹统计:")
     print(f"  总轨迹数: {total_trajectories}")
     print(f"  保留轨迹数: {filtered_trajectories}")
     print(f"  删除轨迹数: {removed_trajectories}")
     print(f"  轨迹保留率: {filtered_trajectories/total_trajectories*100:.2f}%")
-    print(f"  总坐标点数: {total_valid_points + total_filtered_points}")
-    print(f"  有效坐标点数: {total_valid_points}")
-    print(f"  过滤坐标点数: {total_filtered_points}")
-    print(f"  坐标点保留率: {total_valid_points/(total_valid_points + total_filtered_points)*100:.2f}%")
     print(f"  错误轨迹数: {error_count}")
+    print(f"\n坐标点统计:")
+    print(f"  总坐标点数: {total_points}")
+    print(f"  范围过滤后点数: {total_range_valid_points}")
+    print(f"  最终保留点数: {total_final_valid_points}")
+    print(f"  范围过滤点数: {total_range_filtered_points}")
+    print(f"  距离过滤点数: {total_distance_filtered_points}")
+    print(f"  总过滤点数: {total_range_filtered_points + total_distance_filtered_points}")
+    print(f"  坐标点总保留率: {total_final_valid_points/total_points*100:.2f}%")
+    print(f"  范围保留率: {total_range_valid_points/total_points*100:.2f}%")
+    print(f"  距离保留率: {total_final_valid_points/total_range_valid_points*100:.2f}%")
 
     # 保存过滤后的数据
     if filtered_results:
@@ -168,7 +212,7 @@ def filter_trajectories_parallel(input_csv, output_csv, bounds_file='haikou_map_
 
         # 保存完整结果
         filtered_df.to_csv(output_csv.replace('.csv', '_detailed.csv'), index=False, sep=';')
-        print(f"详细过滤结果已保存到: {output_csv.replace('.csv', '_detailed.csv')}")
+        print(f"\n详细过滤结果已保存到: {output_csv.replace('.csv', '_detailed.csv')}")
 
         # 保存简化版结果（只包含原始字段）
         simple_df = filtered_df[['id', 'original_id', 'filtered_geom']]
@@ -185,8 +229,8 @@ def filter_trajectories_parallel(input_csv, output_csv, bounds_file='haikou_map_
 def main():
     """主函数"""
     # 输入输出文件路径
-    input_csv = '../input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel.csv'
-    output_csv = '../input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered.csv'
+    input_csv = 'input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel.csv'
+    output_csv = 'input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered_distance.csv'
 
     # 检查输入文件
     if not os.path.exists(input_csv):

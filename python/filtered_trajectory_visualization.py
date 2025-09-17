@@ -142,7 +142,7 @@ def visualize_filtered_trajectories(csv_file_path, output_image_path=None, max_t
 def main():
     """主函数"""
     # 设置输入文件路径（使用过滤后的数据）
-    csv_file_path = '../input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered.csv'
+    csv_file_path = 'input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered_distance.csv'
 
     # 检查文件是否存在
     if not os.path.exists(csv_file_path):
