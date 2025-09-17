@@ -26,12 +26,14 @@ def merge_trajectory_groups(groups_list):
 
     return merged
 
-def convert_trajectory_to_linestring(item):
-    """Convert a single trajectory to LINESTRING format"""
+def convert_trajectory_to_linestring(args):
+    """Convert a single trajectory to LINESTRING format with sequential ID"""
+    item, new_id = args
     trajectory_id, coordinates = item
     coord_strs = [f"{lon} {lat}" for lon, lat in coordinates]
     return {
-        'id': trajectory_id,
+        'id': new_id,
+        'original_id': trajectory_id,
         'geom': f"LINESTRING({','.join(coord_strs)})"
     }
 
@@ -113,10 +115,13 @@ def convert_parallel(input_file, output_file, batch_size=1000000, max_workers=No
     # Process trajectories in parallel
     print(f"Converting {total_trajectories:,} trajectories using {max_workers} workers...")
 
+    # Create a list of (trajectory_item, new_id) pairs
+    trajectory_with_new_ids = [(item, i+1) for i, item in enumerate(trajectory_items)]
+
     # Process trajectories in parallel
     with mp.Pool(processes=max_workers) as pool:
-        # Process individual trajectories in parallel
-        results = pool.imap_unordered(convert_trajectory_to_linestring, trajectory_items)
+        # Process individual trajectories in parallel with new IDs
+        results = pool.imap_unordered(convert_trajectory_to_linestring, trajectory_with_new_ids)
 
         output_data = []
         processed_trajectories = 0
@@ -144,15 +149,16 @@ def convert_parallel(input_file, output_file, batch_size=1000000, max_workers=No
     print(f"Workers used: {max_workers}")
 
 def save_intermediate_results(trajectory_groups, filename):
-    """Save intermediate results to avoid data loss"""
+    """Save intermediate results to avoid data loss with sequential IDs"""
     output_data = []
 
-    for trajectory_id, coordinates in trajectory_groups.items():
+    for new_id, (trajectory_id, coordinates) in enumerate(trajectory_groups.items(), 1):
         coord_strs = [f"{lon} {lat}" for lon, lat in coordinates]
         linestring = f"LINESTRING({','.join(coord_strs)})"
 
         output_data.append({
-            'id': trajectory_id,
+            'id': new_id,
+            'original_id': trajectory_id,
             'geom': linestring
         })
 
@@ -178,14 +184,15 @@ def convert_simple_fast(input_file, output_file):
     print("Grouping and converting...")
     result = []
 
-    # Group by ID
-    for trajectory_id, group in df.groupby('id'):
+    # Group by ID and assign sequential IDs
+    for new_id, (trajectory_id, group) in enumerate(df.groupby('id'), 1):
         coords = list(zip(group['longitude'], group['latitude']))
         coord_strs = [f"{lon} {lat}" for lon, lat in coords]
         linestring = f"LINESTRING({','.join(coord_strs)})"
 
         result.append({
-            'id': trajectory_id,
+            'id': new_id,
+            'original_id': trajectory_id,
             'geom': linestring
         })
 
