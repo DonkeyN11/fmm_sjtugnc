@@ -15,6 +15,8 @@ using namespace FMM;
 using namespace FMM::MM;
 using namespace FMM::NETWORK;
 
+namespace fs = std::filesystem;
+
 bool UBODTMemoryManager::load_ubodt(const std::string& filename, int multiplier,
                                    size_t max_memory_mb) {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -33,6 +35,14 @@ bool UBODTMemoryManager::load_ubodt(const std::string& filename, int multiplier,
     }
 
     try {
+        // Check if file exists first
+        std::ifstream test_file(filename);
+        if (!test_file.good()) {
+            SPDLOG_ERROR("UBODT file does not exist or cannot be read: {}", filename);
+            return false;
+        }
+        test_file.close();
+
         // Estimate memory requirements before loading
         long estimated_rows = UBODT::estimate_ubodt_rows(filename);
         if (estimated_rows > 0) {
@@ -174,21 +184,23 @@ void UBODTMemoryManager::set_max_memory(size_t max_memory_mb) {
 void UBODTMemoryManager::print_status() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
-    SPDLOG_INFO("UBODT Memory Manager Status:");
-    SPDLOG_INFO("  Cached files: {}", cache_.size());
-    SPDLOG_INFO("  Total memory usage: {} MB",
-               get_total_memory_usage() / (1024 * 1024));
-    SPDLOG_INFO("  Memory limit: {} MB",
-               max_memory_bytes_ / (1024 * 1024));
+    size_t total_memory = 0;
+    for (const auto& pair : cache_) {
+        total_memory += pair.second->memory_usage;
+    }
+
+    std::cout << "UBODT Memory Manager Status:\n";
+    std::cout << "  Cached files: " << cache_.size() << "\n";
+    std::cout << "  Total memory usage: " << (total_memory / (1024 * 1024)) << " MB\n";
+    std::cout << "  Memory limit: " << (max_memory_bytes_ / (1024 * 1024)) << " MB\n";
 
     for (const auto& pair : cache_) {
         const auto& cached = pair.second;
-        SPDLOG_INFO("  File: {}", cached->filename);
-        SPDLOG_INFO("    Memory: {} MB", cached->memory_usage / (1024 * 1024));
-        SPDLOG_INFO("    Node range: {} - {}", cached->range.min_node, cached->range.max_node);
-        SPDLOG_INFO("    Geo range: [{}, {}] to [{}, {}]",
-                   cached->range.min_x, cached->range.min_y,
-                   cached->range.max_x, cached->range.max_y);
+        std::cout << "  File: " << cached->filename << "\n";
+        std::cout << "    Memory: " << (cached->memory_usage / (1024 * 1024)) << " MB\n";
+        std::cout << "    Node range: " << cached->range.min_node << " - " << cached->range.max_node << "\n";
+        std::cout << "    Geo range: [" << cached->range.min_x << ", " << cached->range.min_y
+                  << "] to [" << cached->range.max_x << ", " << cached->range.max_y << "]\n";
     }
 }
 
@@ -326,4 +338,104 @@ bool UBODTMemoryManager::check_memory_availability(size_t required_memory) const
     }
 
     return true;
+}
+
+UBODTMemoryManager::UBODTMemoryManager() {
+    SPDLOG_INFO("Initializing UBODT Memory Manager");
+    cleanup_expired_cache_files();
+    load_cache_state();
+}
+
+UBODTMemoryManager::~UBODTMemoryManager() {
+    SPDLOG_INFO("Cleaning up UBODT Memory Manager");
+    save_cache_state();
+}
+
+void UBODTMemoryManager::save_cache_state() const {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    try {
+        // Create cache directory if it doesn't exist
+        fs::path cache_dir = fs::temp_directory_path() / "fmm_ubodt_cache";
+        fs::create_directories(cache_dir);
+
+        // Save cache state
+        fs::path state_file = cache_dir / "cache_state.txt";
+        std::ofstream out(state_file);
+
+        if (out.is_open()) {
+            out << "# FMM UBODT Cache State\n";
+            out << "# Format: filename|memory_usage|last_access_time\n";
+
+            auto now = std::chrono::system_clock::now();
+            for (const auto& pair : cache_) {
+                const auto& cached = pair.second;
+                auto access_time = std::chrono::duration_cast<std::chrono::seconds>(
+                    cached->last_access.time_since_epoch()).count();
+                out << cached->filename << "|" << cached->memory_usage << "|" << access_time << "\n";
+            }
+            out.close();
+            SPDLOG_DEBUG("Cache state saved to {}", state_file.string());
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("Failed to save cache state: {}", e.what());
+    }
+}
+
+void UBODTMemoryManager::load_cache_state() {
+    std::lock_guard<std::mutex> lock(mutex_);
+
+    try {
+        fs::path cache_dir = fs::temp_directory_path() / "fmm_ubodt_cache";
+        fs::path state_file = cache_dir / "cache_state.txt";
+
+        if (fs::exists(state_file)) {
+            std::ifstream in(state_file);
+            std::string line;
+
+            while (std::getline(in, line)) {
+                if (line.empty() || line[0] == '#') continue;
+
+                size_t pos1 = line.find('|');
+                size_t pos2 = line.rfind('|');
+                if (pos1 != std::string::npos && pos2 != std::string::npos && pos1 != pos2) {
+                    std::string filename = line.substr(0, pos1);
+                    // We don't actually reload the UBODT data here, just acknowledge the cache state
+                    // The actual UBODT will be loaded on demand when requested
+                    SPDLOG_DEBUG("Found cached UBODT file: {}", filename);
+                }
+            }
+            in.close();
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("Failed to load cache state: {}", e.what());
+    }
+}
+
+void UBODTMemoryManager::cleanup_expired_cache_files() {
+    try {
+        fs::path cache_dir = fs::temp_directory_path() / "fmm_ubodt_cache";
+
+        if (fs::exists(cache_dir)) {
+            auto now = std::chrono::system_clock::now();
+            auto max_age = std::chrono::hours(24); // Clean files older than 24 hours
+
+            for (const auto& entry : fs::directory_iterator(cache_dir)) {
+                if (entry.is_regular_file()) {
+                    auto ftime = fs::last_write_time(entry);
+                    // Convert file time to system clock time (C++17 compatible)
+                    auto sctp = std::chrono::time_point_cast<std::chrono::system_clock::duration>(
+                        ftime - fs::file_time_type::clock::now() + std::chrono::system_clock::now());
+                    auto file_age = now - sctp;
+
+                    if (file_age > max_age) {
+                        fs::remove(entry.path());
+                        SPDLOG_DEBUG("Removed expired cache file: {}", entry.path().string());
+                    }
+                }
+            }
+        }
+    } catch (const std::exception& e) {
+        SPDLOG_WARN("Failed to cleanup expired cache files: {}", e.what());
+    }
 }

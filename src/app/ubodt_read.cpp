@@ -8,8 +8,12 @@
  */
 
 #include "mm/fmm/ubodt_memory_manager.hpp"
+#include "util/debug.hpp"
 #include <iostream>
 #include <string>
+#include <csignal>
+#include <thread>
+#include <chrono>
 
 using namespace FMM;
 using namespace FMM::MM;
@@ -24,20 +28,30 @@ void print_help() {
     std::cout << "  --status           Show cache status\n";
     std::cout << "  --clear            Clear all cached UBODT files\n";
     std::cout << "  --unload FILE      Unload specific UBODT file\n";
+    std::cout << "  --daemon           Run in daemon mode (keep cache persistent)\n";
+    std::cout << "  --cleanup          Clean up expired cache files\n";
     std::cout << "  --help             Show this help message\n\n";
     std::cout << "Examples:\n";
     std::cout << "  ubodt_read --ubodt data/ubodt.bin\n";
     std::cout << "  ubodt_read --ubodt data/ubodt.bin --max_memory 2048\n";
     std::cout << "  ubodt_read --status\n";
     std::cout << "  ubodt_read --clear\n";
+    std::cout << "  ubodt_read --daemon &  # Run in background\n";
+    std::cout << "  ubodt_read --cleanup   # Clean up expired files\n";
 }
 
 int main(int argc, char **argv) {
+    // Initialize SPDLOG for console output
+    spdlog::set_level(spdlog::level::info);
+    spdlog::set_pattern("[%l][%s:%# ] %v");
+
     std::string ubodt_file;
     size_t max_memory_mb = 0;
     int multiplier = 50000;
     bool show_status = false;
     bool clear_cache = false;
+    bool cleanup_files = false;
+    bool daemon_mode = false;
     std::string unload_file;
 
     // Parse command line arguments
@@ -55,6 +69,10 @@ int main(int argc, char **argv) {
             clear_cache = true;
         } else if (arg == "--unload" && i + 1 < argc) {
             unload_file = argv[++i];
+        } else if (arg == "--daemon") {
+            daemon_mode = true;
+        } else if (arg == "--cleanup") {
+            cleanup_files = true;
         } else if (arg == "--help") {
             print_help();
             return 0;
@@ -78,6 +96,14 @@ int main(int argc, char **argv) {
         std::cout << "Clearing UBODT cache...\n";
         manager.clear_cache();
         std::cout << "Cache cleared successfully.\n";
+        return 0;
+    }
+
+    // Handle cleanup files
+    if (cleanup_files) {
+        std::cout << "Cleaning up expired cache files...\n";
+        manager.cleanup_expired_cache_files();
+        std::cout << "Cleanup completed.\n";
         return 0;
     }
 
@@ -110,9 +136,30 @@ int main(int argc, char **argv) {
             std::cerr << "Failed to load UBODT file.\n";
             return 1;
         }
-    } else if (unload_file.empty() && !show_status && !clear_cache) {
+    } else if (unload_file.empty() && !show_status && !clear_cache && !cleanup_files) {
         std::cerr << "No action specified. Use --help for usage information.\n";
         return 1;
+    }
+
+    // Handle daemon mode
+    if (daemon_mode) {
+        std::cout << "Running in daemon mode. Press Ctrl+C to exit.\n";
+        std::cout << "Cache will be kept persistent until this process terminates.\n";
+
+        // Set up signal handler for graceful shutdown
+        signal(SIGINT, [](int signum) {
+            std::cout << "\nReceived signal " << signum << ", shutting down daemon...\n";
+            auto& manager = UBODTMemoryManager::get_instance();
+            manager.clear_cache();
+            exit(0);
+        });
+
+        // Keep the process running
+        while (true) {
+            std::this_thread::sleep_for(std::chrono::minutes(5));
+            // Periodically check and clean up expired files
+            manager.cleanup_expired_cache_files();
+        }
     }
 
     return 0;
