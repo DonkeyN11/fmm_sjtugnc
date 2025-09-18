@@ -19,6 +19,7 @@
 #include <algorithm>
 #include <fstream>
 #include <chrono>
+#include <filesystem>
 
 namespace FMM {
 namespace MM {
@@ -151,9 +152,24 @@ public:
      */
     void print_status() const;
 
+    /**
+     * Save cache state to persistent storage
+     */
+    void save_cache_state() const;
+
+    /**
+     * Load cache state from persistent storage
+     */
+    void load_cache_state();
+
+    /**
+     * Clean up expired cache files
+     */
+    void cleanup_expired_cache_files();
+
 private:
-    UBODTMemoryManager() = default;
-    ~UBODTMemoryManager() = default;
+    UBODTMemoryManager();
+    ~UBODTMemoryManager();
     UBODTMemoryManager(const UBODTMemoryManager&) = delete;
     UBODTMemoryManager& operator=(const UBODTMemoryManager&) = delete;
 
