@@ -26,4 +26,23 @@ else
     fi
 fi
 
-echo "Installation complete! You can now run 'ubodt_read' from any directory."
+# Install cache manager script
+ln -sf "$SCRIPT_DIR/ubodt_cache_manager" ~/.local/bin/ubodt_cache_manager
+
+# Install daemon runner
+ln -sf "$SCRIPT_DIR/build/ubodt_daemon_runner" ~/.local/bin/ubodt_daemon_runner
+
+# Install client tool
+ln -sf "$SCRIPT_DIR/build/ubodt_client" ~/.local/bin/ubodt_client
+
+echo "Installation complete!"
+echo "Available tools:"
+echo "  ubodt_read          - Original UBODT reader"
+echo "  ubodt_cache_manager - Cache manager (recommended)"
+echo "  ubodt_client       - Direct daemon client"
+echo "  ubodt_daemon_runner - Manual daemon runner"
+echo ""
+echo "Quick start:"
+echo "  ubodt_cache_manager start <ubodt_file>"
+echo "  ubodt_cache_manager status"
+echo "  ubodt_cache_manager stop"
