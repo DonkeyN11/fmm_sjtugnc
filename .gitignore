@@ -99,3 +99,6 @@ sync.sh
 # cache files
 */__pycache__/*
 /cache
+
+# csv results
+*.csv
