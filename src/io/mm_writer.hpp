@@ -20,6 +20,9 @@
 
 #include <iostream>
 #include <fstream>
+#include <vector>
+#include <utility>
+#include <algorithm>
 #include <omp.h>
 
 namespace FMM {
@@ -68,6 +71,11 @@ public:
    */
   void write_result(const FMM::CORE::Trajectory &traj,
                     const FMM::MM::MatchResult &result);
+  /**
+   * Write multiple match results at once (for batch writing)
+   * @param results Vector of pairs containing trajectory and result
+   */
+  void write_results(const std::vector<std::pair<FMM::CORE::Trajectory, FMM::MM::MatchResult>> &results);
 private:
   std::ofstream m_fstream;
   const CONFIG::OutputConfig &config_;

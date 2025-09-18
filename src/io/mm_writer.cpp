@@ -193,5 +193,21 @@ void CSVMatchResultWriter::write_result(
   m_fstream << buf.rdbuf();
 }
 
+void CSVMatchResultWriter::write_results(
+    const std::vector<std::pair<FMM::CORE::Trajectory, FMM::MM::MatchResult>> &results) {
+  // Sort results by trajectory ID
+  std::vector<std::pair<FMM::CORE::Trajectory, FMM::MM::MatchResult>> sorted_results = results;
+  std::sort(sorted_results.begin(), sorted_results.end(),
+    [](const std::pair<FMM::CORE::Trajectory, FMM::MM::MatchResult> &a,
+       const std::pair<FMM::CORE::Trajectory, FMM::MM::MatchResult> &b) {
+      return a.first.id < b.first.id;
+    });
+
+  // Write all results in sorted order
+  for (const auto &item : sorted_results) {
+    write_result(item.first, item.second);
+  }
+}
+
 } //IO
 } //MM

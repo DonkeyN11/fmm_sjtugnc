@@ -27,32 +27,48 @@ void FMMApp::run() {
   SPDLOG_INFO("Progress report step {}", step_size);
   auto corrected_begin = UTIL::get_current_time();
   SPDLOG_INFO("Start to match trajectories");
+
+  // Buffer for storing results when using parallel processing
+  std::vector<std::pair<Trajectory, MM::MatchResult>> result_buffer;
+
   if (config_.use_omp){
-    SPDLOG_INFO("Run map matching parallelly");
+    SPDLOG_INFO("Run map matching parallelly with buffered output");
     int buffer_trajectories_size = 100000;
     while (reader.has_next_trajectory()) {
       std::vector<Trajectory> trajectories =
         reader.read_next_N_trajectories(buffer_trajectories_size);
       int trajectories_fetched = trajectories.size();
+
+      // Resize result buffer to match the number of trajectories
+      result_buffer.resize(trajectories_fetched);
+
       #pragma omp parallel for
       for (int i = 0; i < trajectories_fetched; ++i) {
         Trajectory &trajectory = trajectories[i];
         int points_in_tr = trajectory.geom.get_num_points();
         MM::MatchResult result = mm_model.match_traj(
             trajectory, fmm_config);
-        writer.write_result(trajectory,result);
+
+        // Store result in buffer instead of writing immediately
         #pragma omp critical
-        if (!result.cpath.empty()) {
-          points_matched += points_in_tr;
-        }
-        total_points += points_in_tr;
-        ++progress;
-        if (progress % step_size == 0) {
-          std::stringstream buf;
-          buf << "Progress " << progress << '\n';
-          std::cout << buf.rdbuf();
+        {
+          result_buffer[i] = std::make_pair(trajectory, result);
+          if (!result.cpath.empty()) {
+            points_matched += points_in_tr;
+          }
+          total_points += points_in_tr;
+          ++progress;
+          if (progress % step_size == 0) {
+            std::stringstream buf;
+            buf << "Progress " << progress << '\n';
+            std::cout << buf.rdbuf();
+          }
         }
       }
+
+      // Write all results in sorted order
+      writer.write_results(result_buffer);
+      result_buffer.clear();
     }
   } else {
     SPDLOG_INFO("Run map matching in single thread");
