@@ -104,6 +104,10 @@ class UBODT {
     return num_rows;
   };
 
+  inline void update_delta(double value) {
+    delta = value;
+  }
+
   /**
    * Read UBODT from a file.
    * The format will be infered from the file extension.
@@ -123,13 +127,21 @@ class UBODT {
                                                int multiplier = 50000);
 
   /**
-   * Read UBODT from a binary file
+   * Read UBODT from a binary file (Boost serialization format)
    * @param  filename   input file name
    * @param  multiplier A value used for inserting rows to the UBODT
    * @return  A shared pointer to the UBODT data.
    */
   static std::shared_ptr<UBODT> read_ubodt_binary(const std::string &filename,
                                                   int multiplier = 50000);
+  /**
+   * Read UBODT from a memory-mapped binary file
+   * @param  filename   input file name
+   * @param  multiplier A value used for inserting rows to the UBODT
+   * @return  A shared pointer to the UBODT data.
+   */
+  static std::shared_ptr<UBODT> read_ubodt_mmap_binary(const std::string &filename,
+                                                      int multiplier = 50000);
   /**
    * Estimate the number of rows in a file
    * @param  filename input file name
@@ -142,6 +154,13 @@ class UBODT {
    * @return  a large prime number
    */
   static int find_prime_number(double value);
+
+  /**
+   * Check if a binary file is in memory-mapped format
+   * @param  filename input file name
+   * @return true if the file is in memory-mapped format
+   */
+  static bool is_mmap_binary_format(const std::string &filename);
   constexpr static double LOAD_FACTOR = 2.0; /**< factor measuring the
                                               average number of elements in
                                               a bucket. */
