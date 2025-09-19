@@ -7,6 +7,10 @@
 
 #include <fstream>
 #include <stdexcept>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 #ifdef BOOST_OS_WINDOWS
 #include <boost/throw_exception.hpp>
@@ -188,8 +192,15 @@ std::shared_ptr<UBODT> UBODT::read_ubodt_file(const std::string &filename,
     int multiplier) {
   std::shared_ptr<UBODT> ubodt = nullptr;
   auto start_time = UTIL::get_current_time();
+
+  // Check if it's a memory-mapped binary file by checking file content pattern
   if (UTIL::check_file_extension(filename,"bin")){
-    ubodt = read_ubodt_binary(filename,multiplier);
+    // Check if it's a memory-mapped format by looking at the file structure
+    if (is_mmap_binary_format(filename)) {
+      ubodt = read_ubodt_mmap_binary(filename,multiplier);
+    } else {
+      ubodt = read_ubodt_binary(filename,multiplier);
+    }
   } else if (UTIL::check_file_extension(filename,"csv,txt")) {
     ubodt = read_ubodt_csv(filename,multiplier);
   } else {
@@ -282,4 +293,131 @@ std::shared_ptr<UBODT> UBODT::read_ubodt_binary(const std::string &filename,
   }
   SPDLOG_INFO("Finish reading UBODT with rows {}", NUM_ROWS);
   return table;
+}
+
+std::shared_ptr<UBODT> UBODT::read_ubodt_mmap_binary(const std::string &filename,
+                                                      int multiplier) {
+  SPDLOG_INFO("Reading UBODT file (memory-mapped binary format) from {}", filename);
+
+  // Open the file
+  int fd = open(filename.c_str(), O_RDONLY);
+  if (fd == -1) {
+    SPDLOG_CRITICAL("Failed to open UBODT file: {}", filename);
+    throw std::runtime_error("Failed to open UBODT file: " + filename);
+  }
+
+  // Get file size
+  struct stat sb;
+  if (fstat(fd, &sb) == -1) {
+    close(fd);
+    SPDLOG_CRITICAL("Failed to get file size: {}", filename);
+    throw std::runtime_error("Failed to get file size: " + filename);
+  }
+  off_t file_size = sb.st_size;
+
+  // Memory map the file
+  void* mapped_data = mmap(nullptr, file_size, PROT_READ, MAP_PRIVATE, fd, 0);
+  if (mapped_data == MAP_FAILED) {
+    close(fd);
+    SPDLOG_CRITICAL("Failed to mmap UBODT file: {}", filename);
+    throw std::runtime_error("Failed to mmap UBODT file: " + filename);
+  }
+
+  // Calculate number of records
+  size_t record_size = sizeof(NETWORK::NodeIndex) * 4 + sizeof(NETWORK::EdgeIndex) + sizeof(double);
+  size_t num_records = file_size / record_size;
+
+  SPDLOG_INFO("UBODT file contains {} records", num_records);
+
+  // Create UBODT table
+  int buckets = find_prime_number(num_records / LOAD_FACTOR);
+  std::shared_ptr<UBODT> table = std::make_shared<UBODT>(buckets, multiplier);
+
+  // Process records
+  const char* data = static_cast<const char*>(mapped_data);
+  int progress_step = 1000000;
+  double delta = 0.0;
+
+  for (size_t i = 0; i < num_records; ++i) {
+    Record *r = (Record *) malloc(sizeof(Record));
+
+    // Read record directly from memory-mapped data
+    memcpy(&r->source, data + i * record_size, sizeof(NETWORK::NodeIndex));
+    memcpy(&r->target, data + i * record_size + sizeof(NETWORK::NodeIndex), sizeof(NETWORK::NodeIndex));
+    memcpy(&r->first_n, data + i * record_size + 2 * sizeof(NETWORK::NodeIndex), sizeof(NETWORK::NodeIndex));
+    memcpy(&r->prev_n, data + i * record_size + 3 * sizeof(NETWORK::NodeIndex), sizeof(NETWORK::NodeIndex));
+    memcpy(&r->next_e, data + i * record_size + 4 * sizeof(NETWORK::NodeIndex), sizeof(NETWORK::EdgeIndex));
+    memcpy(&r->cost, data + i * record_size + 4 * sizeof(NETWORK::NodeIndex) + sizeof(NETWORK::EdgeIndex), sizeof(double));
+
+    r->next = nullptr;
+    table->insert(r);
+
+    if (r->cost > delta) delta = r->cost;
+
+    if ((i + 1) % progress_step == 0) {
+      SPDLOG_INFO("Read rows {}", i + 1);
+    }
+  }
+
+  // Clean up
+  munmap(mapped_data, file_size);
+  close(fd);
+
+  double lf = num_records / (double) buckets;
+  SPDLOG_TRACE("Estimated load factor #elements/#tablebuckets {}", lf);
+  if (lf > 10) {
+    SPDLOG_WARN("Load factor is too large.");
+  }
+
+  table->update_delta(delta);
+  SPDLOG_INFO("Finish reading UBODT with {} rows, delta {}", num_records, delta);
+  return table;
+}
+
+bool UBODT::is_mmap_binary_format(const std::string &filename) {
+  // Open the file
+  int fd = open(filename.c_str(), O_RDONLY);
+  if (fd == -1) {
+    return false;
+  }
+
+  // Get file size
+  struct stat sb;
+  if (fstat(fd, &sb) == -1) {
+    close(fd);
+    return false;
+  }
+  off_t file_size = sb.st_size;
+
+  // Expected record size for memory-mapped format
+  size_t expected_record_size = sizeof(NETWORK::NodeIndex) * 4 + sizeof(NETWORK::EdgeIndex) + sizeof(double);
+
+  // Check if file size is a multiple of expected record size
+  if (file_size % expected_record_size != 0) {
+    close(fd);
+    return false;
+  }
+
+  // For files with "_mmap" in the name, assume mmap format
+  if (filename.find("_mmap") != std::string::npos) {
+    close(fd);
+    return true;
+  }
+
+  // Read first few bytes to check pattern
+  // Memory-mapped format typically starts with small integers (node indices)
+  char buffer[32];
+  ssize_t bytes_read = read(fd, buffer, sizeof(buffer));
+  close(fd);
+
+  if (bytes_read < (ssize_t)expected_record_size) {
+    return false;
+  }
+
+  // Check if first field looks like a node index (typically small integer)
+  NETWORK::NodeIndex first_value;
+  memcpy(&first_value, buffer, sizeof(NETWORK::NodeIndex));
+
+  // If first value is reasonable (not extremely large), likely mmap format
+  return first_value < 1000000; // Reasonable upper bound for node indices
 }
