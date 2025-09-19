@@ -123,7 +123,7 @@ file(GLOB IOGlob src/io/*.cpp)
 file(GLOB NetworkGlob src/network/*.cpp)
 file(GLOB UtilGlob src/util/*.cpp)
 file(GLOB MMGlob src/mm/*.cpp)
-file(GLOB FMMGlob src/mm/fmm/*.cpp src/mm/fmm/ubodt_memory_manager.cpp src/mm/fmm/ubodt_daemon.cpp)
+file(GLOB FMMGlob src/mm/fmm/*.cpp)
 file(GLOB STMATCHGlob src/mm/stmatch/*.cpp)
 file(GLOB CMMGlob src/mm/cmm/*.cpp)
 file(GLOB h3Glob third_party/h3/lib/*.c)
@@ -162,14 +162,7 @@ target_link_libraries(fmm FMMLIB)
 add_executable(ubodt_gen src/app/ubodt_gen_app.cpp)
 target_link_libraries(ubodt_gen FMMLIB)
 
-add_executable(ubodt_read src/app/ubodt_read.cpp)
-target_link_libraries(ubodt_read FMMLIB)
 
-add_executable(ubodt_client src/app/ubodt_client.cpp)
-target_link_libraries(ubodt_client FMMLIB)
-
-add_executable(ubodt_daemon_runner src/app/ubodt_daemon_runner.cpp)
-target_link_libraries(ubodt_daemon_runner FMMLIB)
 
 add_executable(ubodt_converter_simple src/app/ubodt_converter_simple.cpp)
 target_link_libraries(ubodt_converter_simple FMMLIB)
@@ -190,7 +183,7 @@ message(STATUS "Installation folder ${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS FMMLIB LIBRARY DESTINATION lib)
 
-install(TARGETS fmm ubodt_gen ubodt_read ubodt_client stmatch h3mm DESTINATION bin)
+install(TARGETS fmm ubodt_gen stmatch h3mm DESTINATION bin)
 
 if(FMM_INSTALL_HEADER)
   message(STATUS "Install fmm headers")
