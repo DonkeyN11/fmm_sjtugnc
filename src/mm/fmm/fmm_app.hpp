@@ -13,7 +13,6 @@
 
 #include "fmm_app_config.hpp"
 #include "fmm_algorithm.hpp"
-#include "ubodt_memory_manager.hpp"
 
 namespace FMM{
 namespace MM{
