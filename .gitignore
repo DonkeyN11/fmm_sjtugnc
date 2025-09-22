@@ -102,3 +102,4 @@ sync.sh
 
 # csv results
 *.csv
+*.txt

@@ -41,6 +41,7 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
   if (config_.write_speed) header += ";speed";
+  if (config_.write_timestamp) header += ";timestamp";
   m_fstream << header << '\n';
 }
 
@@ -184,6 +185,15 @@ void CSVMatchResultWriter::write_result(
         double duration = traj.timestamps[i] - traj.timestamps[i-1];
         buf << (duration>0?(result.opt_candidate_path[i].sp_dist/duration):0)
             << (i==N-1?"":",");
+      }
+    }
+  }
+  if (config_.write_timestamp) {
+    buf << ";";
+    if (!traj.timestamps.empty()) {
+      int N = traj.timestamps.size();
+      for (int i = 0; i < N; ++i) {
+        buf << traj.timestamps[i] << (i==N-1?"":",");
       }
     }
   }
