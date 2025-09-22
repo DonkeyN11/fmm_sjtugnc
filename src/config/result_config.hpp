@@ -53,6 +53,8 @@ struct OutputConfig {
                                   two points) will be exported */
   bool write_speed = false; /**< if true, speed (sp_dist/duration)
                                   will be exported */
+  bool write_timestamp = false; /**< if true, timestamp (original timestamp
+                                    of each GPS point) will be exported */
 };
 
 /**

@@ -33,6 +33,8 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "duration ";
   if (output_config.write_speed)
     ss << "speed ";
+  if (output_config.write_timestamp)
+    ss << "timestamp ";
   SPDLOG_INFO("ResultConfig");
   SPDLOG_INFO("File: {}",file);
   SPDLOG_INFO("Fields: {}",ss.str());
@@ -70,6 +72,8 @@ std::string FMM::CONFIG::ResultConfig::to_string() const{
     oss << "duration ";
   if (output_config.write_speed)
     oss << "speed ";
+  if (output_config.write_timestamp)
+    oss << "timestamp ";
   return oss.str();
 };
 
@@ -124,6 +128,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
     if (xml_data.get_child_optional("config.output.fields.speed")) {
       config.output_config.write_speed = true;
     }
+    if (xml_data.get_child_optional("config.output.fields.timestamp")) {
+      config.output_config.write_timestamp = true;
+    }
     if (xml_data.get_child_optional("config.output.fields.all")) {
       config.output_config.write_opath = true;
       config.output_config.write_pgeom = true;
@@ -139,6 +146,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
       config.output_config.write_length = true;
       config.output_config.write_duration = true;
       config.output_config.write_speed = true;
+      config.output_config.write_timestamp = true;
     }
   }
   return config;
@@ -195,6 +203,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     if (dict.find("speed") != dict.end()) {
       config.output_config.write_speed = true;
     }
+    if (dict.find("timestamp") != dict.end()) {
+      config.output_config.write_timestamp = true;
+    }
     if (dict.find("all") != dict.end()) {
       config.output_config.write_opath = true;
       config.output_config.write_pgeom = true;
@@ -210,6 +221,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
       config.output_config.write_length = true;
       config.output_config.write_duration = true;
       config.output_config.write_speed = true;
+      config.output_config.write_timestamp = true;
     }
   }
   return config;
@@ -252,5 +264,5 @@ void FMM::CONFIG::ResultConfig::register_help(std::ostringstream &oss){
   oss<<"--output (required) <string>: Output file name\n";
   oss<<"--output_fields (optional) <string>: Output fields\n";
   oss<<"  opath,cpath,tpath,mgeom,pgeom,\n";
-  oss<<"  offset,error,spdist,tp,ep,cumu_prob,length,duration,speed,all\n";
+  oss<<"  offset,error,spdist,tp,ep,cumu_prob,length,duration,speed,timestamp,all\n";
 };
