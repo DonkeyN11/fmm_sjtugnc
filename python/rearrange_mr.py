@@ -46,7 +46,7 @@ class HighPerformanceSorter:
 
         if output_file is None:
             base_name = os.path.splitext(os.path.basename(input_file))[0]
-            self.output_file = f"output/{base_name}_rearrange.csv"
+            self.output_file = f"output/{base_name}_rearranged.csv"
         else:
             self.output_file = output_file
 
@@ -313,7 +313,7 @@ def main():
     """Main function."""
     if len(sys.argv) < 2:
         print("Usage: python rearrange_mr.py <input_file> [output_file]")
-        print("Example: python rearrange_mr.py output/mr_10thpgeom_cumu.txt")
+        print("Example: python rearrange_mr.py output/mr_cumu_ts_rearranged.txt")
         sys.exit(1)
 
     input_file = sys.argv[1]
