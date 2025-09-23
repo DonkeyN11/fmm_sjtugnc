@@ -8,10 +8,8 @@ import os
 import sys
 import time
 import numpy as np
-import pandas as pd
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, wait, FIRST_COMPLETED
 from multiprocessing import cpu_count
-import mmap
 import re
 import argparse
 import warnings
@@ -34,10 +32,11 @@ POINT_PATTERN = re.compile(r'POINT\s*\(([^)]+)\)')
 
 class FastTrajectoryProcessor:
     def __init__(self, input_file, output_file=None, shapefile_path=None,
-                 pixel_size=0.001, sigma=2.0, workers=None):
+                 pixel_size=0.001, sigma=2.0, workers=None, batch_size=50000):
         self.input_file = input_file
         self.pixel_size = pixel_size
         self.sigma = sigma
+        self.batch_size = batch_size
 
         # Use all available cores by default
         self.num_workers = workers or min(cpu_count(), 64)
@@ -156,13 +155,9 @@ class FastTrajectoryProcessor:
 
         return points
 
-    def process_chunk(self, chunk_lines, chunk_id):
+    def process_chunk(self, chunk_lines):
         """Process a chunk of lines"""
         points = []
-
-        # Skip header if CSV format and first chunk
-        if self.file_format == 'csv' and chunk_id == 0:
-            chunk_lines = chunk_lines[1:]
 
         for line in chunk_lines:
             line = line.strip()
@@ -189,12 +184,6 @@ class FastTrajectoryProcessor:
                     continue
 
         return np.array(points, dtype=np.float32) if points else np.array([], dtype=np.float32).reshape(0, 2)
-
-    def count_lines(self):
-        """Count total lines in file"""
-        with open(self.input_file, 'rb') as f:
-            buf_size = 1024 * 1024  # 1MB buffer
-            return sum(buf.count(b'\n') for buf in iter(lambda: f.read(buf_size), b''))
 
     def determine_bounds(self, sample_size=200000):
         """Determine geographical bounds from sample data"""
@@ -251,34 +240,25 @@ class FastTrajectoryProcessor:
         print(f"✓ Grid size: {width} x {height} pixels")
 
     def read_file_batches(self, batch_size=50000):
-        """Read file in batches using memory mapping"""
-        with open(self.input_file, 'r+b') as f:
-            with mmap.mmap(f.fileno(), 0, access=mmap.ACCESS_READ) as mm:
-                content = mm.read().decode('utf-8', errors='ignore')
-                lines = content.split('\n')
+        """Stream file in batches without loading everything into memory"""
+        with open(self.input_file, 'r', encoding='utf-8', errors='ignore') as f:
+            if self.file_format == 'csv':
+                # Skip header but keep it available for downstream use if needed
+                next(f, None)
 
-                batch_lines = []
-                batch_number = 0
+            batch_lines = []
+            for line in f:
+                stripped = line.rstrip('\n')
+                if not stripped:
+                    continue
 
-                # Skip header if CSV format
-                if self.file_format == 'csv' and lines:
-                    header = lines[0]
-                    yield [header], 0
-                    batch_number += 1
-                    lines = lines[1:]
+                batch_lines.append(stripped)
+                if len(batch_lines) >= batch_size:
+                    yield batch_lines
+                    batch_lines = []
 
-                for line in lines:
-                    if line.strip():
-                        batch_lines.append(line)
-
-                        if len(batch_lines) >= batch_size:
-                            yield batch_lines, batch_number
-                            batch_lines = []
-                            batch_number += 1
-
-                # Yield remaining lines
-                if batch_lines:
-                    yield batch_lines, batch_number
+            if batch_lines:
+                yield batch_lines
 
     def update_density_grid(self, density_grid, points):
         """Update density grid with new points"""
@@ -293,10 +273,10 @@ class FastTrajectoryProcessor:
         lon_pixels = np.clip(lon_pixels, 0, self.grid_shape[1] - 1)
         lat_pixels = np.clip(lat_pixels, 0, self.grid_shape[0] - 1)
 
-        # Fast frequency counting using bincount
+        # Fast frequency counting scoped to touched cells only
         flat_indices = lat_pixels * self.grid_shape[1] + lon_pixels
-        counts = np.bincount(flat_indices, minlength=self.grid_shape[0] * self.grid_shape[1])
-        density_grid += counts.reshape(self.grid_shape)
+        unique_indices, counts = np.unique(flat_indices, return_counts=True)
+        density_grid.ravel()[unique_indices] += counts
 
     def process(self):
         """Main processing method"""
@@ -306,36 +286,38 @@ class FastTrajectoryProcessor:
             # Step 1: Determine bounds
             self.determine_bounds()
 
-            # Step 2: Count lines
-            total_lines = self.count_lines()
-            self.stats['total_lines'] = total_lines
-            print(f"📊 Total lines: {total_lines:,}")
-
-            # Step 3: Process file
             print("⚡ Starting parallel processing...")
             density_grid = np.zeros(self.grid_shape, dtype=np.float32)
 
-            with ProcessPoolExecutor(max_workers=self.num_workers) as executor:
-                futures = []
+            total_lines = 0
 
-                for batch_lines, batch_id in self.read_file_batches():
+            with ProcessPoolExecutor(max_workers=self.num_workers) as executor:
+                pending = set()
+                max_pending = max(1, self.num_workers * 2)
+
+                for batch_lines in self.read_file_batches(self.batch_size):
+                    total_lines += len(batch_lines)
+
                     # Split batch into chunks for parallel processing
                     chunk_size = max(1, len(batch_lines) // self.num_workers)
                     chunks = [batch_lines[i:i + chunk_size] for i in range(0, len(batch_lines), chunk_size)]
 
-                    for chunk_id, chunk in enumerate(chunks):
-                        future = executor.submit(self.process_chunk, chunk, batch_id * 100 + chunk_id)
-                        futures.append(future)
+                    for chunk in chunks:
+                        future = executor.submit(self.process_chunk, chunk)
+                        pending.add(future)
 
-                # Process completed futures
-                for future in futures:
-                    try:
-                        chunk_points = future.result()
-                        if len(chunk_points) > 0:
-                            self.update_density_grid(density_grid, chunk_points)
-                            self.stats['points_processed'] += len(chunk_points)
-                    except Exception as e:
-                        print(f"⚠ Error processing chunk: {e}")
+                        if len(pending) >= max_pending:
+                            done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                            for completed in done:
+                                self._integrate_future_result(completed, density_grid)
+
+                while pending:
+                    done, pending = wait(pending, return_when=FIRST_COMPLETED)
+                    for completed in done:
+                        self._integrate_future_result(completed, density_grid)
+
+            self.stats['total_lines'] = total_lines
+            print(f"📊 Total lines: {total_lines:,}")
 
             # Step 4: Apply smoothing
             if HAS_GIS_LIBS:
@@ -358,6 +340,16 @@ class FastTrajectoryProcessor:
         except Exception as e:
             print(f"❌ Error during processing: {e}")
             raise
+
+    def _integrate_future_result(self, future, density_grid):
+        """Safely merge results from a completed worker"""
+        try:
+            chunk_points = future.result()
+            if len(chunk_points) > 0:
+                self.update_density_grid(density_grid, chunk_points)
+                self.stats['points_processed'] += len(chunk_points)
+        except Exception as e:
+            print(f"⚠ Error processing chunk: {e}")
 
     def create_visualization(self, density_grid):
         """Create visualization"""
@@ -423,7 +415,8 @@ def main():
             shapefile_path=args.shapefile,
             pixel_size=args.pixel_size,
             sigma=args.sigma,
-            workers=args.workers
+            workers=args.workers,
+            batch_size=args.batch_size
         )
 
         output_path = processor.process()
