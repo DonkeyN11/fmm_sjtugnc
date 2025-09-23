@@ -11,6 +11,7 @@ FMM is an open source map matching framework integrating hidden Markov models an
 FMM provides Python and C++ APIs and can be used in the command line, in Jupyter notebooks, or in web app.
 
 ### Table of Contents
+- [Pipeline](#pipeline)
 - [Features](#features)
 - [Screenshots of notebook](#screenshots-of-notebook)
 - [Requirements](#requirements)
@@ -18,6 +19,14 @@ FMM provides Python and C++ APIs and can be used in the command line, in Jupyter
 - [Documentation](#documentation)
 - [Code docs for developer](#code-docs-for-developer)
 - [Contact and citation](#contact-and-citation)
+
+### Pipeline
+- **input**: input/trajectory/all_2hour_data/all_2hour_data_Jan.txt
+- **preprocess**: python clean_trajectory_data_optimized.py -> clean_bound_dist.csv
+- **matching**: fmm input/config/fmm_config_omp.xml -> output/mr_cumu_ts.txt
+- **rearrange**: python python/rearrange_mr.py -> output/mr_cumu_ts_rearranged.csv
+- **plot_density**: python python/plot_raw_points_ultra_optimized.py output/mr_cumu_ts_rearranged.csv -s input/map/haikou/edges.shp --workers 128
+
 
 ### Features
 - **High performance**: C++ implementation using Rtree, optimized routing, parallel computing (OpenMP).
