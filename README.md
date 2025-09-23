@@ -25,7 +25,7 @@ FMM provides Python and C++ APIs and can be used in the command line, in Jupyter
 - **preprocess**: python clean_trajectory_data_optimized.py -> clean_bound_dist.csv
 - **matching**: fmm input/config/fmm_config_omp.xml -> output/mr_cumu_ts.txt
 - **rearrange**: python python/rearrange_mr.py -> output/mr_cumu_ts_rearranged.csv
-- **plot_density**: python python/plot_raw_points_ultra_optimized.py output/mr_cumu_ts_rearranged.csv -s input/map/haikou/edges.shp --workers 128
+- **plot_density**: python python/plot_simple_fast.py output/mr_cumu_ts_rearranged.csv --workers 128 --shapefile input/map/haikou/edges.shp
 
 
 ### Features
