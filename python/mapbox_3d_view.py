@@ -2,19 +2,22 @@
 """Generate a Mapbox GL JS viewer for FMM map-matching output."""
 import argparse
 import csv
+csv.field_size_limit(10 ** 7)
 import json
 import os
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 
 def parse_linestring(wkt: str) -> List[List[float]]:
     wkt = (wkt or "").strip()
-    prefix = "LINESTRING("
-    suffix = ")"
-    if not (wkt.startswith(prefix) and wkt.endswith(suffix)):
+    if not wkt.upper().startswith("LINESTRING"):
         return []
-    body = wkt[len(prefix):-len(suffix)]
+    open_idx = wkt.find("(")
+    close_idx = wkt.rfind(")")
+    if open_idx == -1 or close_idx == -1 or close_idx <= open_idx:
+        return []
+    body = wkt[open_idx + 1:close_idx]
     coords: List[List[float]] = []
     for token in body.split(","):
         parts = token.strip().split()
@@ -66,10 +69,44 @@ def build_feature(row: Dict[str, str]) -> Dict:
     return feature
 
 
-def render_html(token: str, geojson: Dict, bounds: Tuple[float, float, float, float]) -> str:
+def build_raw_point_features(path: Path, ids: Set[str], bounds: Tuple[float, float, float, float]) -> Tuple[List[Dict], Tuple[float, float, float, float]]:
+    features: List[Dict] = []
+    updated_bounds = bounds
+    if not path or not path.exists():
+        return features, updated_bounds
+
+    with path.open(newline='', encoding='utf-8') as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=';')
+        for row in reader:
+            traj_id = row.get("id")
+            if traj_id not in ids:
+                continue
+            coords = parse_linestring(row.get("geom", ""))
+            if not coords:
+                continue
+            updated_bounds = update_bounds(updated_bounds, coords)
+            original_id = row.get("original_id")
+            for idx, (lon, lat) in enumerate(coords):
+                features.append({
+                    "type": "Feature",
+                    "properties": {
+                        "id": traj_id,
+                        "original_id": original_id,
+                        "seq": idx,
+                    },
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": [lon, lat],
+                    },
+                })
+    return features, updated_bounds
+
+
+def render_html(token: str, geojson: Dict, bounds: Tuple[float, float, float, float], raw_points: Optional[Dict] = None) -> str:
     min_lon, min_lat, max_lon, max_lat = bounds
     bounds_js = json.dumps([[min_lon, min_lat], [max_lon, max_lat]])
     geojson_js = json.dumps(geojson)
+    raw_points_js = json.dumps(raw_points) if raw_points is not None else "null"
     html = f"""<!DOCTYPE html>
 <html>
 <head>
@@ -90,10 +127,11 @@ def render_html(token: str, geojson: Dict, bounds: Tuple[float, float, float, fl
 <script>
   mapboxgl.accessToken = {json.dumps(token)};
   const routeGeojson = {geojson_js};
+  const rawPointsGeojson = {raw_points_js};
   const bounds = {bounds_js};
   const map = new mapboxgl.Map({{
     container: 'map',
-    style: 'mapbox://styles/mapbox/satellite-streets-v12',
+    style: 'mapbox://styles/mapbox/navigation-day-v1',
     center: [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2],
     zoom: 12,
     pitch: 60,
@@ -136,8 +174,39 @@ def render_html(token: str, geojson: Dict, bounds: Tuple[float, float, float, fl
       }}
     }});
 
-    map.addLayer({{
-      id: '3d-buildings',
+    if (rawPointsGeojson) {{
+      map.addSource('raw-points', {{
+        type: 'geojson',
+        data: rawPointsGeojson
+      }});
+      map.addLayer({{
+        id: 'raw-points-layer',
+        type: 'circle',
+        source: 'raw-points',
+        paint: {{
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 3,
+            16, 8
+          ],
+          'circle-color': '#ff8c00',
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1
+        }}
+      }});
+    }}
+
+    const layers = map.getStyle().layers || [];
+    let labelLayerId = null;
+    for (const layer of layers) {{
+      if (layer.type === 'symbol' && layer.layout && layer.layout['text-field']) {{
+        labelLayerId = layer.id;
+        break;
+      }}
+    }}
+
+    const buildingLayer = {{
+      id: 'custom-3d-buildings',
       source: 'composite',
       'source-layer': 'building',
       filter: ['==', ['get', 'extrude'], 'true'],
@@ -149,7 +218,12 @@ def render_html(token: str, geojson: Dict, bounds: Tuple[float, float, float, fl
         'fill-extrusion-base': ['get', 'min_height'],
         'fill-extrusion-opacity': 0.6
       }}
-    }});
+    }};
+    if (labelLayerId) {{
+      map.addLayer(buildingLayer, labelLayerId);
+    }} else {{
+      map.addLayer(buildingLayer);
+    }}
 
     const hasExtent = bounds[0][0] !== bounds[1][0] || bounds[0][1] !== bounds[1][1];
     if (hasExtent) {{
@@ -169,6 +243,10 @@ def main():
     parser = argparse.ArgumentParser(description="Create a Mapbox 3D viewer for FMM map-matching results.")
     parser.add_argument("input", help="Path to the FMM output CSV containing a 'pgeom' LINESTRING column")
     parser.add_argument("--output", default="output/fmm_mapbox_view.html", help="HTML file to write")
+    parser.add_argument(
+        "--raw-trajectories",
+        help="CSV with original trajectories (id;original_id;geom) to overlay as point features",
+    )
     parser.add_argument("--limit", type=int, default=5, help="Number of trajectories to include (0 means all)")
     parser.add_argument("--token", default=os.environ.get("MAPBOX_ACCESS_TOKEN"), help="Mapbox access token (defaults to MAPBOX_ACCESS_TOKEN env var)")
 
@@ -199,8 +277,30 @@ def main():
     if not features:
         raise SystemExit("No valid LINESTRING geometries found in the input file.")
 
+    id_set: Set[str] = set()
+    for feature in features:
+        props = feature.get("properties", {})
+        feature_id = props.get("id")
+        if feature_id is not None:
+            id_set.add(str(feature_id))
+
+    raw_points_geojson: Optional[Dict] = None
+    raw_path: Optional[Path]
+    if args.raw_trajectories:
+        raw_path = Path(args.raw_trajectories)
+    else:
+        default_raw_path = Path("input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered.csv")
+        raw_path = default_raw_path if default_raw_path.exists() else None
+
+    if raw_path:
+        if not raw_path.exists():
+            raise SystemExit(f"Raw trajectory file not found: {raw_path}")
+        raw_point_features, bounds = build_raw_point_features(raw_path, id_set, bounds)
+        if raw_point_features:
+            raw_points_geojson = {"type": "FeatureCollection", "features": raw_point_features}
+
     geojson = {"type": "FeatureCollection", "features": features}
-    html = render_html(args.token, geojson, bounds)
+    html = render_html(args.token, geojson, bounds, raw_points_geojson)
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
