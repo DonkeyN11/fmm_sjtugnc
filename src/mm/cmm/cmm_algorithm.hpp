@@ -4,8 +4,8 @@
  * CMM algorithm implementation that uses GNSS covariance matrix
  * and protection levels for more accurate map matching.
  *
- * @author: Generated for CMM implementation
- * @version: 2025.01.01
+ * @author: Chenzhang Ning
+ * @version: 2025.09.29
  */
 
 #ifndef FMM_CMM_ALGORITHM_H_
