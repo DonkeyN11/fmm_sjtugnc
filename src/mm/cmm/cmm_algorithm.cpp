@@ -11,8 +11,9 @@
 #include "io/mm_writer.hpp"
 
 // #include <Eigen/Dense>
-#include <cmath>
 #include <algorithm>
+#include <cmath>
+#include <numeric>
 
 using namespace FMM;
 using namespace FMM::CORE;
@@ -37,7 +38,7 @@ void CovarianceMapMatchConfig::print() const {
 
 CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     const boost::property_tree::ptree &xml_data) {
-    int k = xml_data.get("config.parameters.k", 8);
+    int k = xml_data.get("config.parameters.k", 8); 
     int min_candidates = xml_data.get("config.parameters.min_candidates", 3);
     double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 2.0);
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
@@ -90,38 +91,30 @@ double CovarianceMapMatch::calculate_emission_probability(
     const CORE::Point &point_candidate,
     const CovarianceMatrix &covariance) const {
 
-    // Extract coordinates
     double obs_x = boost::geometry::get<0>(point_observed);
     double obs_y = boost::geometry::get<1>(point_observed);
     double cand_x = boost::geometry::get<0>(point_candidate);
     double cand_y = boost::geometry::get<1>(point_candidate);
 
-    // Calculate difference vector
     double dx = obs_x - cand_x;
     double dy = obs_y - cand_y;
-    Vector2d diff(dx, dy);
 
-    // Get 2D covariance matrix
     Matrix2d cov = covariance.to_2d_matrix();
-
-    // Calculate inverse of covariance matrix
     Matrix2d cov_inv = cov.inverse();
+    double det = cov.determinant();
+    if (det <= 0) {
+        return 0.0;
+    }
 
-    // Calculate Mahalanobis distance squared manually
     double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
                                  2 * cov_inv.m[0][1] * dx * dy +
                                  cov_inv.m[1][1] * dy * dy;
 
-    // Calculate emission probability using multivariate Gaussian distribution
-    double det = cov.determinant();
     double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
-    double probability = normalization * std::exp(-0.5 * mahalanobis_dist_sq);
-
-    // Return log probability to avoid numerical underflow
-    return std::log(probability);
+    return normalization * std::exp(-0.5 * mahalanobis_dist_sq);
 }
 
-Traj_Candidates CovarianceMapMatch::search_candidates_with_protection_level(
+CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_level(
     const CORE::LineString &geom,
     const std::vector<CovarianceMatrix> &covariances,
     const std::vector<double> &protection_levels,
@@ -129,75 +122,108 @@ Traj_Candidates CovarianceMapMatch::search_candidates_with_protection_level(
 
     SPDLOG_DEBUG("Search candidates with protection level for {} points", geom.get_num_points());
 
-    Traj_Candidates all_candidates;
+    CandidateSearchResult result;
     int num_points = geom.get_num_points();
+    result.candidates.reserve(num_points);
+    result.emission_probabilities.reserve(num_points);
 
     for (int i = 0; i < num_points; ++i) {
-        // Get current point and its covariance/protection level
         CORE::Point point = geom.get_point(i);
         const CovarianceMatrix &cov = covariances[i];
         double protection_level = protection_levels[i];
 
-        // Calculate search radius based on protection level and uncertainty
         double uncertainty = cov.get_2d_uncertainty();
         double search_radius = protection_level * config.protection_level_multiplier + uncertainty;
 
         SPDLOG_TRACE("Point {}: uncertainty={}, protection_level={}, search_radius={}",
                      i, uncertainty, protection_level, search_radius);
 
-        // Search candidates using network's KNN search - create a temporary LineString for this point
         CORE::LineString single_point_geom;
         single_point_geom.add_point(point);
         Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
         Point_Candidates point_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
 
-        // Filter candidates based on Mahalanobis distance
-        Point_Candidates filtered_candidates;
-        for (const Candidate &cand : point_candidates) {
-            double mahalanobis_dist_sq = 0.0;
+        Matrix2d cov_mat = cov.to_2d_matrix();
+        Matrix2d cov_inv = cov_mat.inverse();
+        double det = cov_mat.determinant();
+        bool valid_covariance = det > 0;
 
-            // Calculate Mahalanobis distance
-            double obs_x = boost::geometry::get<0>(point);
-            double obs_y = boost::geometry::get<1>(point);
+        Point_Candidates selected_candidates;
+        std::vector<double> raw_probabilities;
+        selected_candidates.reserve(point_candidates.size());
+        raw_probabilities.reserve(point_candidates.size());
+
+        double mahalanobis_threshold = protection_level * protection_level;
+
+        double obs_x = boost::geometry::get<0>(point);
+        double obs_y = boost::geometry::get<1>(point);
+
+        for (const Candidate &cand : point_candidates) {
             double cand_x = boost::geometry::get<0>(cand.point);
             double cand_y = boost::geometry::get<1>(cand.point);
-
             double dx = obs_x - cand_x;
             double dy = obs_y - cand_y;
-            Vector2d diff(dx, dy);
 
-            Matrix2d cov_mat = cov.to_2d_matrix();
-            Matrix2d cov_inv = cov_mat.inverse();
-            mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
-                                 2 * cov_inv.m[0][1] * dx * dy +
-                                 cov_inv.m[1][1] * dy * dy;
+            double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
+                                         2 * cov_inv.m[0][1] * dx * dy +
+                                         cov_inv.m[1][1] * dy * dy;
 
-            // Keep candidate if within reasonable Mahalanobis distance
-            double mahalanobis_threshold = protection_level * protection_level;
             if (mahalanobis_dist_sq <= mahalanobis_threshold) {
-                filtered_candidates.push_back(cand);
+                selected_candidates.push_back(cand);
+
+                double probability = 0.0;
+                if (valid_covariance) {
+                    double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
+                    probability = normalization * std::exp(-0.5 * mahalanobis_dist_sq);
+                }
+                raw_probabilities.push_back(probability);
             }
         }
 
-        // Ensure minimum number of candidates
-        if (filtered_candidates.size() < config.min_candidates) {
-            // Sort by distance and keep closest ones
-            std::sort(point_candidates.begin(), point_candidates.end(),
-                     [](const Candidate &a, const Candidate &b) {
-                         return a.dist < b.dist;
-                     });
+        if (selected_candidates.size() < static_cast<size_t>(config.min_candidates) && !point_candidates.empty()) {
+            Point_Candidates sorted_candidates = point_candidates;
+            std::sort(sorted_candidates.begin(), sorted_candidates.end(),
+                      [](const Candidate &a, const Candidate &b) {
+                          return a.dist < b.dist;
+                      });
 
-            int keep_count = std::min(config.min_candidates, (int)point_candidates.size());
-            filtered_candidates.assign(point_candidates.begin(),
-                                     point_candidates.begin() + keep_count);
+            size_t keep_count = std::min(static_cast<size_t>(config.min_candidates), sorted_candidates.size());
+            for (size_t idx = 0; idx < keep_count; ++idx) {
+                const Candidate &candidate = sorted_candidates[idx];
+                auto already_selected = std::any_of(selected_candidates.begin(), selected_candidates.end(),
+                                                    [&candidate](const Candidate &existing) {
+                                                        return existing.index == candidate.index &&
+                                                               existing.edge == candidate.edge &&
+                                                               existing.offset == candidate.offset;
+                                                    });
+                if (!already_selected) {
+                    selected_candidates.push_back(candidate);
+                    raw_probabilities.push_back(0.0);
+                }
+            }
         }
 
-        SPDLOG_TRACE("Point {}: {} candidates found", i, filtered_candidates.size());
-        all_candidates.push_back(filtered_candidates);
+        double prob_sum = std::accumulate(raw_probabilities.begin(), raw_probabilities.end(), 0.0);
+        std::vector<double> normalized_probabilities;
+        normalized_probabilities.reserve(raw_probabilities.size());
+
+        if (prob_sum > 0.0) {
+            for (double prob : raw_probabilities) {
+                normalized_probabilities.push_back(prob / prob_sum);
+            }
+        } else if (!raw_probabilities.empty()) {
+            double uniform_prob = 1.0 / raw_probabilities.size();
+            normalized_probabilities.assign(raw_probabilities.size(), uniform_prob);
+            SPDLOG_WARN("Point {}: covariance determinant non-positive or no candidates within PL, using uniform emission", i);
+        }
+
+        SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
+        result.candidates.push_back(std::move(selected_candidates));
+        result.emission_probabilities.push_back(std::move(normalized_probabilities));
     }
 
     SPDLOG_DEBUG("Candidate search completed");
-    return all_candidates;
+    return result;
 }
 
 MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
@@ -211,15 +237,17 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     }
 
     SPDLOG_DEBUG("Search candidates with protection level");
-    Traj_Candidates tc = search_candidates_with_protection_level(
+    CandidateSearchResult candidate_result = search_candidates_with_protection_level(
         traj.geom, traj.covariances, traj.protection_levels, config);
+
+    const Traj_Candidates &tc = candidate_result.candidates;
+    const std::vector<std::vector<double>> &emission_probabilities = candidate_result.emission_probabilities;
 
     SPDLOG_DEBUG("Trajectory candidate {}", tc);
     if (tc.empty()) return MatchResult{};
 
     SPDLOG_DEBUG("Generate transition graph");
-    // Create transition graph with dummy GPS error (will be overridden by CMM emission probs)
-    TransitionGraph tg(tc, 1.0);
+    TransitionGraph tg(tc, emission_probabilities);
 
     SPDLOG_DEBUG("Update cost in transition graph using CMM");
     update_tg_cmm(&tg, traj, config);
@@ -319,40 +347,40 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
                                          bool *connected,
                                          const CMMTrajectory &traj,
                                          const CovarianceMapMatchConfig &config) {
+    bool layer_connected = false;
     for (auto &node_a : *la_ptr) {
-        double final_prob = -std::numeric_limits<double>::infinity();
-        TGNode *next_opt_node = nullptr;
-        double sp_dist = 0;
+        if (!std::isfinite(node_a.cumu_prob)) {
+            continue;
+        }
 
         for (auto &node_b : *lb_ptr) {
-            // Calculate shortest path distance
+            if (node_b.ep <= 0) {
+                continue;
+            }
+
             double cur_sp_dist = get_sp_dist(node_a.c, node_b.c, reverse_tolerance);
-            if (cur_sp_dist < 0) continue;
+            if (cur_sp_dist < 0) {
+                continue;
+            }
 
-            // Calculate transition probability
             double tp = TransitionGraph::calc_tp(cur_sp_dist, eu_dist);
+            if (tp <= 0) {
+                continue;
+            }
 
-            // Calculate cumulative probability
-            double cumu_prob = node_a.cumu_prob + std::log(tp);
-
-            if (cumu_prob > final_prob) {
-                final_prob = cumu_prob;
-                next_opt_node = &node_b;
-                sp_dist = cur_sp_dist;
+            double temp = node_a.cumu_prob + std::log(tp) + std::log(node_b.ep);
+            if (temp > node_b.cumu_prob) {
+                node_b.cumu_prob = temp;
+                node_b.prev = &node_a;
+                node_b.tp = tp;
+                node_b.sp_dist = cur_sp_dist;
+                layer_connected = true;
             }
         }
+    }
 
-        if (next_opt_node != nullptr) {
-            // Update the optimal node
-            if (final_prob > next_opt_node->cumu_prob) {
-                next_opt_node->prev = &node_a;
-                next_opt_node->tp = std::exp(final_prob - node_a.cumu_prob); // Convert back from log
-                next_opt_node->sp_dist = sp_dist;
-                next_opt_node->cumu_prob = final_prob;
-            }
-        } else {
-            *connected = false;
-        }
+    if (connected != nullptr) {
+        *connected = layer_connected;
     }
 }
 

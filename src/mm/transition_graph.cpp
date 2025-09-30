@@ -11,6 +11,10 @@
 #include "network/type.hpp"
 #include "util/debug.hpp"
 
+#include <algorithm>
+#include <cmath>
+#include <limits>
+
 using namespace FMM;
 using namespace FMM::CORE;
 using namespace FMM::NETWORK;
@@ -31,6 +35,40 @@ TransitionGraph::TransitionGraph(const Traj_Candidates &tc, double gps_error){
   }
 }
 
+TransitionGraph::TransitionGraph(const Traj_Candidates &tc,
+                                 const std::vector<std::vector<double>> &emission_probabilities){
+  if (tc.size() != emission_probabilities.size()) {
+    SPDLOG_WARN("TransitionGraph: candidate layer size {} does not match emission probability size {}",
+                tc.size(), emission_probabilities.size());
+  }
+  layers.reserve(tc.size());
+  for (size_t i = 0; i < tc.size(); ++i) {
+    const Point_Candidates &point_candidates = tc[i];
+    const auto *probabilities = (i < emission_probabilities.size())
+                                ? &emission_probabilities[i]
+                                : nullptr;
+    if (probabilities && probabilities->size() != point_candidates.size()) {
+      SPDLOG_WARN("TransitionGraph: emission probability count {} mismatches candidate count {} for layer {}",
+                  probabilities->size(), point_candidates.size(), i);
+    }
+
+    TGLayer layer;
+    layer.reserve(point_candidates.size());
+    for (size_t j = 0; j < point_candidates.size(); ++j) {
+      double ep = 0.0;
+      if (probabilities && j < probabilities->size()) {
+        ep = std::max(0.0, (*probabilities)[j]);
+      }
+      layer.push_back(TGNode{&point_candidates[j], nullptr, ep, 0,
+                             -std::numeric_limits<double>::infinity(), 0});
+    }
+    layers.push_back(layer);
+  }
+  if (!layers.empty()) {
+    reset_layer(&(layers[0]));
+  }
+}
+
 double TransitionGraph::calc_tp(double sp_dist,double eu_dist){
   // if sp_dist is larger than eu_dist, we set tp to 1
   return eu_dist>=sp_dist ? 1.0 : eu_dist/sp_dist;
@@ -44,8 +82,14 @@ double TransitionGraph::calc_ep(double dist,double error){
 // Reset the properties of a candidate set
 void TransitionGraph::reset_layer(TGLayer *layer){
   for (auto iter=layer->begin(); iter!=layer->end(); ++iter) {
-    iter->cumu_prob = log(iter->ep);
+    if (iter->ep > 0) {
+      iter->cumu_prob = std::log(iter->ep);
+    } else {
+      iter->cumu_prob = -std::numeric_limits<double>::infinity();
+    }
     iter->prev = nullptr;
+    iter->tp = 0;
+    iter->sp_dist = 0;
   }
 }
 
