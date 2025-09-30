@@ -100,7 +100,7 @@ int main() {
             const MatchedCandidate& mc = result.opt_candidate_path[i];
             std::cout << "     Point " << i << ": Edge " << mc.c.edge->id
                       << ", offset=" << mc.c.offset
-                      << ", emission_prob=" << std::exp(mc.ep)  // Convert from log
+                      << ", emission_prob=" << mc.ep
                       << ", transition_prob=" << mc.tp << std::endl;
         }
     }

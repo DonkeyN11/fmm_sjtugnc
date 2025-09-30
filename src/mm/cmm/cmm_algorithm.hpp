@@ -5,7 +5,7 @@
  * and protection levels for more accurate map matching.
  *
  * @author: Chenzhang Ning
- * @version: 2025.09.29
+ * @version: 2025.09.30
  */
 
 #ifndef FMM_CMM_ALGORITHM_H_
@@ -183,6 +183,14 @@ struct CMMTrajectory {
 };
 
 /**
+ * Candidate search result containing candidates and their emission probabilities.
+ */
+struct CandidateSearchResult {
+    Traj_Candidates candidates;
+    std::vector<std::vector<double>> emission_probabilities;
+};
+
+/**
  * Covariance-based map matching algorithm/model.
  */
 class CovarianceMapMatch {
@@ -241,7 +249,7 @@ protected:
      * @param config CMM configuration
      * @return trajectory candidates
      */
-    Traj_Candidates search_candidates_with_protection_level(
+    CandidateSearchResult search_candidates_with_protection_level(
         const CORE::LineString &geom,
         const std::vector<CovarianceMatrix> &covariances,
         const std::vector<double> &protection_levels,

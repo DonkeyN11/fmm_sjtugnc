@@ -67,6 +67,14 @@ public:
   TransitionGraph(const Traj_Candidates &tc, double gps_error);
 
   /**
+   * Transition graph constructor with precomputed emission probabilities.
+   * @param tc trajectory candidates
+   * @param emission_probabilities normalized emission probabilities for each candidate
+   */
+  TransitionGraph(const Traj_Candidates &tc,
+                  const std::vector<std::vector<double>> &emission_probabilities);
+
+  /**
    * Calculate transition probability
    * @param  sp_dist Shortest path distance between two candidates
    * @param  eu_dist Euclidean distance between two candidates
