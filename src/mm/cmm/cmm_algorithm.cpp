@@ -40,7 +40,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     const boost::property_tree::ptree &xml_data) {
     int k = xml_data.get("config.parameters.k", 8); 
     int min_candidates = xml_data.get("config.parameters.min_candidates", 3);
-    double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 2.0);
+    double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 1.0);
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance};
 }
@@ -69,7 +69,7 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
 void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "-k/--candidates (optional) <int>: Number of candidates (8)\n";
     oss << "--min_candidates (optional) <int>: Minimum number of candidates to keep (3)\n";
-    oss << "--protection_level_multiplier (optional) <double>: Multiplier for protection level (2.0)\n";
+    oss << "--protection_level_multiplier (optional) <double>: Multiplier for protection level (1.0)\n";
     oss << "--reverse_tolerance (optional) <double>: proportion of reverse movement allowed on an edge\n";
 }
 
@@ -132,8 +132,9 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         const CovarianceMatrix &cov = covariances[i];
         double protection_level = protection_levels[i];
 
-        double uncertainty = cov.get_2d_uncertainty();
-        double search_radius = protection_level * config.protection_level_multiplier + uncertainty;
+        // double uncertainty = cov.get_2d_uncertainty(); uncertainty is already included in the covariance
+        // double search_radius = protection_level * config.protection_level_multiplier + uncertainty;
+        double search_radius = protection_level * config.protection_level_multiplier;
 
         SPDLOG_TRACE("Point {}: uncertainty={}, protection_level={}, search_radius={}",
                      i, uncertainty, protection_level, search_radius);
