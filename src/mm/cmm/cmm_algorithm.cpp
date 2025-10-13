@@ -136,8 +136,8 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         // double search_radius = protection_level * config.protection_level_multiplier + uncertainty;
         double search_radius = protection_level * config.protection_level_multiplier;
 
-        SPDLOG_TRACE("Point {}: uncertainty={}, protection_level={}, search_radius={}",
-                     i, uncertainty, protection_level, search_radius);
+        SPDLOG_TRACE("Point {}: protection_level={}, search_radius={}",
+                     i, protection_level, search_radius);
 
         CORE::LineString single_point_geom;
         single_point_geom.add_point(point);
