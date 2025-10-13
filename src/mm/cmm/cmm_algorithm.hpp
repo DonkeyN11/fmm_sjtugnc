@@ -107,7 +107,7 @@ struct CovarianceMapMatchConfig {
      * @param reverse_tolerance reverse movement tolerance
      */
     CovarianceMapMatchConfig(int k_arg = 8, int min_candidates_arg = 3,
-                           double protection_level_multiplier_arg = 2.0,
+                           double protection_level_multiplier_arg = 1.0,
                            double reverse_tolerance = 0.0);
 
     int k;                          /**< Number of candidates */
