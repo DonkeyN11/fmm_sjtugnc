@@ -80,6 +80,8 @@ try:  # FMM bindings provide the core map matching capabilities.
         NetworkGraph,
         FastMapMatch,
         FastMapMatchConfig,
+        Trajectory,
+        wkt2linestring,
         UBODT,
     )
 except ImportError as exc:  # pragma: no cover - import failure surfaced later.
@@ -223,6 +225,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=int,
         default=None,
         help="Maximum number of parallel worker processes (default: CPU count).",
+    )
+    parser.add_argument(
+        "--omp-threads",
+        type=int,
+        default=None,
+        help="Number of OpenMP threads FMM should use internally (sets OMP_NUM_THREADS).",
     )
     parser.add_argument(
         "--config-k",
@@ -491,7 +499,7 @@ def prepare_matcher(
         k_arg=int(config_params["k"]),
         r_arg=float(config_params["radius"]),
         gps_error=float(config_params["gps_error"]),
-        reverse_tolerance=float(config_params["reverse_tolerance"]),
+        reverse_tolerance=float(config_params["reverse_tolerance"]),  
     )
 
 
@@ -506,8 +514,10 @@ def match_single_trajectory(
     if _MATCHER is None or _MATCH_CONFIG is None:
         raise RuntimeError("Match worker not initialised correctly")
 
+    traj = Trajectory(trial_idx, wkt2linestring(wkt), [])
+
     try:
-        match_result = _MATCHER.match_wkt(wkt, _MATCH_CONFIG)
+        match_result = _MATCHER.match_traj(traj, _MATCH_CONFIG)
     except RuntimeError as exc:
         warning = f"{path_id},trial={trial_idx}: runtime error {exc}"
         outcome = TrialOutcome(
@@ -523,10 +533,17 @@ def match_single_trajectory(
     is_matched = bool(matched_edges)
     accuracy = 1.0 if matched_edges == ground_truth_edges and is_matched else 0.0
 
-    if match_result.candidates:
-        cumu_prob = match_result.candidates[-1].cumu_prob
-    else:
-        cumu_prob = float("nan")
+    cumu_prob = float("nan")
+    opt_path = getattr(match_result, "opt_candidate_path", None)
+    if opt_path is not None:
+        last_mc = None
+        try:
+            for mc in opt_path:
+                last_mc = mc
+        except TypeError:
+            last_mc = None
+        if last_mc is not None:
+            cumu_prob = last_mc.cumu_prob
     credibility = credibility_from_cumu_prob(cumu_prob)
 
     warning = None
@@ -1029,6 +1046,10 @@ def run_scenario(
 
 def main(argv: Optional[Sequence[str]] = None) -> None:
     args = parse_args(argv)
+    if args.omp_threads is not None:
+        if args.omp_threads < 1:
+            raise ValueError("--omp-threads must be positive")
+        os.environ["OMP_NUM_THREADS"] = str(args.omp_threads)
     ensure_dependencies(args.no_plots)
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
