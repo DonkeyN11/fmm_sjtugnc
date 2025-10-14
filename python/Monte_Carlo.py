@@ -45,6 +45,7 @@ import argparse
 import csv
 import json
 import math
+import multiprocessing as mp
 from collections import defaultdict
 from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
@@ -467,24 +468,25 @@ def generate_observations_worker(
 
 _MATCHER: Optional[FastMapMatch] = None
 _MATCH_CONFIG: Optional[FastMapMatchConfig] = None
+_NETWORK_HOLDER: Optional[Network] = None
+_GRAPH_HOLDER: Optional[NetworkGraph] = None
+_UBODT_HOLDER: Optional[UBODT] = None
 
 
-def match_worker_initializer(
-    network_path: str,
-    id_field: str,
-    source_field: str,
-    target_field: str,
-    ubodt_path: str,
+def prepare_matcher(
+    network: Network,
+    graph: NetworkGraph,
+    ubodt: UBODT,
     config_params: Dict[str, float],
 ) -> None:
-    """Initialise FastMapMatch objects once per worker process."""
+    """Load matcher resources once; forked workers reuse them."""
 
-    global _MATCHER, _MATCH_CONFIG
+    global _MATCHER, _MATCH_CONFIG, _NETWORK_HOLDER, _GRAPH_HOLDER, _UBODT_HOLDER
 
-    network = Network(network_path, id_field, source_field, target_field)
-    graph = NetworkGraph(network)
-    ubodt = load_ubodt(Path(ubodt_path), quiet=True)
-    _MATCHER = FastMapMatch(network, graph, ubodt)
+    _NETWORK_HOLDER = network
+    _GRAPH_HOLDER = graph
+    _UBODT_HOLDER = ubodt
+    _MATCHER = FastMapMatch(_NETWORK_HOLDER, _GRAPH_HOLDER, _UBODT_HOLDER)
     _MATCH_CONFIG = FastMapMatchConfig(
         k_arg=int(config_params["k"]),
         r_arg=float(config_params["radius"]),
@@ -539,6 +541,20 @@ def match_single_trajectory(
         cumulative_log_prob=cumu_prob,
     )
     return path_id, outcome, warning
+
+
+def create_process_pool(max_workers: int) -> ProcessPoolExecutor:
+    """Create a process pool with fork context when available."""
+
+    try:
+        ctx = mp.get_context("fork")
+        try:
+            return ProcessPoolExecutor(max_workers=max_workers, mp_context=ctx)
+        except TypeError:
+            pass
+    except (ValueError, AttributeError):
+        pass
+    return ProcessPoolExecutor(max_workers=max_workers)
 
 
 def linestring_to_coords(line) -> List[Tuple[float, float]]:
@@ -888,10 +904,9 @@ def summarise_scenario(
 
 def run_scenario(
     network_path: Path,
-    id_field: str,
-    source_field: str,
-    target_field: str,
-    ubodt_path: Path,
+    network: Network,
+    graph: NetworkGraph,
+    ubodt: UBODT,
     ground_truth_paths: Sequence[GroundTruthPath],
     noise_std: float,
     args: argparse.Namespace,
@@ -914,7 +929,7 @@ def run_scenario(
     seeds = rng.integers(0, 2**32 - 1, size=len(ground_truth_paths))
     obs_bar = tqdm(total=len(ground_truth_paths), desc="Observations", unit="path") if (not args.no_progress and tqdm is not None) else None
 
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+    with create_process_pool(max_workers) as executor:
         futures = {
             executor.submit(
                 generate_observations_worker,
@@ -958,28 +973,25 @@ def run_scenario(
         "reverse_tolerance": args.reverse_tolerance,
     }
 
+    try:
+        prepare_matcher(network, graph, ubodt, config_params)
+    except Exception as exc:
+        print(f"  ! Failed to initialise matcher: {exc}", file=sys.stderr)
+        return
+
     match_bar = tqdm(total=len(tasks), desc="Matching", unit="trial") if (not args.no_progress and tqdm is not None) else None
 
-    with ProcessPoolExecutor(
-        max_workers=max_workers,
-        initializer=match_worker_initializer,
-        initargs=(
-            str(network_path),
-            id_field,
-            source_field,
-            target_field,
-            str(ubodt_path),
-            config_params,
-        ),
-    ) as executor:
-        future_to_path = {
-            executor.submit(match_single_trajectory, path_id, trial_idx, wkt, edges): path_id
-            for path_id, trial_idx, wkt, edges in tasks
-        }
+    if tasks:
+        path_ids = [t[0] for t in tasks]
+        trial_indices = [t[1] for t in tasks]
+        wkts = [t[2] for t in tasks]
+        edges_seq = [t[3] for t in tasks]
+    else:
+        path_ids = trial_indices = wkts = edges_seq = []
 
-        for future in as_completed(future_to_path):
-            path_id = future_to_path[future]
-            _, outcome, warning = future.result()
+    with create_process_pool(max_workers) as executor:
+        results_iter = executor.map(match_single_trajectory, path_ids, trial_indices, wkts, edges_seq)
+        for path_id, outcome, warning in results_iter:
             metrics_by_path[path_id].append(outcome)
             if warning:
                 warnings.append(warning)
@@ -1066,6 +1078,11 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 continue
             ubodt_path = inferred
 
+        try:
+            ubodt_obj = load_ubodt(ubodt_path)
+        except Exception as exc:
+            print(f"Skipping {network_path}: failed to load UBODT ({exc})", file=sys.stderr)
+            continue
 
         if args.ground_truth_cache:
             cache_path = Path(args.ground_truth_cache)
@@ -1109,10 +1126,9 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             print(f"Scenario: network={network_path}, noise_std={noise_std:.2f}")
             run_scenario(
                 network_path=network_path,
-                id_field=resolved_id,
-                source_field=resolved_source,
-                target_field=resolved_target,
-                ubodt_path=ubodt_path,
+                network=network,
+                graph=graph,
+                ubodt=ubodt_obj,
                 ground_truth_paths=ground_truth_paths,
                 noise_std=noise_std,
                 args=args,
