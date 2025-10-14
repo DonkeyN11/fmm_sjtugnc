@@ -1,4 +1,16 @@
-#conda activate fmm
+#!/usr/bin/env bash
+# 在脚本开头添加：
+# export PATH="/usr/bin:/bin:/usr/local/bin"
+# export PYTHONPATH="/home/dell/Czhang/fmm_sjtugnc/build/python:$PYTHONPATH"
+# 使用:./fmm_starter.sh ./python/Monte_Carlo.py 
+# --network input/map/haikou/edges.shp 
+# --trials 1000 
+# --num-paths 5 
+# --noise-std 0.00005 0.0001 units in degrees, 5m 10m
+# --dump-ground-truth 
+# --ubodt input/map/haikou_ubodt_mmap.bin
+
+
 """Monte Carlo simulation for GNSS noise impact on map matching credibility.
 
 The script automates the following workflow for one or multiple road networks:
@@ -23,16 +35,33 @@ reuse the data for further analysis.
 
 from __future__ import annotations
 
+import os
+import sys
+
+sys.path.insert(0, '/home/dell/Czhang/fmm_sjtugnc/build/python')
+os.environ.setdefault("SPDLOG_LEVEL", "err")
+
 import argparse
 import csv
 import json
 import math
-import sys
+from collections import defaultdict
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterator, List, Optional, Sequence, Tuple
+from typing import Dict, Iterator, List, Optional, Sequence, Tuple
 
 import numpy as np
+
+try:  # GDAL Python bindings for field introspection
+    from osgeo import ogr
+except ImportError:  # pragma: no cover - optional dependency
+    ogr = None
+
+try:  # Progress bar for long-running loops
+    from tqdm import tqdm
+except ImportError:  # pragma: no cover - optional dependency
+    tqdm = None
 
 
 try:  # Matplotlib is only needed for the reporting stage.
@@ -106,6 +135,24 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--network-id-field",
+        type=str,
+        default=None,
+        help="Field name storing edge IDs (e.g. id, fid, key).",
+    )
+    parser.add_argument(
+        "--network-source-field",
+        type=str,
+        default=None,
+        help="Field name storing source node IDs (e.g. source, u).",
+    )
+    parser.add_argument(
+        "--network-target-field",
+        type=str,
+        default=None,
+        help="Field name storing target node IDs (e.g. target, v).",
+    )
+    parser.add_argument(
         "--num-paths",
         type=int,
         default=10,
@@ -140,7 +187,7 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--min-path-length",
         type=float,
-        default=350.0,
+        default=0.003,
         help=(
             "Minimum acceptable ground-truth path length (in coordinate "
             "units). Paths shorter than this threshold are skipped."
@@ -169,6 +216,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         type=int,
         default=42,
         help="Seed for the random number generator (numpy default).",
+    )
+    parser.add_argument(
+        "--max-workers",
+        type=int,
+        default=None,
+        help="Maximum number of parallel worker processes (default: CPU count).",
     )
     parser.add_argument(
         "--config-k",
@@ -207,6 +260,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         "--dump-ground-truth",
         action="store_true",
         help="Persist sampled ground-truth paths to ground_truth.json files.",
+    )
+    parser.add_argument(
+        "--no-progress",
+        action="store_true",
+        help="Disable progress bars during simulation loops.",
     )
     parser.add_argument(
         "--ubodt",
@@ -260,17 +318,79 @@ def ensure_dependencies(no_plots: bool) -> None:
         )
 
 
-def load_network(path: Path) -> Tuple[Network, NetworkGraph]:
+def detect_network_fields(
+    path: Path,
+    id_hint: Optional[str],
+    source_hint: Optional[str],
+    target_hint: Optional[str],
+) -> Tuple[str, str, str]:
+    """Determine field names for edge ID, source, and target."""
+
+    if id_hint and source_hint and target_hint:
+        return id_hint, source_hint, target_hint
+
+    if ogr is None:
+        raise RuntimeError(
+            "GDAL Python bindings are required to infer network field names. "
+            "Install the `gdal` package or specify --network-*-field arguments."
+        )
+
+    dataset = ogr.Open(str(path))
+    if dataset is None:
+        raise RuntimeError(f"Failed to open network shapefile {path} for inspection")
+    layer = dataset.GetLayer(0)
+    definition = layer.GetLayerDefn()
+    field_lookup = {}
+    for idx in range(definition.GetFieldCount()):
+        original = definition.GetFieldDefn(idx).GetName()
+        field_lookup[original.lower()] = original
+
+    def resolve(hint: Optional[str], candidates: Sequence[str]) -> Optional[str]:
+        if hint:
+            name = hint.lower()
+            if name in field_lookup:
+                return field_lookup[name]
+        for candidate in candidates:
+            name = candidate.lower()
+            if name in field_lookup:
+                return field_lookup[name]
+        return None
+
+    id_field = resolve(id_hint, ("id", "fid", "edge_id", "key"))
+    source_field = resolve(source_hint, ("source", "from", "src", "u"))
+    target_field = resolve(target_hint, ("target", "to", "dst", "v"))
+
+    missing = [label for label, value in (("id", id_field), ("source", source_field), ("target", target_field)) if value is None]
+    if missing:
+        raise RuntimeError(
+            "Unable to determine required network fields: "
+            + ", ".join(missing)
+            + ". Specify them via --network-id-field, --network-source-field, --network-target-field."
+        )
+    return id_field, source_field, target_field
+
+
+def load_network(
+    path: Path,
+    id_field: Optional[str],
+    source_field: Optional[str],
+    target_field: Optional[str],
+) -> Tuple[Network, NetworkGraph, str, str, str]:
     """Load the network shapefile and construct its graph representation."""
 
     print(f"Loading network from {path} ...")
-    network = Network(str(path))
+    resolved_id, resolved_source, resolved_target = detect_network_fields(path, id_field, source_field, target_field)
+    network = Network(str(path), resolved_id, resolved_source, resolved_target)
     graph = NetworkGraph(network)
     print(
         f"  > nodes: {network.get_node_count():,}, "
         f"edges: {network.get_edge_count():,}"
     )
-    return network, graph
+    print(
+        "  > using fields id=%s, source=%s, target=%s"
+        % (resolved_id, resolved_source, resolved_target)
+    )
+    return network, graph, resolved_id, resolved_source, resolved_target
 
 
 def infer_ubodt_path(network_path: Path) -> Optional[Path]:
@@ -298,12 +418,13 @@ def infer_ubodt_path(network_path: Path) -> Optional[Path]:
     return None
 
 
-def load_ubodt(path: Path) -> UBODT:
+def load_ubodt(path: Path, quiet: bool = False) -> UBODT:
     """Load a UBODT file using the appropriate reader based on the extension."""
 
     if not path.exists():
         raise FileNotFoundError(f"UBODT file not found: {path}")
-    print(f"  > Loading UBODT from {path} ...")
+    if not quiet:
+        print(f"  > Loading UBODT from {path} ...")
     suffix = path.suffix.lower()
     name = path.name.lower()
     if suffix == ".txt":
@@ -317,6 +438,107 @@ def load_ubodt(path: Path) -> UBODT:
     raise ValueError(
         f"Unsupported UBODT format for {path}. Use .txt, .csv, or .bin (optionally *_mmap.bin)."
     )
+
+
+def generate_observations_worker(
+    reference_coords: List[List[float]],
+    trials: int,
+    covariance: List[List[float]],
+    seed: int,
+    destination: str,
+) -> str:
+    """Generate noisy observations for a single ground-truth path."""
+
+    coords = np.asarray(reference_coords, dtype=float)
+    cov = np.asarray(covariance, dtype=float)
+    rng = np.random.default_rng(seed)
+    mean = np.zeros(2, dtype=float)
+
+    dest_path = Path(destination)
+    with dest_path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["trajectory_id", "wkt"])
+        for trial_idx in range(trials):
+            noise = rng.multivariate_normal(mean=mean, cov=cov, size=len(coords))
+            noisy_coords = ensure_linestring_valid(coords + noise)
+            writer.writerow([trial_idx, coords_to_wkt(noisy_coords)])
+    return destination
+
+
+_MATCHER: Optional[FastMapMatch] = None
+_MATCH_CONFIG: Optional[FastMapMatchConfig] = None
+
+
+def match_worker_initializer(
+    network_path: str,
+    id_field: str,
+    source_field: str,
+    target_field: str,
+    ubodt_path: str,
+    config_params: Dict[str, float],
+) -> None:
+    """Initialise FastMapMatch objects once per worker process."""
+
+    global _MATCHER, _MATCH_CONFIG
+
+    network = Network(network_path, id_field, source_field, target_field)
+    graph = NetworkGraph(network)
+    ubodt = load_ubodt(Path(ubodt_path), quiet=True)
+    _MATCHER = FastMapMatch(network, graph, ubodt)
+    _MATCH_CONFIG = FastMapMatchConfig(
+        k_arg=int(config_params["k"]),
+        r_arg=float(config_params["radius"]),
+        gps_error=float(config_params["gps_error"]),
+        reverse_tolerance=float(config_params["reverse_tolerance"]),
+    )
+
+
+def match_single_trajectory(
+    path_id: str,
+    trial_idx: int,
+    wkt: str,
+    ground_truth_edges: Tuple[int, ...],
+) -> Tuple[str, TrialOutcome, Optional[str]]:
+    """Match one trajectory and return outcome with optional warning."""
+
+    if _MATCHER is None or _MATCH_CONFIG is None:
+        raise RuntimeError("Match worker not initialised correctly")
+
+    try:
+        match_result = _MATCHER.match_wkt(wkt, _MATCH_CONFIG)
+    except RuntimeError as exc:
+        warning = f"{path_id},trial={trial_idx}: runtime error {exc}"
+        outcome = TrialOutcome(
+            index=trial_idx,
+            matched=False,
+            accuracy=0.0,
+            credibility=float("nan"),
+            cumulative_log_prob=float("nan"),
+        )
+        return path_id, outcome, warning
+
+    matched_edges = tuple(match_result.cpath)
+    is_matched = bool(matched_edges)
+    accuracy = 1.0 if matched_edges == ground_truth_edges and is_matched else 0.0
+
+    if match_result.candidates:
+        cumu_prob = match_result.candidates[-1].cumu_prob
+    else:
+        cumu_prob = float("nan")
+    credibility = credibility_from_cumu_prob(cumu_prob)
+
+    warning = None
+    if not is_matched:
+        warning = f"{path_id},trial={trial_idx}: unmatched trajectory"
+
+    outcome = TrialOutcome(
+        index=trial_idx,
+        matched=is_matched,
+        accuracy=accuracy,
+        credibility=credibility,
+        cumulative_log_prob=cumu_prob,
+    )
+    return path_id, outcome, warning
 
 
 def linestring_to_coords(line) -> List[Tuple[float, float]]:
@@ -480,18 +702,40 @@ def dump_ground_truth_cache(paths: Sequence[GroundTruthPath], destination: Path)
     print(f"  > Ground truth cache written to {destination}")
 
 
-def generate_observations(
-    reference_coords: np.ndarray,
-    num_trials: int,
-    covariance: np.ndarray,
-    rng: np.random.Generator,
-) -> Iterator[np.ndarray]:
-    """Yield noisy coordinate arrays for each Monte Carlo trial."""
+def write_truth_file(
+    paths: Sequence[GroundTruthPath],
+    truth_file: Path,
+    network_label: str,
+    scenario_tag: str,
+) -> None:
+    """Write ground-truth trajectories to a shared CSV file."""
 
-    mean = np.zeros(2, dtype=float)
-    for _ in range(num_trials):
-        noise = rng.multivariate_normal(mean=mean, cov=covariance, size=len(reference_coords))
-        yield reference_coords + noise
+    truth_file.parent.mkdir(parents=True, exist_ok=True)
+    file_exists = truth_file.exists()
+    with truth_file.open("a", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        if not file_exists:
+            writer.writerow([
+                "network",
+                "scenario",
+                "path_id",
+                "length",
+                "edge_ids",
+                "reference_wkt",
+                "network_wkt",
+            ])
+        for path in paths:
+            writer.writerow(
+                [
+                    network_label,
+                    scenario_tag,
+                    path.identifier,
+                    f"{path.length:.6f}",
+                    "|".join(str(edge) for edge in path.edge_ids),
+                    coords_to_wkt(path.reference_coords),
+                    path.wkt,
+                ]
+            )
 
 
 def credibility_from_cumu_prob(value: float) -> float:
@@ -518,58 +762,6 @@ def ensure_linestring_valid(coords: np.ndarray) -> np.ndarray:
     if len(filtered) < 2:
         filtered.append(coords[-1])
     return np.asarray(filtered, dtype=float)
-
-
-def write_observation_file(destination: Path, trajectories: Sequence[str]) -> None:
-    """Persist noisy trajectories to CSV (id, wkt)."""
-
-    with destination.open("w", encoding="utf-8", newline="") as fh:
-        writer = csv.writer(fh)
-        writer.writerow(["trajectory_id", "wkt"])
-        for idx, wkt in enumerate(trajectories):
-            writer.writerow([idx, wkt])
-
-
-def match_observations(
-    matcher: FastMapMatch,
-    config: FastMapMatchConfig,
-    observations: Sequence[str],
-    ground_truth_edges: Tuple[int, ...],
-) -> List[TrialOutcome]:
-    """Match observations with FMM and evaluate the outcomes."""
-
-    results: List[TrialOutcome] = []
-    for idx, wkt in enumerate(observations):
-        try:
-            match_result = matcher.match_wkt(wkt, config)
-        except RuntimeError as exc:
-            print(f"    ! Trial {idx}: matching failed ({exc})")
-            results.append(
-                TrialOutcome(
-                    index=idx,
-                    matched=False,
-                    accuracy=0.0,
-                    credibility=float("nan"),
-                    cumulative_log_prob=float("nan"),
-                )
-            )
-            continue
-        matched_edges = tuple(match_result.cpath)
-        is_correct = matched_edges == ground_truth_edges
-        if match_result.candidates:
-            cumu_prob = match_result.candidates[-1].cumu_prob
-        else:
-            cumu_prob = float("nan")
-        results.append(
-            TrialOutcome(
-                index=idx,
-                matched=True,
-                accuracy=1.0 if is_correct else 0.0,
-                credibility=credibility_from_cumu_prob(cumu_prob),
-                cumulative_log_prob=cumu_prob,
-            )
-        )
-    return results
 
 
 def running_mean(series: Sequence[float]) -> List[float]:
@@ -696,9 +888,10 @@ def summarise_scenario(
 
 def run_scenario(
     network_path: Path,
-    network: Network,
-    graph: NetworkGraph,
-    ubodt: UBODT,
+    id_field: str,
+    source_field: str,
+    target_field: str,
+    ubodt_path: Path,
     ground_truth_paths: Sequence[GroundTruthPath],
     noise_std: float,
     args: argparse.Namespace,
@@ -710,36 +903,111 @@ def run_scenario(
     scenario_root = args.output_dir / network_path.stem / scenario_tag
     scenario_root.mkdir(parents=True, exist_ok=True)
 
-    covariance = compute_covariance(noise_std)
-    matcher = FastMapMatch(network, graph, ubodt)
-    config = FastMapMatchConfig(
-        k_arg=args.config_k,
-        r_arg=args.config_radius,
-        gps_error=noise_std,
-        reverse_tolerance=args.reverse_tolerance,
-    )
+    covariance_list = compute_covariance(noise_std).tolist()
+    truth_file = args.output_dir.parent / "monte_carlo_truth.csv"
+    write_truth_file(ground_truth_paths, truth_file, network_path.stem, scenario_tag)
 
-    all_outcomes: List[List[TrialOutcome]] = []
+    max_workers = args.max_workers or (os.cpu_count() or 1)
+
+    # --- Generate observations in parallel ---
+    observation_files: Dict[str, Path] = {}
+    seeds = rng.integers(0, 2**32 - 1, size=len(ground_truth_paths))
+    obs_bar = tqdm(total=len(ground_truth_paths), desc="Observations", unit="path") if (not args.no_progress and tqdm is not None) else None
+
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        futures = {
+            executor.submit(
+                generate_observations_worker,
+                path.reference_coords.tolist(),
+                args.trials,
+                covariance_list,
+                int(seed),
+                str(scenario_root / f"{path.identifier}_observations.csv"),
+            ): path.identifier
+            for path, seed in zip(ground_truth_paths, seeds)
+        }
+
+        for future in as_completed(futures):
+            path_id = futures[future]
+            destination = Path(future.result())
+            observation_files[path_id] = destination
+            if obs_bar is not None:
+                obs_bar.update(1)
+
+    if obs_bar is not None:
+        obs_bar.close()
+
+    # --- Prepare matching tasks ---
+    metrics_by_path: Dict[str, List[TrialOutcome]] = defaultdict(list)
+    warnings: List[str] = []
+    tasks: List[Tuple[str, int, str, Tuple[int, ...]]] = []
+    edge_lookup = {path.identifier: tuple(path.edge_ids) for path in ground_truth_paths}
 
     for path in ground_truth_paths:
-        print(f"Simulating {path.identifier} (length {path.length:.2f}) ...")
-        observation_wkts: List[str] = []
-        path_rng = np.random.default_rng(rng.integers(0, 2**32 - 1))
-        for coords in generate_observations(path.reference_coords, args.trials, covariance, path_rng):
-            noisy_coords = ensure_linestring_valid(coords)
-            observation_wkts.append(coords_to_wkt(noisy_coords))
-        observation_file = scenario_root / f"{path.identifier}_observations.csv"
-        write_observation_file(observation_file, observation_wkts)
-        print(f"  > Observations written to {observation_file}")
-        outcomes = match_observations(matcher, config, observation_wkts, path.edge_ids)
-        all_outcomes.append(outcomes)
+        obs_file = observation_files[path.identifier]
+        with obs_file.open("r", encoding="utf-8", newline="") as fh:
+            reader = csv.reader(fh)
+            next(reader, None)
+            for row in reader:
+                tasks.append((path.identifier, int(row[0]), row[1], edge_lookup[path.identifier]))
+
+    config_params = {
+        "k": args.config_k,
+        "radius": args.config_radius,
+        "gps_error": noise_std,
+        "reverse_tolerance": args.reverse_tolerance,
+    }
+
+    match_bar = tqdm(total=len(tasks), desc="Matching", unit="trial") if (not args.no_progress and tqdm is not None) else None
+
+    with ProcessPoolExecutor(
+        max_workers=max_workers,
+        initializer=match_worker_initializer,
+        initargs=(
+            str(network_path),
+            id_field,
+            source_field,
+            target_field,
+            str(ubodt_path),
+            config_params,
+        ),
+    ) as executor:
+        future_to_path = {
+            executor.submit(match_single_trajectory, path_id, trial_idx, wkt, edges): path_id
+            for path_id, trial_idx, wkt, edges in tasks
+        }
+
+        for future in as_completed(future_to_path):
+            path_id = future_to_path[future]
+            _, outcome, warning = future.result()
+            metrics_by_path[path_id].append(outcome)
+            if warning:
+                warnings.append(warning)
+            if match_bar is not None:
+                match_bar.update(1)
+
+    if match_bar is not None:
+        match_bar.close()
+
+    # Sort outcomes per path and write metrics
+    ordered_outcomes: List[List[TrialOutcome]] = []
+    for path in ground_truth_paths:
+        outcomes = metrics_by_path[path.identifier]
+        outcomes.sort(key=lambda item: item.index)
+        ordered_outcomes.append(outcomes)
         metrics_file = scenario_root / f"{path.identifier}_metrics.csv"
         export_trial_metrics(metrics_file, outcomes)
-        print(f"  > Metrics written to {metrics_file}")
 
-    accuracies, credibilities = aggregate_outcomes(all_outcomes)
+    accuracies, credibilities = aggregate_outcomes(ordered_outcomes)
     summary_file = scenario_root / "scenario_summary.json"
     summarise_scenario(summary_file, scenario_tag, noise_std, accuracies, credibilities)
+
+    if warnings:
+        warnings_file = scenario_root / "warnings.log"
+        with warnings_file.open("w", encoding="utf-8") as fh:
+            for entry in warnings:
+                fh.write(entry + "\n")
+        print(f"  > Warnings recorded in {warnings_file}")
 
     if not args.no_plots:
         plot_file = scenario_root / "convergence.png"
@@ -762,7 +1030,16 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
 
         print("=" * 72)
         print(f"Preparing network: {network_path}")
-        network, graph = load_network(network_path)
+        try:
+            network, graph, resolved_id, resolved_source, resolved_target = load_network(
+                network_path,
+                args.network_id_field,
+                args.network_source_field,
+                args.network_target_field,
+            )
+        except RuntimeError as exc:
+            print(f"Skipping {network_path}: {exc}", file=sys.stderr)
+            continue
 
         network_root = args.output_dir / network_path.stem
         network_root.mkdir(parents=True, exist_ok=True)
@@ -789,11 +1066,6 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
                 continue
             ubodt_path = inferred
 
-        try:
-            ubodt = load_ubodt(ubodt_path)
-        except Exception as exc:  # pragma: no cover - runtime feedback.
-            print(f"Skipping {network_path}: failed to load UBODT ({exc})", file=sys.stderr)
-            continue
 
         if args.ground_truth_cache:
             cache_path = Path(args.ground_truth_cache)
@@ -837,9 +1109,10 @@ def main(argv: Optional[Sequence[str]] = None) -> None:
             print(f"Scenario: network={network_path}, noise_std={noise_std:.2f}")
             run_scenario(
                 network_path=network_path,
-                network=network,
-                graph=graph,
-                ubodt=ubodt,
+                id_field=resolved_id,
+                source_field=resolved_source,
+                target_field=resolved_target,
+                ubodt_path=ubodt_path,
                 ground_truth_paths=ground_truth_paths,
                 noise_std=noise_std,
                 args=args,
