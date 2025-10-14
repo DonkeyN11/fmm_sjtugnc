@@ -1,12 +1,13 @@
-import os
 import osmnx as ox
 import pdb
 import traceback
+import os
 
 def main():
     ########################################################################
     # 地图数据加载
-    shapefile_dir = "../data/shapefile/haikou"  # 替换为目标输出目录
+    # filepath = "../input/graphml/haikou.graphml"  # 替换为目标文件路径
+    shapefile_dir = "../input/map/hainan/"
     # 在线下载模式，需要VPN
     # 设置目标区域，例如城市名称，或指定经纬度边界框
     place_name = "Hainan, China"  # 替换目标区域
