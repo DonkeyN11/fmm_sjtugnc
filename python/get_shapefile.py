@@ -1,10 +1,10 @@
-#!/usr/bin/env python3
+#! conda fmm
 # -*- coding: utf-8 -*-
 """
 Hainan 'drive' road network downloader (by city blocks) with resume, caching, merge & progress.
 
 Requirements:
-  pip install osmnx geopandas shapely tqdm prompt-toolkit
+  conda install osmnx geopandas shapely tqdm prompt-toolkit
 
 Usage (常用用法):
   # 1) 列出并交互式选择要下载的市县（不需要的可取消选择）
@@ -38,6 +38,28 @@ from shapely.ops import unary_union
 from tqdm import tqdm
 
 import osmnx as ox
+# --- extra imports for robust networking ---
+from requests.exceptions import SSLError, ConnectionError
+from osmnx._errors import ResponseStatusCodeError
+
+# 公开 Overpass 实例（写“/api”基址，OSMnx 会自动加 /interpreter）
+OVERPASS_ENDPOINTS = [
+    "https://overpass.kumi.systems/api",
+    "https://overpass.osm.jp/api",
+    "https://overpass-api.de/api",
+    "https://overpass.openstreetmap.ru/api",
+]
+
+# Hainan 市/县清单（用于 Nominatim 回退路径）
+HAINAN_AREAS = [
+    "海口市", "三亚市", "儋州市", "三沙市",
+    "五指山市", "文昌市", "琼海市", "万宁市", "东方市",
+    "定安县", "屯昌县", "澄迈县", "临高县",
+    "白沙黎族自治县", "昌江黎族自治县", "乐东黎族自治县",
+    "陵水黎族自治县", "保亭黎族苗族自治县", "琼中黎族苗族自治县",
+]
+
+PROVINCE_NAME_DEFAULT = "海南省, 中国"
 
 # ------------------------------ Utilities ------------------------------ #
 
@@ -92,17 +114,48 @@ def has_complete_block(block_dir: Path) -> bool:
 # ------------------------- OSMnx Configuration ------------------------- #
 
 def configure_osmnx(cache_dir: Path, timeout: int = 180, pause: float = 2.0):
+    import osmnx as ox
     ensure_dir(cache_dir)
+
+    # 缓存
     ox.settings.use_cache = True
     ox.settings.cache_folder = str(cache_dir)
-    ox.settings.requests_timeout = timeout
-    ox.settings.requests_kwargs = {"headers": {"User-Agent": "osmnx-hainan-downloader/1.0"}}
-    ox.settings.overpass_settings = f'[out:json][timeout:{timeout}];'
-    ox.settings.log_console = False
-    ox.settings.max_query_area_size = 5e7  # 保守一些
-    ox.settings.memory = None
-    # 自己控制节流
-    return pause
+
+    # 正确设置网络参数（不要把 headers/timeout 放进 requests_kwargs）
+    ox.settings.requests_timeout = int(timeout)
+    ox.settings.requests_kwargs = {}  # 如需 proxies/verify/cert 可放这里，但不要含 timeout/headers
+
+    # Nominatim 使用政策需要可识别 UA/Referer
+    ox.settings.http_user_agent = "HainanDownloader/1.0 (contact: you@example.com)"
+    ox.settings.http_referer = "https://example.com/hainan-downloader"
+    ox.settings.http_accept_language = "zh-CN"
+
+    # Overpass 设置模板（保持官方格式：不手搓分号）
+    ox.settings.overpass_settings = "[out:json][timeout:{timeout}]{maxsize}"
+    ox.settings.overpass_rate_limit = True  # 自动根据 /status 节点等待空闲槽
+    ox.settings.overpass_url = OVERPASS_ENDPOINTS[0]  # 首选实例
+
+    # 适度节流
+    return float(pause)
+
+def list_city_like_areas_via_nominatim(province_name: str = PROVINCE_NAME_DEFAULT) -> gpd.GeoDataFrame:
+    """
+    使用 Nominatim 逐个地名解析市/县边界，遵守 1 req/s。
+    返回列：name, geometry
+    """
+    import osmnx as ox
+    rows = []
+    for name in HAINAN_AREAS:
+        try:
+            gdf = ox.geocode_to_gdf(f"{name}, {province_name}")
+            if not gdf.empty:
+                geom = gdf.geometry.iloc[0]
+                rows.append({"name": name, "geometry": geom})
+        except Exception as e:
+            print(f"[nominatim] 跳过 {name}: {e}")
+        time.sleep(1.05)  # 遵守 Nominatim 1 req/s
+    return gpd.GeoDataFrame(rows, geometry="geometry", crs="EPSG:4326")
+
 
 # ----------------------- Admin Boundaries Discovery -------------------- #
 
@@ -116,32 +169,47 @@ def get_province_polygon(province_name: str):
     else:
         return geom.unary_union
 
-def list_city_like_areas(province_poly, admin_levels=("6", "7")) -> gpd.GeoDataFrame:
+def list_city_like_areas(province_poly, admin_levels=("6", "7"), province_name: str = PROVINCE_NAME_DEFAULT) -> gpd.GeoDataFrame:
     """
-    在省范围内抓取 boundary=administrative 的多级行政单元（默认取 admin_level 6 与 7，基本覆盖地级/县级）。
-    返回列：name, admin_level, geometry
+    优先用 Overpass 在省域内抓取 boundary=administrative 的市/县边界；
+    如因超大范围或网络/SSL等失败，则回退到 Nominatim 逐名解析。
+    返回列：name, admin_level(若可得), geometry
     """
-    tags = {"boundary": "administrative"}
-    gdf = ox.geometries_from_polygon(province_poly, tags)
-    if gdf.empty:
-        raise RuntimeError("在省域内未检索到行政边界。")
-    cols = [c for c in ["name", "admin_level", "geometry"] if c in gdf.columns]
-    gdf = gdf[cols].dropna(subset=["name"]).copy()
-    # 仅保留目标 admin_level
-    gdf = gdf[gdf["admin_level"].astype(str).isin(admin_levels)]
+    import osmnx as ox
 
-    # 同名 dissolve 合并多面
-    gdf = gdf.dissolve(by="name", as_index=False, aggfunc="first")
-    # 清理 MultiPolygon 的小碎片，保留最大面
-    def largest_geom(geom):
-        if isinstance(geom, Polygon):
+    # 1) 尝试 Overpass：一次性获取省域全部行政边界
+    try:
+        tags = {"boundary": "administrative"}
+        gdf = ox.features_from_polygon(province_poly, tags)
+        if gdf.empty:
+            raise RuntimeError("Overpass 返回空结果")
+
+        cols = [c for c in ["name", "admin_level", "geometry"] if c in gdf.columns]
+        gdf = gdf[cols].dropna(subset=["name"]).copy()
+        if "admin_level" in gdf.columns:
+            gdf = gdf[gdf["admin_level"].astype(str).isin(admin_levels)]
+
+        # 同名 dissolve，保留最大面
+        def largest_geom(geom):
+            if isinstance(geom, Polygon):
+                return geom
+            if isinstance(geom, MultiPolygon):
+                return max(list(geom.geoms), key=lambda a: a.area)
             return geom
-        if isinstance(geom, MultiPolygon):
-            return max(list(geom.geoms), key=lambda a: a.area)
-        return geom
-    gdf["geometry"] = gdf["geometry"].apply(largest_geom)
-    gdf = gdf.sort_values(by="name").reset_index(drop=True)
-    return gdf
+
+        gdf = gdf.dissolve(by="name", as_index=False, aggfunc="first")
+        gdf["geometry"] = gdf["geometry"].apply(largest_geom)
+        gdf = gdf.sort_values(by="name").reset_index(drop=True)
+        return gdf
+
+    except (SSLError, ConnectionError, ResponseStatusCodeError, Exception) as e:
+        print(f"[overpass] 行政边界拉取失败，回退 Nominatim：{e}")
+        gdf2 = list_city_like_areas_via_nominatim(province_name=province_name)
+        # Nominatim 不一定给 admin_level，这里补个占位列
+        if not gdf2.empty and "admin_level" not in gdf2.columns:
+            gdf2["admin_level"] = None
+        return gdf2
+
 
 # --------------------------- Interactive Picker ------------------------ #
 
@@ -166,23 +234,26 @@ def interactive_pick(to_download_names: List[str]) -> List[str]:
 
 # ----------------------------- Downloader ------------------------------ #
 
-def download_one_area(name: str, geom, outdir: Path, network_type: str, pause: float, max_retries: int = 4) -> Tuple[str, bool, Optional[str]]:
-    """
-    下载单个区域。返回 (name, success, error_message)。
-    使用 OSMnx graph_from_polygon，保存 nodes/edges shapefile。
-    """
+def download_one_area(name: str, geom, outdir: Path, network_type: str, pause: float,
+                      max_retries: int = 4) -> Tuple[str, bool, Optional[str]]:
+    import osmnx as ox
+
     slug = slugify(name)
     block_dir = outdir / slug
     if has_complete_block(block_dir):
-        return name, True, None  # 已完成，跳过
+        return name, True, None
 
     ensure_dir(block_dir)
-    # 重试机制
+    endpoint_idx = 0
+
     for attempt in range(1, max_retries + 1):
         try:
-            # 节流
             if attempt > 1:
+                # 指数退避
                 time.sleep(pause * attempt)
+
+            # 尝试当前 Overpass 实例
+            ox.settings.overpass_url = OVERPASS_ENDPOINTS[endpoint_idx]
 
             G = ox.graph_from_polygon(
                 geom,
@@ -192,17 +263,28 @@ def download_one_area(name: str, geom, outdir: Path, network_type: str, pause: f
                 clean_periphery=True,
             )
             graph_to_shp(G, block_dir)
-            # 写入一个元信息
-            meta = {"name": name, "slug": slug, "network_type": network_type, "status": "ok"}
-            (block_dir / "meta.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
+            (block_dir / "meta.json").write_text(
+                json.dumps(
+                    {"name": name, "slug": slug, "network_type": network_type, "endpoint": ox.settings.overpass_url, "status": "ok"},
+                    ensure_ascii=False, indent=2
+                ),
+                encoding="utf-8"
+            )
             return name, True, None
 
+        except (SSLError, ConnectionError, ResponseStatusCodeError) as e:
+            # 轮换到下一个 Overpass 实例
+            endpoint_idx = (endpoint_idx + 1) % len(OVERPASS_ENDPOINTS)
+            (block_dir / "error.log").write_text(f"attempt {attempt} @ {time.strftime('%F %T')}: {type(e).__name__}: {e}\n", encoding="utf-8")
+            continue
+
         except Exception as e:
-            err = f"[{name}] 第{attempt}/{max_retries}次失败：{e}"
-            # 将错误写入临时日志，便于下次续传
-            (block_dir / "error.log").write_text(err, encoding="utf-8")
+            (block_dir / "error.log").write_text(f"attempt {attempt} @ {time.strftime('%F %T')}: {type(e).__name__}: {e}\n", encoding="utf-8")
             if attempt >= max_retries:
                 return name, False, str(e)
+
+    return name, False, "max retries exceeded"
+
 
 # ------------------------------- Stitcher ------------------------------ #
 
