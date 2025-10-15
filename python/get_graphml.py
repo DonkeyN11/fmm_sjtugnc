@@ -4,7 +4,7 @@ import re
 import shutil
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Callable, Dict, List, Optional, Sequence, Tuple
 
 import networkx as nx
 import osmnx as ox
@@ -124,6 +124,23 @@ def build_alias_map() -> Dict[str, str]:
 
 
 ALIAS_MAP = build_alias_map()
+
+
+def resolve_ox_function(name: str) -> Optional[Callable]:
+    func = getattr(ox, name, None)
+    if callable(func):
+        return func
+    io_module = getattr(ox, "io", None)
+    if io_module:
+        func = getattr(io_module, name, None)
+        if callable(func):
+            return func
+    return None
+
+
+SAVE_GRAPHML = resolve_ox_function("save_graphml")
+LOAD_GRAPHML = resolve_ox_function("load_graphml")
+SAVE_GRAPH_SHAPEFILE = resolve_ox_function("save_graph_shapefile")
 
 
 def resolve_city_tokens(tokens: Sequence[str]) -> List[str]:
@@ -319,7 +336,9 @@ def download_city_graph(
 def safe_save_graphml(graph: nx.MultiDiGraph, target: Path) -> None:
     target.parent.mkdir(parents=True, exist_ok=True)
     temp_path = target.with_suffix(target.suffix + ".part")
-    ox.save_graphml(graph, temp_path)
+    if not SAVE_GRAPHML:
+        raise RuntimeError("当前osmnx版本缺少save_graphml函数，请升级或安装兼容版本。")
+    SAVE_GRAPHML(graph, temp_path)
     temp_path.replace(target)
 
 
@@ -328,7 +347,10 @@ def safe_save_shapefile(graph: nx.MultiDiGraph, target_dir: Path) -> None:
     temp_dir = target_dir.with_name(target_dir.name + "_tmp")
     if temp_dir.exists():
         shutil.rmtree(temp_dir)
-    ox.save_graph_shapefile(graph, temp_dir)
+    if not SAVE_GRAPH_SHAPEFILE:
+        logging.warning("当前osmnx版本缺少save_graph_shapefile函数，已跳过Shapefile导出。")
+        return
+    SAVE_GRAPH_SHAPEFILE(graph, temp_dir)
     if target_dir.exists():
         shutil.rmtree(target_dir)
     temp_dir.rename(target_dir)
@@ -364,7 +386,9 @@ def download_cities(
                 continue
             logging.info("%s 已有GraphML，补齐缺失的Shapefile。", status)
             try:
-                cached_graph = ox.load_graphml(graphml_path)
+                if not LOAD_GRAPHML:
+                    raise RuntimeError("当前osmnx版本缺少load_graphml函数，无法读取缓存。")
+                cached_graph = LOAD_GRAPHML(graphml_path)
                 if not skip_shapefile:
                     safe_save_shapefile(cached_graph, shapefile_dir)
                 successes.append(resolved_path)
@@ -409,7 +433,9 @@ def merge_graphs(
     graphs: List[nx.MultiDiGraph] = []
     for path in graph_paths:
         logging.info("加载 %s", path)
-        graphs.append(ox.load_graphml(path))
+        if not LOAD_GRAPHML:
+            raise RuntimeError("当前osmnx版本缺少load_graphml函数，无法读取图数据。")
+        graphs.append(LOAD_GRAPHML(path))
     merged = compose_graphs(graphs)
     output_dir.mkdir(parents=True, exist_ok=True)
     output_graphml = output_dir / "graph.graphml"
@@ -433,7 +459,11 @@ def main() -> None:
 
     if args.timeout:
         ox.settings.timeout = args.timeout
-
+    if not SAVE_GRAPHML or not LOAD_GRAPHML:
+        logging.error("当前osmnx版本缺少GraphML读写支持，请升级osmnx或安装带io扩展的版本。")
+        sys.exit(1)
+    if not SAVE_GRAPH_SHAPEFILE and not args.skip_shapefile:
+        logging.warning("当前osmnx版本缺少Shapefile导出支持，将自动跳过Shapefile生成。")
     if args.list:
         list_cities()
         return
