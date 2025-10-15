@@ -252,20 +252,24 @@ def download_one_area(name: str, geom, outdir: Path, network_type: str, pause: f
                 # 指数退避
                 time.sleep(pause * attempt)
 
-            # 尝试当前 Overpass 实例
+            # 轮换 Overpass 实例（你前面已经定义了 OVERPASS_ENDPOINTS）
             ox.settings.overpass_url = OVERPASS_ENDPOINTS[endpoint_idx]
 
+            # ★★★ 关键改动：去掉 clean_periphery，改用 truncate_by_edge=True（2.x 支持）
             G = ox.graph_from_polygon(
                 geom,
                 network_type=network_type,
                 simplify=True,
                 retain_all=True,
-                clean_periphery=True,
+                truncate_by_edge=True,   # ← 2.x 建议使用的边界处理参数
+                # custom_filter=None      # 如需自定义 Overpass 过滤器可在此传入
             )
+
             graph_to_shp(G, block_dir)
             (block_dir / "meta.json").write_text(
                 json.dumps(
-                    {"name": name, "slug": slug, "network_type": network_type, "endpoint": ox.settings.overpass_url, "status": "ok"},
+                    {"name": name, "slug": slug, "network_type": network_type,
+                     "endpoint": ox.settings.overpass_url, "status": "ok"},
                     ensure_ascii=False, indent=2
                 ),
                 encoding="utf-8"
@@ -273,17 +277,23 @@ def download_one_area(name: str, geom, outdir: Path, network_type: str, pause: f
             return name, True, None
 
         except (SSLError, ConnectionError, ResponseStatusCodeError) as e:
-            # 轮换到下一个 Overpass 实例
             endpoint_idx = (endpoint_idx + 1) % len(OVERPASS_ENDPOINTS)
-            (block_dir / "error.log").write_text(f"attempt {attempt} @ {time.strftime('%F %T')}: {type(e).__name__}: {e}\n", encoding="utf-8")
+            (block_dir / "error.log").write_text(
+                f"attempt {attempt} @ {time.strftime('%F %T')}: {type(e).__name__}: {e}\n",
+                encoding="utf-8"
+            )
             continue
 
         except Exception as e:
-            (block_dir / "error.log").write_text(f"attempt {attempt} @ {time.strftime('%F %T')}: {type(e).__name__}: {e}\n", encoding="utf-8")
+            (block_dir / "error.log").write_text(
+                f"attempt {attempt} @ {time.strftime('%F %T')}: {type(e).__name__}: {e}\n",
+                encoding="utf-8"
+            )
             if attempt >= max_retries:
                 return name, False, str(e)
 
     return name, False, "max retries exceeded"
+
 
 
 # ------------------------------- Stitcher ------------------------------ #
