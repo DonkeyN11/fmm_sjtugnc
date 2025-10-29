@@ -3,7 +3,7 @@
  *
  * Memory-mapped UBODT reader for performance optimization
  *
- * @author: Enhanced by Claude for memory-mapped UBODT access
+ * @author: Ning
  * @version: 2024.09.16
  */
 

@@ -51,15 +51,6 @@ FMM读取大规模UBODT文件时可能遇到性能瓶颈。以下是几种优化
 - 构建源节点索引，快速定位
 - 二分查找替代线性搜索
 
-### 方案3: 分块处理
-
-对于超大规模网络，可以使用我们之前实现的分块并行处理：
-
-```bash
-# 分块生成UBODT
-./build/ubodt_gen input/config/ubodt_config_chunked.xml
-```
-
 ## 使用示例
 
 ### 转换现有UBODT文件

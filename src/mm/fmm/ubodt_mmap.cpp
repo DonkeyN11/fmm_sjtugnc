@@ -1,5 +1,5 @@
 //
-// Created by Claude for memory-mapped UBODT optimization
+// Created by Ning: memory-mapped UBODT optimization
 //
 
 #include "mm/fmm/ubodt_mmap.hpp"

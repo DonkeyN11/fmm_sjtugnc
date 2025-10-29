@@ -3,7 +3,7 @@
  *
  * UBODT format converter for optimization
  *
- * @author: Enhanced by Claude for UBODT format conversion
+ * @author: Ning
  * @version: 2024.09.16
  */
 

@@ -13,6 +13,7 @@
 #include <boost/function_output_iterator.hpp>
 
 #include <boost/format.hpp>
+#include "spdlog/fmt/fmt.h"
 
 using namespace FMM;
 using namespace FMM::CORE;
