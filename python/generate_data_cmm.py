@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Dict, List, Sequence, Tuple
 
 import numpy as np
 
@@ -54,14 +54,15 @@ except ImportError as exc:  # pragma: no cover - import guard
 # --------------------------------------------------------------------------- #
 GEOD = Geod(ellps="WGS84")
 CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
-MIN_SIGMA_DEG = 1.0e-5       # ≈ 1.1 metres
-MAX_SIGMA_DEG = 1.4e-4       # ≈ 15.5 metres
+MIN_SIGMA_DEG = 1.0e-4       # ≈ 10.1 metres
+MAX_SIGMA_DEG = 1.4e-3       # ≈ 150.5 metres
 MIN_SIGMA_UP = 1.0           # metres (vertical)
 MAX_SIGMA_UP = 6.0           # metres (vertical)
 
 
 # Shared between worker processes after initialisation.
-ROAD_GEOMETRIES: List[np.ndarray] = []
+ROAD_SEGMENTS: List[Tuple[np.ndarray, str, str]] = []
+NODE_TO_SEGMENTS: Dict[str, List[int]] = {}
 
 
 @dataclass(frozen=True)
@@ -104,29 +105,47 @@ class TrajectoryResult:
 # Helper functions
 # --------------------------------------------------------------------------- #
 
-def _initialize_worker(geometries: Sequence[np.ndarray]) -> None:
-    """Store road geometries in worker-local state."""
-    global ROAD_GEOMETRIES
-    ROAD_GEOMETRIES = [np.asarray(coords, dtype=float) for coords in geometries]
+def _initialize_worker(segments: Sequence[Tuple[Sequence[Sequence[float]], str, str]]) -> None:
+    """Store road segments and adjacency in worker-local state."""
+    global ROAD_SEGMENTS, NODE_TO_SEGMENTS
+    ROAD_SEGMENTS = []
+    NODE_TO_SEGMENTS = {}
+    for idx, (coords, u, v) in enumerate(segments):
+        arr = np.asarray(coords, dtype=float)
+        src = str(u)
+        dst = str(v)
+        ROAD_SEGMENTS.append((arr, src, dst))
+        NODE_TO_SEGMENTS.setdefault(src, []).append(idx)
+        NODE_TO_SEGMENTS.setdefault(dst, []).append(idx)
 
 
-def _load_roads(shapefile: Path) -> List[np.ndarray]:
-    """Load LineStrings/MultiLineStrings from a shapefile as coordinate arrays."""
+def _load_roads(shapefile: Path) -> List[Tuple[List[List[float]], str, str]]:
+    """Load road segments with node connectivity information."""
     gdf = gpd.read_file(shapefile)
-    lines: List[np.ndarray] = []
-    for geom in gdf.geometry:
+    if "u" not in gdf.columns or "v" not in gdf.columns:
+        raise ValueError("Shapefile must contain 'u' and 'v' columns for connectivity.")
+
+    segments: List[Tuple[List[List[float]], str, str]] = []
+    for _, row in gdf.iterrows():
+        geom = row.geometry
         if geom is None or geom.is_empty:
             continue
-        parts = [geom]
-        if isinstance(geom, MultiLineString):
+        if isinstance(geom, LineString):
+            parts = [geom]
+        elif isinstance(geom, MultiLineString):
             parts = list(geom.geoms)
+        else:
+            continue
+
+        u = str(row["u"])
+        v = str(row["v"])
         for part in parts:
-            coords = np.asarray(part.coords, dtype=float)
-            if coords.shape[0] >= 2:
-                lines.append(coords)
-    if not lines:
-        raise ValueError(f"No valid LineString geometries found in {shapefile}")
-    return lines
+            coords = [list(coord) for coord in part.coords]
+            if len(coords) >= 2:
+                segments.append((coords, u, v))
+    if not segments:
+        raise ValueError(f"No valid road segments found in {shapefile}")
+    return segments
 
 
 @dataclass
@@ -206,75 +225,167 @@ def _compute_protection_level(params: CovarianceParams) -> float:
 
 
 def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
-    if not ROAD_GEOMETRIES:
-        raise RuntimeError("ROAD_GEOMETRIES has not been initialised")
+    if not ROAD_SEGMENTS:
+        raise RuntimeError("ROAD_SEGMENTS has not been initialised")
 
     rng = np.random.default_rng(config.seed)
-    chosen_coords: np.ndarray | None = None
-    seg_lengths = None
-    cumulative = None
 
-    for _ in range(20):
-        candidate = ROAD_GEOMETRIES[int(rng.integers(0, len(ROAD_GEOMETRIES)))]
-        lengths = _segment_lengths_m(candidate)
-        total = float(np.sum(lengths))
-        if candidate.shape[0] >= 2 and total > 1.0:
-            chosen_coords = candidate
-            seg_lengths = lengths
-            cumulative = np.concatenate(([0.0], np.cumsum(lengths)))
+    min_span_deg = 0.1
+    max_attempts = 200
+    max_extension_steps = 500
+    max_global_attempts = 50
+    options_count = len(ROAD_SEGMENTS)
+
+    def segment_span(coords_array: np.ndarray) -> float:
+        lon_span = float(coords_array[:, 0].max() - coords_array[:, 0].min())
+        lat_span = float(coords_array[:, 1].max() - coords_array[:, 1].min())
+        return lon_span + lat_span
+
+    def try_extend_path(path: List[List[float]],
+                        start: str,
+                        end: str,
+                        visited_edges: set[int]) -> Tuple[str, str, bool]:
+        choices = [("forward", end), ("backward", start)]
+        order = list(rng.permutation(len(choices)))
+        for idx in order:
+            direction, anchor = choices[idx]
+            candidate_edges = [
+                edge_idx for edge_idx in NODE_TO_SEGMENTS.get(anchor, [])
+                if edge_idx not in visited_edges
+            ]
+            if not candidate_edges:
+                continue
+            edge_idx = int(candidate_edges[int(rng.integers(0, len(candidate_edges)))])
+            coords_edge, u, v = ROAD_SEGMENTS[edge_idx]
+
+            if direction == "forward":
+                if anchor == u:
+                    new_points = coords_edge[1:]
+                    if new_points.size == 0:
+                        continue
+                    path.extend(new_points.tolist())
+                    visited_edges.add(edge_idx)
+                    return start, v, True
+                if anchor == v:
+                    new_points = coords_edge[::-1][1:]
+                    if new_points.size == 0:
+                        continue
+                    path.extend(new_points.tolist())
+                    visited_edges.add(edge_idx)
+                    return start, u, True
+            else:
+                if anchor == u:
+                    new_points = coords_edge[::-1][1:]
+                    if new_points.size == 0:
+                        continue
+                    path[0:0] = new_points.tolist()
+                    visited_edges.add(edge_idx)
+                    return v, end, True
+                if anchor == v:
+                    new_points = coords_edge[:-1]
+                    if new_points.size == 0:
+                        continue
+                    path[0:0] = new_points.tolist()
+                    visited_edges.add(edge_idx)
+                    return u, end, True
+        return start, end, False
+
+    for _ in range(max_global_attempts):
+        chosen_coords: np.ndarray | None = None
+        seg_lengths = None
+        cumulative = None
+
+        for _ in range(max_attempts):
+            base_idx = int(rng.integers(0, options_count))
+            base_coords, start_node, end_node = ROAD_SEGMENTS[base_idx]
+            if base_coords.shape[0] < 2:
+                continue
+
+            path_coords = base_coords.tolist()
+            visited_edges = {base_idx}
+
+            current_span = segment_span(base_coords)
+
+            extension_counter = 0
+            while current_span < min_span_deg and extension_counter < max_extension_steps:
+                start_node, end_node, extended = try_extend_path(path_coords, start_node, end_node, visited_edges)
+                if not extended:
+                    break
+                extension_counter += 1
+                current_span = segment_span(np.asarray(path_coords, dtype=float))
+
+            if current_span < min_span_deg:
+                continue
+
+            candidate_arr = np.asarray(path_coords, dtype=float)
+            seg_lengths_candidate = _segment_lengths_m(candidate_arr)
+            if seg_lengths_candidate.size == 0:
+                continue
+            chosen_coords = candidate_arr
+            seg_lengths = seg_lengths_candidate
+            cumulative = np.concatenate(([0.0], np.cumsum(seg_lengths_candidate)))
             break
-    if chosen_coords is None or seg_lengths is None or cumulative is None:
-        raise RuntimeError("Unable to sample a valid road segment with sufficient length")
 
-    sample_distances = np.linspace(0.0, cumulative[-1], num=config.num_points, dtype=float)
+        if chosen_coords is None or seg_lengths is None or cumulative is None:
+            continue
 
-    truth_coords: List[Tuple[float, float]] = []
-    timestamps: List[float] = []
-    observations: List[Observation] = []
+        sample_distances = np.linspace(0.0, cumulative[-1], num=config.num_points, dtype=float)
 
-    prev_signature: Tuple[float, float, float] | None = None
+        truth_coords: List[Tuple[float, float]] = []
+        timestamps: List[float] = []
+        observations: List[Observation] = []
+        prev_signature: Tuple[float, float, float] | None = None
 
-    for seq, dist_m in enumerate(sample_distances):
-        base_x, base_y = _interpolate_along(chosen_coords, float(dist_m), cumulative, seg_lengths)
-        truth_coords.append((base_x, base_y))
+        for seq, dist_m in enumerate(sample_distances):
+            base_x, base_y = _interpolate_along(chosen_coords, float(dist_m), cumulative, seg_lengths)
+            truth_coords.append((base_x, base_y))
 
-        params = _random_covariance_params(rng)
-        signature = (params.sdn, params.sde, params.sdne)
-        attempts = 0
-        while prev_signature is not None and np.allclose(signature, prev_signature) and attempts < 5:
             params = _random_covariance_params(rng)
             signature = (params.sdn, params.sde, params.sdne)
-            attempts += 1
-        prev_signature = signature
+            attempts = 0
+            while prev_signature is not None and np.allclose(signature, prev_signature) and attempts < 5:
+                params = _random_covariance_params(rng)
+                signature = (params.sdn, params.sde, params.sdne)
+                attempts += 1
+            prev_signature = signature
 
-        noise = rng.multivariate_normal(mean=np.zeros(2, dtype=float), cov=params.noise_cov)
-        obs_x = float(base_x + noise[0])
-        obs_y = float(base_y + noise[1])
-        timestamp = float(config.base_epoch + dist_m / max(config.speed_mps, 1e-3))
+            noise = rng.multivariate_normal(mean=np.zeros(2, dtype=float), cov=params.noise_cov)
+            obs_x = float(base_x + noise[0])
+            obs_y = float(base_y + noise[1])
+            timestamp = float(config.base_epoch + dist_m / max(config.speed_mps, 1e-3))
 
-        observations.append(
-            Observation(
-                seq=seq,
-                timestamp=timestamp,
-                x=obs_x,
-                y=obs_y,
-                sdn=params.sdn,
-                sde=params.sde,
-                sdu=params.sdu,
-                sdne=params.sdne,
-                sdeu=params.sdeu,
-                sdun=params.sdun,
-                protection_level=_compute_protection_level(params),
+            observations.append(
+                Observation(
+                    seq=seq,
+                    timestamp=timestamp,
+                    x=obs_x,
+                    y=obs_y,
+                    sdn=params.sdn,
+                    sde=params.sde,
+                    sdu=params.sdu,
+                    sdne=params.sdne,
+                    sdeu=params.sdeu,
+                    sdun=params.sdun,
+                    protection_level=_compute_protection_level(params),
+                )
             )
-        )
-        timestamps.append(timestamp)
+            timestamps.append(timestamp)
 
-    return TrajectoryResult(
-        traj_id=config.traj_id,
-        timestamps=timestamps,
-        truth_coords=truth_coords,
-        observations=observations,
-    )
+        arr_truth = np.asarray(truth_coords, dtype=float)
+        if arr_truth.shape[0] < 2:
+            continue
+        span_total = segment_span(arr_truth)
+        if span_total < min_span_deg:
+            continue
+
+        return TrajectoryResult(
+            traj_id=config.traj_id,
+            timestamps=timestamps,
+            truth_coords=truth_coords,
+            observations=observations,
+        )
+
+    raise RuntimeError("Unable to generate a trajectory with ≥0.1° combined longitude/latitude span.")
 
 
 def _make_tasks(count: int, num_points: int, speed: float,
