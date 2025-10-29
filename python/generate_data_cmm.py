@@ -54,8 +54,8 @@ except ImportError as exc:  # pragma: no cover - import guard
 # --------------------------------------------------------------------------- #
 GEOD = Geod(ellps="WGS84")
 CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
-MIN_SIGMA_DEG = 1.0e-3       # ≈ 100.1 metres
-MAX_SIGMA_DEG = 1.4e-2       # ≈ 1500.5 metres
+MIN_SIGMA_DEG = 1.0e-4       # ≈ 10.1 metres
+MAX_SIGMA_DEG = 1.4e-3       # ≈ 150.5 metres
 MIN_SIGMA_UP = 1.0           # metres (vertical)
 MAX_SIGMA_UP = 6.0           # metres (vertical)
 
