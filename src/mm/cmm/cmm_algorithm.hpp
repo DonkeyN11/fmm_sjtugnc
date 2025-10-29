@@ -76,12 +76,13 @@ namespace MM {
  * GNSS covariance matrix structure
  */
 struct CovarianceMatrix {
-    double sdn;    // North standard deviation (m)
-    double sde;    // East standard deviation (m)
-    double sdu;    // Up standard deviation (m)
-    double sdne;   // North-East covariance (m²)
-    double sdeu;   // East-Up covariance (m²)
-    double sdun;   // Up-North covariance (m²)
+    // Units depending on the input data (usually lla)
+    double sdn;    // North standard deviation
+    double sde;    // East standard deviation
+    double sdu;    // Up standard deviation
+    double sdne;   // North-East covariance
+    double sdeu;   // East-Up covariance
+    double sdun;   // Up-North covariance 
 
     // Convert to 2D covariance matrix (horizontal plane)
     Matrix2d to_2d_matrix() const {
