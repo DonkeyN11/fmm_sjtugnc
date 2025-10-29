@@ -44,8 +44,8 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--dpi", type=int, default=200, help="Rendered image resolution.")
     parser.add_argument("--gt-style", type=str, default="solid",
                         help="Matplotlib line style for ground truth trajectories.")
-    parser.add_argument("--cmm-style", type=str, default="dashed",
-                        help="Matplotlib line style for CMM trajectories.")
+    parser.add_argument("--cmm-marker", type=str, default="o",
+                        help="Matplotlib marker for CMM trajectory points.")
     parser.add_argument("--alpha-gt", type=float, default=0.9,
                         help="Alpha for ground truth lines.")
     parser.add_argument("--alpha-cmm", type=float, default=0.9,
@@ -104,7 +104,7 @@ def plot_trajectories(gt: gpd.GeoDataFrame,
                       figsize: tuple[float, float],
                       dpi: int,
                       gt_style: str,
-                      cmm_style: str,
+                      cmm_marker: str,
                       alpha_gt: float,
                       alpha_cmm: float,
                       road_alpha: float) -> None:
@@ -128,8 +128,14 @@ def plot_trajectories(gt: gpd.GeoDataFrame,
             continue
         gt_row.plot(ax=ax, color=color, linestyle=gt_style, linewidth=2.0, alpha=alpha_gt,
                     label=f"GT {traj_id}", zorder=2)
-        cmm_row.plot(ax=ax, color=color, linestyle=cmm_style, linewidth=2.0, alpha=alpha_cmm,
-                     label=f"CMM {traj_id}", zorder=3)
+        geometry = cmm_row.geometry.iloc[0]
+        if geometry.geom_type == "MultiLineString":
+            coords = [tuple(pt) for line in geometry.geoms for pt in line.coords]
+        else:
+            coords = list(geometry.coords)
+        xs, ys = zip(*coords)
+        ax.scatter(xs, ys, color=color, marker=cmm_marker, alpha=alpha_cmm,
+                   label=f"CMM {traj_id}", zorder=3)
 
     ax.set_aspect("equal")
     ax.set_xlabel("Longitude")
@@ -159,7 +165,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         figsize=tuple(args.figsize),
         dpi=args.dpi,
         gt_style=args.gt_style,
-        cmm_style=args.cmm_style,
+        cmm_marker=args.cmm_marker,
         alpha_gt=args.alpha_gt,
         alpha_cmm=args.alpha_cmm,
         road_alpha=args.road_alpha,
