@@ -13,7 +13,7 @@ using namespace FMM::MM;
 
 CMMAppConfig::CMMAppConfig()
     : ubodt_file(),
-      use_omp(false),
+      use_omp(true),
       log_level(2),
       step(100),
       help_specified(false) {}
@@ -28,7 +28,7 @@ CMMAppConfig CMMAppConfig::load_from_xml(const std::string &xml_file) {
     config.result_config = ResultConfig::load_from_xml(tree);
     config.cmm_config = CovarianceMapMatchConfig::load_from_xml(tree);
     config.ubodt_file = tree.get<std::string>("config.input.ubodt.file", "");
-    config.use_omp = tree.get("config.other.use_omp", false);
+    config.use_omp = tree.get("config.other.use_omp", true);
     config.log_level = tree.get("config.other.log_level", 2);
     config.step = tree.get("config.other.step", 100);
 
