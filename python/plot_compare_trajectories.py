@@ -17,6 +17,7 @@ import argparse
 from pathlib import Path
 from typing import Iterable, Sequence, Set
 
+import json
 import geopandas as gpd
 import matplotlib.pyplot as plt
 import pandas as pd
@@ -52,6 +53,14 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
                         help="Alpha for CMM lines.")
     parser.add_argument("--road-alpha", type=float, default=0.6,
                         help="Alpha for background road network.")
+    parser.add_argument("--show-pl", action="store_true",
+                        help="Draw protection level circles around CMM observations.")
+    parser.add_argument("--pl-scale", type=float, default=1.0,
+                        help="Multiplier to convert PL values to degrees for plotting.")
+    parser.add_argument("--pl-alpha", type=float, default=0.3,
+                        help="Alpha for protection level circles.")
+    parser.add_argument("--pl-linewidth", type=float, default=0.6,
+                        help="Line width for protection level circles.")
     return parser.parse_args(argv)
 
 
@@ -107,7 +116,11 @@ def plot_trajectories(gt: gpd.GeoDataFrame,
                       cmm_marker: str,
                       alpha_gt: float,
                       alpha_cmm: float,
-                      road_alpha: float) -> None:
+                      road_alpha: float,
+                      show_pl: bool,
+                      pl_scale: float,
+                      pl_alpha: float,
+                      pl_linewidth: float) -> None:
     fig, ax = plt.subplots(figsize=figsize)
 
     if network is not None:
@@ -129,6 +142,7 @@ def plot_trajectories(gt: gpd.GeoDataFrame,
         gt_row.plot(ax=ax, color=color, linestyle=gt_style, linewidth=2.0, alpha=alpha_gt,
                     label=f"GT {traj_id}", zorder=2)
         geometry = cmm_row.geometry.iloc[0]
+        prot_levels = json.loads(cmm_row["protection_levels"].iloc[0])
         if geometry.geom_type == "MultiLineString":
             coords = [tuple(pt) for line in geometry.geoms for pt in line.coords]
         else:
@@ -136,6 +150,19 @@ def plot_trajectories(gt: gpd.GeoDataFrame,
         xs, ys = zip(*coords)
         ax.scatter(xs, ys, color=color, marker=cmm_marker, alpha=alpha_cmm,
                    label=f"CMM {traj_id}", zorder=3)
+        if show_pl:
+            for (x, y), pl in zip(coords, prot_levels):
+                radius = pl * pl_scale
+                circle = plt.Circle(
+                    (x, y),
+                    radius,
+                    edgecolor=color,
+                    facecolor="none",
+                    alpha=pl_alpha,
+                    linewidth=pl_linewidth,
+                    zorder=2.5,
+                )
+                ax.add_patch(circle)
 
     ax.set_aspect("equal")
     ax.set_xlabel("Longitude")
@@ -169,6 +196,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         alpha_gt=args.alpha_gt,
         alpha_cmm=args.alpha_cmm,
         road_alpha=args.road_alpha,
+        show_pl=args.show_pl,
+        pl_scale=args.pl_scale,
+        pl_alpha=args.pl_alpha,
+        pl_linewidth=args.pl_linewidth,
     )
     print(f"Saved comparison plot -> {args.output}")
 
