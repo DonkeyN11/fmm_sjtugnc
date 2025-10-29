@@ -5,6 +5,8 @@ output/
 dist/
 test/bin/
 test/log/
+input_cmm/
+tmp/
 
 # Doc files
 

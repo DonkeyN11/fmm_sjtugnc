@@ -1,16 +1,24 @@
 #!/usr/bin/env python3
 """
-Utility for generating synthetic CMM trajectory observations with per-point covariance.
+Synthetic data generator for the CMM command-line interface.
 
-The script samples a random road segment from the given shapefile, assumes uniform motion,
-and creates noisy observations drawn from multivariate normal distributions governed by
-random positive-definite covariance matrices. Protection levels are computed from the
-99.99% quantile of the resulting positional error distribution.
+The script samples random road segments from a shapefile, assumes uniform motion
+with a user-provided speed, and creates noisy GNSS observations. Each observation
+is associated with a unique covariance matrix and protection level so that the
+resulting CSV can be consumed directly by the `cmm` CLI (as a point-based GPS file).
+
+Generated artefacts (placed in the output directory):
+
+  - `observations.csv`    : per-point observations with covariance/protection level
+  - `ground_truth.csv`    : trajectories in WKT form with timestamp lists
+  - `ground_truth_points.csv` (optional, for inspection)
+  - `metadata.json`       : parameters used for the run
 """
 
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import math
 import os
@@ -18,7 +26,6 @@ import sys
 import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
-from datetime import datetime, timezone, timedelta
 from pathlib import Path
 from typing import List, Sequence, Tuple
 
@@ -33,10 +40,28 @@ except ImportError as exc:  # pragma: no cover - import guard
         "Install them with `pip install geopandas shapely`."
     ) from exc
 
+try:
+    from pyproj import Geod
+except ImportError as exc:  # pragma: no cover - import guard
+    raise SystemExit(
+        "pyproj is required to compute geodesic distances. "
+        "Install it with `pip install pyproj`."
+    ) from exc
 
-# Shared between worker processes after initialization.
-ROAD_GEOMETRIES: List[LineString] = []
-CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457
+
+# --------------------------------------------------------------------------- #
+# Configuration constants
+# --------------------------------------------------------------------------- #
+GEOD = Geod(ellps="WGS84")
+CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
+MIN_SIGMA_DEG = 1.0e-5       # ≈ 1.1 metres
+MAX_SIGMA_DEG = 1.4e-4       # ≈ 15.5 metres
+MIN_SIGMA_UP = 1.0           # metres (vertical)
+MAX_SIGMA_UP = 6.0           # metres (vertical)
+
+
+# Shared between worker processes after initialisation.
+ROAD_GEOMETRIES: List[np.ndarray] = []
 
 
 @dataclass(frozen=True)
@@ -48,116 +73,212 @@ class TrajectoryConfig:
     seed: int
 
 
-def _initialize_worker(geometries: Sequence[LineString]) -> None:
+@dataclass
+class Observation:
+    seq: int
+    timestamp: float
+    x: float
+    y: float
+    sdn: float
+    sde: float
+    sdu: float
+    sdne: float
+    sdeu: float
+    sdun: float
+    protection_level: float
+
+
+@dataclass
+class TrajectoryResult:
+    traj_id: int
+    timestamps: List[float]
+    truth_coords: List[Tuple[float, float]]
+    observations: List[Observation]
+
+    @property
+    def truth_wkt(self) -> str:
+        return LineString(self.truth_coords).wkt
+
+
+# --------------------------------------------------------------------------- #
+# Helper functions
+# --------------------------------------------------------------------------- #
+
+def _initialize_worker(geometries: Sequence[np.ndarray]) -> None:
+    """Store road geometries in worker-local state."""
     global ROAD_GEOMETRIES
-    ROAD_GEOMETRIES = list(geometries)
+    ROAD_GEOMETRIES = [np.asarray(coords, dtype=float) for coords in geometries]
 
 
-def _load_roads(shapefile: Path) -> List[LineString]:
+def _load_roads(shapefile: Path) -> List[np.ndarray]:
+    """Load LineStrings/MultiLineStrings from a shapefile as coordinate arrays."""
     gdf = gpd.read_file(shapefile)
-    lines: List[LineString] = []
+    lines: List[np.ndarray] = []
     for geom in gdf.geometry:
         if geom is None or geom.is_empty:
             continue
-        if isinstance(geom, LineString):
-            if geom.length > 0:
-                lines.append(geom)
-        elif isinstance(geom, MultiLineString):
-            lines.extend([part for part in geom.geoms if part.length > 0])
+        parts = [geom]
+        if isinstance(geom, MultiLineString):
+            parts = list(geom.geoms)
+        for part in parts:
+            coords = np.asarray(part.coords, dtype=float)
+            if coords.shape[0] >= 2:
+                lines.append(coords)
     if not lines:
         raise ValueError(f"No valid LineString geometries found in {shapefile}")
     return lines
 
 
-def _random_covariance(rng: np.random.Generator) -> np.ndarray:
-    # 1 degree in hainan is about 111 km, so 15 m is about 0.000135 degree.
-    sigma_x = rng.uniform(0.00001, 0.000135)
-    sigma_y = rng.uniform(0.00001, 0.000135)
+@dataclass
+class CovarianceParams:
+    sdn: float
+    sde: float
+    sdu: float
+    sdne: float
+    sdeu: float
+    sdun: float
+    noise_cov: np.ndarray  # covariance matrix aligned with (x=east, y=north)
+    pl_matrix: np.ndarray  # covariance matrix aligned with (north, east)
+
+
+def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
+    """Sample a positive-definite covariance description for one observation."""
+    sdn = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
+    sde = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
     rho = rng.uniform(-0.6, 0.6)
-    cov = np.array(
+    sdne = rho * sdn * sde
+    sdu = rng.uniform(MIN_SIGMA_UP, MAX_SIGMA_UP)
+    # Keep vertical cross-covariances small but non-zero for realism.
+    sdeu = rng.uniform(-0.2, 0.2) * sde * sdu * 0.05
+    sdun = rng.uniform(-0.2, 0.2) * sdn * sdu * 0.05
+
+    noise_cov = np.array(
         [
-            [sigma_x**2, rho * sigma_x * sigma_y],
-            [rho * sigma_x * sigma_y, sigma_y**2],
+            [sde * sde, sdne],
+            [sdne, sdn * sdn],
         ],
         dtype=float,
     )
-    # Numerical safeguard: make sure smallest eigenvalue stays positive.
-    eigvals = np.linalg.eigvalsh(cov)
-    min_eig = eigvals.min()
-    if min_eig <= 1e-6:
-        cov += np.eye(2) * (1e-6 - min_eig)
-    return cov
+    pl_matrix = np.array(
+        [
+            [sdn * sdn, sdne],
+            [sdne, sde * sde],
+        ],
+        dtype=float,
+    )
+    return CovarianceParams(sdn, sde, sdu, sdne, sdeu, sdun, noise_cov, pl_matrix)
 
 
-def _generate_single(config: TrajectoryConfig) -> dict:
+def _segment_lengths_m(coords: np.ndarray) -> np.ndarray:
+    """Return geodesic segment lengths (metres) for a polyline."""
+    lon0 = coords[:-1, 0]
+    lat0 = coords[:-1, 1]
+    lon1 = coords[1:, 0]
+    lat1 = coords[1:, 1]
+    _, _, dist = GEOD.inv(lon0, lat0, lon1, lat1)
+    return np.asarray(dist, dtype=float)
+
+
+def _interpolate_along(coords: np.ndarray, target_dist_m: float,
+                       cumulative: np.ndarray, seg_lengths: np.ndarray) -> Tuple[float, float]:
+    """Interpolate a point at the specified cumulative distance (metres)."""
+    if target_dist_m <= 0:
+        return tuple(coords[0])
+    if target_dist_m >= cumulative[-1]:
+        return tuple(coords[-1])
+    seg_idx = int(np.searchsorted(cumulative, target_dist_m, side="right") - 1)
+    seg_len = seg_lengths[seg_idx]
+    if seg_len <= 0:
+        return tuple(coords[seg_idx])
+    local_offset = target_dist_m - cumulative[seg_idx]
+    fraction = local_offset / seg_len
+    x0, y0 = coords[seg_idx]
+    x1, y1 = coords[seg_idx + 1]
+    x = x0 + fraction * (x1 - x0)
+    y = y0 + fraction * (y1 - y0)
+    return float(x), float(y)
+
+
+def _compute_protection_level(params: CovarianceParams) -> float:
+    eigenvalues = np.linalg.eigvalsh(params.pl_matrix)
+    max_eig = float(np.max(eigenvalues))
+    return math.sqrt(max_eig * CHI_SQUARE_QUANTILE_9999_DF2)
+
+
+def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
     if not ROAD_GEOMETRIES:
-        raise RuntimeError("ROAD_GEOMETRIES is not initialized")
+        raise RuntimeError("ROAD_GEOMETRIES has not been initialised")
+
     rng = np.random.default_rng(config.seed)
+    chosen_coords: np.ndarray | None = None
+    seg_lengths = None
+    cumulative = None
 
-    line: LineString
-    for _ in range(10):
-        line = ROAD_GEOMETRIES[int(rng.integers(0, len(ROAD_GEOMETRIES)))]
-        if line.length > 0:
+    for _ in range(20):
+        candidate = ROAD_GEOMETRIES[int(rng.integers(0, len(ROAD_GEOMETRIES)))]
+        lengths = _segment_lengths_m(candidate)
+        total = float(np.sum(lengths))
+        if candidate.shape[0] >= 2 and total > 1.0:
+            chosen_coords = candidate
+            seg_lengths = lengths
+            cumulative = np.concatenate(([0.0], np.cumsum(lengths)))
             break
-    else:
-        raise RuntimeError("Failed to select a non-empty LineString")
+    if chosen_coords is None or seg_lengths is None or cumulative is None:
+        raise RuntimeError("Unable to sample a valid road segment with sufficient length")
 
-    distances = np.linspace(0.0, line.length, num=config.num_points)
-    coords: List[Tuple[float, float]] = []
-    noisy_coords: List[Tuple[float, float]] = []
-    timestamps: List[str] = []
-    covariances: List[List[List[float]]] = []
-    protection_levels: List[float] = []
+    sample_distances = np.linspace(0.0, cumulative[-1], num=config.num_points, dtype=float)
 
-    prev_cov: np.ndarray | None = None
+    truth_coords: List[Tuple[float, float]] = []
+    timestamps: List[float] = []
+    observations: List[Observation] = []
 
-    for d in distances:
-        point = line.interpolate(float(d))
-        coords.append((point.x, point.y))
+    prev_signature: Tuple[float, float, float] | None = None
 
-        cov = _random_covariance(rng)
-        if prev_cov is not None:
-            attempts = 0
-            while np.allclose(cov, prev_cov, atol=1e-9) and attempts < 5:
-                cov = _random_covariance(rng)
-                attempts += 1
-        prev_cov = cov
+    for seq, dist_m in enumerate(sample_distances):
+        base_x, base_y = _interpolate_along(chosen_coords, float(dist_m), cumulative, seg_lengths)
+        truth_coords.append((base_x, base_y))
 
-        observation = rng.multivariate_normal([point.x, point.y], cov)
-        noisy_coords.append((float(observation[0]), float(observation[1])))
+        params = _random_covariance_params(rng)
+        signature = (params.sdn, params.sde, params.sdne)
+        attempts = 0
+        while prev_signature is not None and np.allclose(signature, prev_signature) and attempts < 5:
+            params = _random_covariance_params(rng)
+            signature = (params.sdn, params.sde, params.sdne)
+            attempts += 1
+        prev_signature = signature
 
-        pl = math.sqrt(float(np.linalg.eigvalsh(cov).max()) * CHI_SQUARE_QUANTILE_9999_DF2)
-        protection_levels.append(pl)
-        covariances.append(cov.tolist())
+        noise = rng.multivariate_normal(mean=np.zeros(2, dtype=float), cov=params.noise_cov)
+        obs_x = float(base_x + noise[0])
+        obs_y = float(base_y + noise[1])
+        timestamp = float(config.base_epoch + dist_m / max(config.speed_mps, 1e-3))
 
-        t_seconds = d / max(config.speed_mps, 1e-3)
-        timestamp = datetime.fromtimestamp(config.base_epoch, tz=timezone.utc) + timedelta(seconds=float(t_seconds))
-        timestamps.append(timestamp.isoformat())
-
-    ground_truth = {
-        "geometry": [list(coord) for coord in coords],
-        "timestamps": timestamps,
-    }
-    observations = []
-    for idx in range(config.num_points):
         observations.append(
-            {
-                "timestamp": timestamps[idx],
-                "position": list(noisy_coords[idx]),
-                "covariance": covariances[idx],
-                "protection_level": protection_levels[idx],
-            }
+            Observation(
+                seq=seq,
+                timestamp=timestamp,
+                x=obs_x,
+                y=obs_y,
+                sdn=params.sdn,
+                sde=params.sde,
+                sdu=params.sdu,
+                sdne=params.sdne,
+                sdeu=params.sdeu,
+                sdun=params.sdun,
+                protection_level=_compute_protection_level(params),
+            )
         )
+        timestamps.append(timestamp)
 
-    return {
-        "id": config.traj_id,
-        "speed_m_per_s": config.speed_mps,
-        "ground_truth": ground_truth,
-        "observations": observations,
-    }
+    return TrajectoryResult(
+        traj_id=config.traj_id,
+        timestamps=timestamps,
+        truth_coords=truth_coords,
+        observations=observations,
+    )
 
 
-def _make_tasks(count: int, num_points: int, speed: float, base_epoch: float, seed: int | None, start_id: int) -> List[TrajectoryConfig]:
+def _make_tasks(count: int, num_points: int, speed: float,
+                base_epoch: float, seed: int | None, start_id: int) -> List[TrajectoryConfig]:
     master_rng = np.random.default_rng(seed)
     tasks: List[TrajectoryConfig] = []
     for offset in range(count):
@@ -175,18 +296,151 @@ def _make_tasks(count: int, num_points: int, speed: float, base_epoch: float, se
 
 
 def parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Generate synthetic CMM trajectory observations.")
+    parser = argparse.ArgumentParser(
+        description="Generate synthetic observation files for the CMM CLI.",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
     parser.add_argument("--count", type=int, default=10, help="Number of trajectories to generate.")
-    parser.add_argument("--points", type=int, default=50, help="Number of points per trajectory.")
-    parser.add_argument("--speed", type=float, default=12.0, help="Assumed constant speed (m/s).")
-    parser.add_argument("--output", type=Path, default=Path("python/generated_cmm_data.json"), help="Output JSON file.")
-    parser.add_argument("--shapefile", type=Path, default=Path("input/map/haikou/haikou.shp"), help="Road shapefile to sample.")
-    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1, help="Maximum parallel workers.")
-    parser.add_argument("--seed", type=int, default=None, help="Master random seed for reproducibility.")
-    parser.add_argument("--start-id", type=int, default=1, help="Starting trajectory identifier.")
-    parser.add_argument("--base-epoch", type=float, default=None, help="Base UNIX epoch (seconds). Defaults to current time.")
+    parser.add_argument("--points", type=int, default=60, help="Number of points per trajectory.")
+    parser.add_argument("--speed", type=float, default=12.0, help="Vehicle speed (m/s).")
+    parser.add_argument("--output-dir", type=Path, default=Path("python/cmm_data"),
+                        help="Directory where generated files will be stored.")
+    parser.add_argument("--shapefile", type=Path, default=Path("input/map/haikou/edges.shp"),
+                        help="Road shapefile used as the sampling base.")
+    parser.add_argument("--jobs", type=int, default=os.cpu_count() or 1,
+                        help="Maximum number of worker processes.")
+    parser.add_argument("--seed", type=int, default=None,
+                        help="Master random seed for reproducibility.")
+    parser.add_argument("--start-id", type=int, default=1,
+                        help="Identifier assigned to the first trajectory.")
+    parser.add_argument("--base-epoch", type=float, default=None,
+                        help="Starting UNIX epoch (seconds). Defaults to current time.")
+    parser.add_argument("--export-points", action="store_true",
+                        help="Emit ground truth sample points alongside trajectories.")
     return parser.parse_args(argv)
 
+
+# --------------------------------------------------------------------------- #
+# Output writers
+# --------------------------------------------------------------------------- #
+
+def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -> None:
+    header = [
+        "id", "seq", "timestamp", "x", "y",
+        "sdn", "sde", "sdne", "protection_level",
+    ]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, delimiter=";")
+        writer.writerow(header)
+        for traj in sorted(results, key=lambda item: item.traj_id):
+            for obs in traj.observations:
+                writer.writerow(
+                    [
+                        traj.traj_id,
+                        obs.seq,
+                        f"{obs.timestamp:.6f}",
+                        f"{obs.x:.8f}",
+                        f"{obs.y:.8f}",
+                        f"{obs.sdn:.8f}",
+                        f"{obs.sde:.8f}",
+                        f"{obs.sdne:.10f}",
+                        f"{obs.protection_level:.8f}",
+                    ]
+                )
+
+
+def _write_cmm_trajectory_csv(results: List[TrajectoryResult], destination: Path) -> None:
+    header = ["id", "geom", "timestamps", "covariances", "protection_levels"]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, delimiter=";")
+        writer.writerow(header)
+        for traj in sorted(results, key=lambda item: item.traj_id):
+            timestamps = [round(value, 6) for value in traj.timestamps]
+            covariances = [
+                [
+                    round(obs.sdn, 8),
+                    round(obs.sde, 8),
+                    round(obs.sdu, 8),
+                    round(obs.sdne, 10),
+                    round(obs.sdeu, 10),
+                    round(obs.sdun, 10),
+                ]
+                for obs in traj.observations
+            ]
+            protection_levels = [round(obs.protection_level, 8) for obs in traj.observations]
+
+            writer.writerow(
+                [
+                    traj.traj_id,
+                    traj.truth_wkt,
+                    json.dumps(timestamps, separators=(",", ":"), ensure_ascii=False),
+                    json.dumps(covariances, separators=(",", ":"), ensure_ascii=False),
+                    json.dumps(protection_levels, separators=(",", ":"), ensure_ascii=False),
+                ]
+            )
+
+
+def _write_ground_truth_csv(results: List[TrajectoryResult], destination: Path) -> None:
+    header = ["id", "geom", "timestamp"]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, delimiter=";")
+        writer.writerow(header)
+        for traj in sorted(results, key=lambda item: item.traj_id):
+            timestamp_str = ",".join(f"{ts:.6f}" for ts in traj.timestamps)
+            writer.writerow([traj.traj_id, traj.truth_wkt, timestamp_str])
+
+
+def _write_ground_truth_points(results: List[TrajectoryResult], destination: Path) -> None:
+    header = ["id", "seq", "timestamp", "x", "y"]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, delimiter=";")
+        writer.writerow(header)
+        for traj in sorted(results, key=lambda item: item.traj_id):
+            for seq, (coord, ts) in enumerate(zip(traj.truth_coords, traj.timestamps)):
+                writer.writerow(
+                    [
+                        traj.traj_id,
+                        seq,
+                        f"{ts:.6f}",
+                        f"{coord[0]:.8f}",
+                        f"{coord[1]:.8f}",
+                    ]
+                )
+
+
+def _write_metadata(results: List[TrajectoryResult], args: argparse.Namespace, destination: Path) -> None:
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    payload = {
+        "generated_at": time.time(),
+        "arguments": {
+            "count": args.count,
+            "points": args.points,
+            "speed": args.speed,
+            "shapefile": str(Path(args.shapefile).resolve()),
+            "seed": args.seed,
+            "start_id": args.start_id,
+            "base_epoch": args.base_epoch,
+        },
+        "trajectories": [
+            {
+                "id": traj.traj_id,
+                "num_points": len(traj.truth_coords),
+                "duration": traj.timestamps[-1] - traj.timestamps[0] if len(traj.timestamps) > 1 else 0.0,
+            }
+            for traj in sorted(results, key=lambda item: item.traj_id)
+        ],
+    }
+    with destination.open("w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2)
+
+
+# --------------------------------------------------------------------------- #
+# Entry point
+# --------------------------------------------------------------------------- #
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv or sys.argv[1:])
@@ -195,32 +449,37 @@ def main(argv: Sequence[str] | None = None) -> int:
         raise SystemExit(f"Shapefile not found: {shapefile}")
 
     road_geoms = _load_roads(shapefile)
-    base_epoch = args.base_epoch if args.base_epoch is not None else time.time()
+    base_epoch = float(args.base_epoch) if args.base_epoch is not None else time.time()
     tasks = _make_tasks(args.count, args.points, args.speed, base_epoch, args.seed, args.start_id)
 
-    output_path = args.output.resolve()
-    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_dir = args.output_dir.resolve()
+    output_dir.mkdir(parents=True, exist_ok=True)
 
     if args.jobs <= 1:
         _initialize_worker(road_geoms)
         results = [_generate_single(task) for task in tasks]
     else:
-        with ProcessPoolExecutor(max_workers=args.jobs, initializer=_initialize_worker, initargs=(road_geoms,)) as executor:
+        with ProcessPoolExecutor(
+            max_workers=args.jobs,
+            initializer=_initialize_worker,
+            initargs=(road_geoms,),
+        ) as executor:
             results = list(executor.map(_generate_single, tasks))
 
-    payload = {
-        "generated_at": datetime.now(tz=timezone.utc).isoformat(),
-        "shapefile": str(shapefile),
-        "count": args.count,
-        "points_per_trajectory": args.points,
-        "speed_m_per_s": args.speed,
-        "trajectories": results,
-    }
+    _write_observation_csv(results, output_dir / "observations.csv")
+    _write_ground_truth_csv(results, output_dir / "ground_truth.csv")
+    if args.export_points:
+        _write_ground_truth_points(results, output_dir / "ground_truth_points.csv")
+    _write_metadata(results, args, output_dir / "metadata.json")
+    _write_cmm_trajectory_csv(results, output_dir / "cmm_trajectory.csv")
 
-    with output_path.open("w", encoding="utf-8") as fp:
-        json.dump(payload, fp, indent=2)
-
-    print(f"Generated {args.count} trajectories -> {output_path}")
+    print(f"Generated {len(results)} trajectories in {output_dir}")
+    print("  - observations.csv       (input for `cmm` with --gps_point)")
+    print("  - ground_truth.csv       (WKT trajectories for reference)")
+    if args.export_points:
+        print("  - ground_truth_points.csv (sampled ground-truth points)")
+    print("  - metadata.json          (generation summary)")
+    print("  - cmm_trajectory.csv     (per-trajectory data for CMMTrajectory)")
     return 0
 
 
