@@ -34,23 +34,10 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
 if(DEFINED ENV{CONDA_PREFIX})
   set(CONDA_PREFIX $ENV{CONDA_PREFIX})
-  message(STATUS "Conda environment detected at: ${CONDA_PREFIX}")
-
-  # 提供给 find_package (仅用于Python相关)
-  list(APPEND CMAKE_PREFIX_PATH "${CONDA_PREFIX}")
-  list(APPEND CMAKE_PREFIX_PATH "${CONDA_PREFIX}/lib/cmake")
-  
-  # 不使用conda的C++库，避免版本冲突
-  message(STATUS "Using system libraries for C++ dependencies to avoid conda version conflicts")
+  message(STATUS "Conda environment detected at: ${CONDA_PREFIX} (ignored for C++ dependencies)")
 endif()
 
-find_package(Conda)
-if(CONDA_PREFIX)
-  message(STATUS "Set CONDA_PREFIX ${CONDA_PREFIX}")
-  set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${CONDA_PREFIX})
-else()
-  message(STATUS "Non conda exist, search library in default path")
-endif()
+message(STATUS "Searching libraries in system paths")
 
 find_package(GDAL 2.2 REQUIRED)
 if (GDAL_FOUND)
@@ -74,7 +61,13 @@ if (Boost_FOUND)
 else()
   message(FATAL_ERROR "Boost Not Found!")
 endif (Boost_FOUND)
-link_libraries(${Boost_LIBRARIES})
+
+find_library(BOOST_SERIALIZATION_LIBRARY
+  NAMES boost_serialization)
+if(NOT BOOST_SERIALIZATION_LIBRARY)
+  message(FATAL_ERROR "Failed to locate boost_serialization library in system paths.")
+endif()
+
 
 
 find_package(OpenMP REQUIRED)
@@ -110,11 +103,13 @@ configure_file(${UNCONFIGURED_API_HEADER} ${CONFIGURED_API_HEADER})
 # Creation of FMMLIB
 
 set(FMM_INCLUDE_PATH
-${CMAKE_CURRENT_SOURCE_DIR}/src
-${CMAKE_CURRENT_SOURCE_DIR}/third_party
-${CMAKE_CURRENT_SOURCE_DIR}/third_party/h3/include)
+  ${CMAKE_CURRENT_SOURCE_DIR}/src
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cxxopts
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fiboheap
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/h3/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
 
-include_directories(${FMM_INCLUDE_PATH})
+include_directories(BEFORE ${FMM_INCLUDE_PATH})
 
 file(GLOB CoreGlob src/core/*.cpp)
 file(GLOB AlgorithmGlob src/algorithm/*.cpp)
@@ -152,7 +147,11 @@ add_library(FMMLIB SHARED
   $<TARGET_OBJECTS:NETWORK>
   $<TARGET_OBJECTS:IO>
   $<TARGET_OBJECTS:H3_OBJ>)
-target_link_libraries(FMMLIB stdc++fs)
+target_link_libraries(FMMLIB
+  PUBLIC
+    ${BOOST_SERIALIZATION_LIBRARY}
+  PRIVATE
+    stdc++fs)
 
 # Add executables
 
@@ -162,8 +161,8 @@ target_link_libraries(fmm FMMLIB)
 add_executable(ubodt_gen src/app/ubodt_gen_app.cpp)
 target_link_libraries(ubodt_gen FMMLIB)
 
-add_executable(ubodt_converter_simple src/app/ubodt_converter_simple.cpp)
-target_link_libraries(ubodt_converter_simple FMMLIB)
+add_executable(ubodt_converter src/app/ubodt_converter_app.cpp)
+target_link_libraries(ubodt_converter FMMLIB)
 
 add_executable(stmatch src/app/stmatch.cpp)
 target_link_libraries(stmatch FMMLIB)
@@ -184,7 +183,7 @@ message(STATUS "Installation folder ${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS FMMLIB LIBRARY DESTINATION lib)
 
-install(TARGETS fmm ubodt_gen stmatch h3mm cmm DESTINATION bin)
+install(TARGETS fmm ubodt_gen ubodt_converter stmatch h3mm cmm DESTINATION bin)
 
 if(FMM_INSTALL_HEADER)
   message(STATUS "Install fmm headers")

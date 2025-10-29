@@ -29,7 +29,7 @@
 
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
-#include "cxxopts/cxxopts.hpp"
+#include "cxxopts.hpp"
 
 // Simple 2x2 matrix implementation for CMM
 struct Matrix2d {

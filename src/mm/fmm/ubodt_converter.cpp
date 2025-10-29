@@ -1,6 +1,3 @@
-//
-// Created by Claude for UBODT format optimization
-//
 
 #include "mm/fmm/ubodt_converter.hpp"
 #include "mm/fmm/ubodt_mmap.hpp"

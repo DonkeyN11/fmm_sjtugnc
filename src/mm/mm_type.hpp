@@ -12,6 +12,8 @@
 #define FMM_INCLUDE_FMM_FMM_RESULT_HPP_
 
 #include "network/type.hpp"
+#include <ostream>
+#include <utility>
 
 namespace FMM {
 
@@ -82,8 +84,19 @@ struct MatchResult {
   CORE::LineString mgeom; /**< the geometry of the matched path */
 };
 
-};
+#ifndef SWIG
+inline std::ostream &operator<<(std::ostream &os, const Candidate &candidate) {
+  using boost::geometry::get;
+  os << "Candidate(index=" << candidate.index
+     << ", offset=" << candidate.offset
+     << ", dist=" << candidate.dist
+     << ", edge_id=" << (candidate.edge ? candidate.edge->id : -1)
+     << ", point=(" << get<0>(candidate.point) << "," << get<1>(candidate.point) << "))";
+  return os;
+}
+#endif
 
 };
 
+};
 #endif //FMM_INCLUDE_FMM_FMM_RESULT_HPP_

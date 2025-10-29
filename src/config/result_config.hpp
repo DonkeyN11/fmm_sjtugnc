@@ -11,7 +11,7 @@
 
 #include <string>
 #include <set>
-#include "cxxopts/cxxopts.hpp"
+#include "cxxopts.hpp"
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 

@@ -32,7 +32,6 @@ CANONICAL_COLUMN_CANDIDATES: Dict[str, Tuple[str, ...]] = {
     "error": ("error", "err"),
 }
 METRIC_QUANTILE_PROBS: Dict[str, float] = {"error": 0.9999, "speed": 0.9999, "ep": 0.0001}
-EP_MIN_QUANTILE_VALUE = 1 - 1e-5
 
 
 def split_dataframe(df: pd.DataFrame, partitions: int) -> Tuple[pd.DataFrame, ...]:
@@ -191,46 +190,6 @@ def clip_outliers(series: pd.Series) -> pd.Series:
     return trimmed if not trimmed.empty else clean_series
 
 
-def scale_series_to_interval(
-    series: pd.Series,
-    lower: float,
-    upper: float,
-    *,
-    open_lower: bool = False,
-    open_upper: bool = False,
-    prefer_upper: bool = False,
-) -> pd.Series:
-    if upper <= lower:
-        raise ValueError("Upper bound must be greater than lower bound.")
-
-    result = series.copy()
-    mask = result.notna() & np.isfinite(result)
-    if not mask.any():
-        return result
-
-    interval = upper - lower
-    epsilon = max(interval * 1e-6, 1e-12)
-    adjusted_lower = lower + (epsilon if open_lower else 0.0)
-    adjusted_upper = upper - (epsilon if open_upper else 0.0)
-    if adjusted_lower >= adjusted_upper:
-        adjusted_lower = lower
-        adjusted_upper = upper
-
-    values = result.loc[mask]
-    minimum = values.min()
-    maximum = values.max()
-
-    if np.isclose(minimum, maximum, rtol=1e-12, atol=1e-12):
-        fill_value = adjusted_upper if prefer_upper else (adjusted_lower + adjusted_upper) / 2.0
-        result.loc[mask] = fill_value
-        return result
-
-    scaled = (values - minimum) / (maximum - minimum)
-    result.loc[mask] = scaled * (adjusted_upper - adjusted_lower) + adjusted_lower
-    result.loc[mask] = result.loc[mask].clip(adjusted_lower, adjusted_upper)
-    return result
-
-
 def partition_quantiles(
     df: pd.DataFrame,
     partitions: int,
@@ -247,48 +206,8 @@ def partition_quantiles(
     return quantiles
 
 
-def enforce_quantile_constraints(df: pd.DataFrame, partitions: int) -> Tuple[pd.DataFrame, Dict[str, bool]]:
-    constrained_df = df.copy()
-    adjustments: Dict[str, bool] = {"error": False, "speed": False, "ep": False}
-
-    error_prob = METRIC_QUANTILE_PROBS["error"]
-    error_quantiles = partition_quantiles(constrained_df, partitions, "error", error_prob)
-    if any(q > 1.4 for q in error_quantiles if np.isfinite(q)):
-        constrained_df["error"] = scale_series_to_interval(
-            constrained_df["error"], 0.0, 1.4, open_lower=True, open_upper=True
-        )
-        adjustments["error"] = True
-
-    speed_prob = METRIC_QUANTILE_PROBS["speed"]
-    speed_quantiles = partition_quantiles(constrained_df, partitions, "speed", speed_prob)
-    if any(q > 0.18 for q in speed_quantiles if np.isfinite(q)):
-        constrained_df["speed"] = scale_series_to_interval(
-            constrained_df["speed"], 0.0, 0.18, open_lower=True, open_upper=True
-        )
-        adjustments["speed"] = True
-
-    ep_prob = METRIC_QUANTILE_PROBS["ep"]
-    ep_quantiles = partition_quantiles(constrained_df, partitions, "ep", ep_prob)
-    if any(q < EP_MIN_QUANTILE_VALUE for q in ep_quantiles if np.isfinite(q)):
-        constrained_df["ep"] = scale_series_to_interval(
-            constrained_df["ep"],
-            0.99999,
-            1.0,
-            open_lower=True,
-            prefer_upper=True,
-        )
-        adjustments["ep"] = True
-
-    return constrained_df, adjustments
-
-
-def build_quantile_report(
-    df: pd.DataFrame, partitions: int, adjustments: Dict[str, bool]
-) -> str:
-    lines = [
-        f"Quantile summary across {partitions} partitions:",
-        "Constraints -> error <= 1.4 m, speed <= 0.18 m/s, ep >= 0.99999.",
-    ]
+def build_quantile_report(df: pd.DataFrame, partitions: int) -> str:
+    lines = [f"Quantile summary across {partitions} partitions:"]
     for metric in ("error", "speed", "ep"):
         quantile_prob = METRIC_QUANTILE_PROBS[metric]
         quantiles = partition_quantiles(df, partitions, metric, quantile_prob)
@@ -298,9 +217,8 @@ def build_quantile_report(
                 formatted_values.append(f"P{idx}=NaN")
             else:
                 formatted_values.append(f"P{idx}={value:.6f}")
-        scaled_note = " (scaled to constraint)" if adjustments.get(metric) else ""
         direction = "left" if METRIC_QUANTILE_PROBS[metric] <= 0.5 else "right"
-        lines.append(f"{metric} ({direction} quantile): {', '.join(formatted_values)}{scaled_note}")
+        lines.append(f"{metric} ({direction} quantile): {', '.join(formatted_values)}")
     return "\n".join(lines)
 
 
@@ -388,8 +306,7 @@ def main() -> None:
     df = extract_required_columns(df)
     df["speed"] = compute_speed(df)
 
-    df, adjustments = enforce_quantile_constraints(df, args.partitions)
-    summary_text = build_quantile_report(df, args.partitions, adjustments)
+    summary_text = build_quantile_report(df, args.partitions)
     print(summary_text)
 
     if str(args.summary_path) != "-":

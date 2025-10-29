@@ -15,9 +15,9 @@ using namespace FMM::MM;
 void print_help() {
     std::cout << "UBODT Format Converter - Simple Version\n\n";
     std::cout << "Usage:\n";
-    std::cout << "  ./build/ubodt_converter_simple csv2mmap input.csv output.bin\n";
-    std::cout << "  ./build/ubodt_converter_simple csv2indexed input.csv output.bin\n";
-    std::cout << "  ./build/ubodt_converter_simple validate input_file\n\n";
+    std::cout << "  ./build/ubodt_converter csv2mmap input.csv output.bin\n";
+    std::cout << "  ./build/ubodt_converter csv2indexed input.csv output.bin\n";
+    std::cout << "  ./build/ubodt_converter validate input_file\n\n";
     std::cout << "Operations:\n";
     std::cout << "  csv2mmap    - Convert CSV to memory-mappable binary\n";
     std::cout << "  csv2indexed - Convert CSV to indexed binary\n";

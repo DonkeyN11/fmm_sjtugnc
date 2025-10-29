@@ -12,7 +12,7 @@
 #define FMM_HEAP_HPP
 
 #include "network/type.hpp"
-#include "fiboheap/fiboheap.h"
+#include "fiboheap.h"
 
 namespace FMM {
 namespace NETWORK{

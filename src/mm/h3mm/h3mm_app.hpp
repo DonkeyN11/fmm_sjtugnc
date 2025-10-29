@@ -4,7 +4,7 @@
 #include "io/gps_reader.hpp"
 #include "config/gps_config.hpp"
 #include "h3mm.hpp"
-#include "cxxopts/cxxopts.hpp"
+#include "cxxopts.hpp"
 #include "util/util.hpp"
 #include "util/debug.hpp"
 #include "h3mm_writer.hpp"
