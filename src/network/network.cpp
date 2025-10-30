@@ -10,7 +10,7 @@
 
 // Data structures for Rtree
 #include <boost/geometry/index/rtree.hpp>
-#include <boost/function_output_iterator.hpp>
+#include <boost/iterator/function_output_iterator.hpp>
 
 #include <boost/format.hpp>
 #include "spdlog/fmt/fmt.h"

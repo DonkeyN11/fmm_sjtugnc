@@ -10,7 +10,7 @@
 #define FMM_NETWORK_CONFIG_HPP_
 
 #include <string>
-#include "cxxopts.hpp"
+#include "cxxopts/cxxopts.hpp"
 // #include <boost/predef.h>
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>

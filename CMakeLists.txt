@@ -26,15 +26,25 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 project(fmm)
 
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE")
+set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE -DBOOST_ALLOW_DEPRECATED_HEADERS -Wno-deprecated-declarations -DBOOST_NO_CONCEPT_CHECKS -fpermissive")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake")
 
-if(DEFINED ENV{CONDA_PREFIX})
-  set(CONDA_PREFIX $ENV{CONDA_PREFIX})
-  message(STATUS "Conda environment detected at: ${CONDA_PREFIX} (ignored for C++ dependencies)")
+# if(DEFINED ENV{CONDA_PREFIX})
+#   set(CONDA_PREFIX $ENV{CONDA_PREFIX})
+#   message(STATUS "Conda environment detected at: ${CONDA_PREFIX} (ignored for C++ dependencies)")
+# endif()
+
+# message(STATUS "Searching libraries in system paths")
+
+find_package(Conda)
+if(CONDA_PREFIX)
+  message(STATUS "Set CONDA_PREFIX ${CONDA_PREFIX}")
+  set(CMAKE_PREFIX_PATH ${CMAKE_PREFIX_PATH} ${CONDA_PREFIX})
+else()
+  message(STATUS "Non conda exist, search library in default path")
 endif()
 
 message(STATUS "Searching libraries in system paths")
@@ -62,11 +72,11 @@ else()
   message(FATAL_ERROR "Boost Not Found!")
 endif (Boost_FOUND)
 
-find_library(BOOST_SERIALIZATION_LIBRARY
-  NAMES boost_serialization)
-if(NOT BOOST_SERIALIZATION_LIBRARY)
-  message(FATAL_ERROR "Failed to locate boost_serialization library in system paths.")
-endif()
+# find_library(BOOST_SERIALIZATION_LIBRARY
+#   NAMES boost_serialization)
+# if(NOT BOOST_SERIALIZATION_LIBRARY)
+#   message(FATAL_ERROR "Failed to locate boost_serialization library in system paths.")
+# endif()
 
 
 
@@ -104,10 +114,11 @@ configure_file(${UNCONFIGURED_API_HEADER} ${CONFIGURED_API_HEADER})
 
 set(FMM_INCLUDE_PATH
   ${CMAKE_CURRENT_SOURCE_DIR}/src
-  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cxxopts
-  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fiboheap
-  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/h3/include
-  ${CMAKE_CURRENT_SOURCE_DIR}/third_party)
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party
+  # ${CMAKE_CURRENT_SOURCE_DIR}/third_party/cxxopts
+  # ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fiboheap
+  ${CMAKE_CURRENT_SOURCE_DIR}/third_party/h3/include)
+  
 
 include_directories(BEFORE ${FMM_INCLUDE_PATH})
 
@@ -147,11 +158,16 @@ add_library(FMMLIB SHARED
   $<TARGET_OBJECTS:NETWORK>
   $<TARGET_OBJECTS:IO>
   $<TARGET_OBJECTS:H3_OBJ>)
-target_link_libraries(FMMLIB
-  PUBLIC
-    ${BOOST_SERIALIZATION_LIBRARY}
-  PRIVATE
-    stdc++fs)
+
+if(TARGET Boost::serialization)
+  target_link_libraries(FMMLIB PUBLIC Boost::serialization)
+elseif(Boost_SERIALIZATION_LIBRARY)
+  target_link_libraries(FMMLIB PUBLIC ${Boost_SERIALIZATION_LIBRARY})
+else()
+  message(FATAL_ERROR "Boost serialization target not available")
+endif()
+
+target_link_libraries(FMMLIB PRIVATE stdc++fs)
 
 # Add executables
 

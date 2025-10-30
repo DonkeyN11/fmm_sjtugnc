@@ -11,7 +11,7 @@
 #include "util/debug.hpp"
 #include "util/util.hpp"
 
-#include "cxxopts.hpp"
+#include "cxxopts/cxxopts.hpp"
 
 #include <iostream>
 #include <sstream>
