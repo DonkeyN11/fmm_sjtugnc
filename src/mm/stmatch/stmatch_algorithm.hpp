@@ -22,7 +22,7 @@
 #include <boost/property_tree/ptree.hpp>
 #include <boost/property_tree/xml_parser.hpp>
 
-#include "cxxopts.hpp"
+#include "cxxopts/cxxopts.hpp"
 
 namespace FMM {
 namespace MM {

@@ -95,25 +95,26 @@ void UBODTGenAlgorithm::precompute_ubodt_omp(
 
 #pragma omp for schedule(dynamic)
       for (int source = 0; source < num_vertices; ++source) {
+        const NodeIndex source_idx = static_cast<NodeIndex>(source);
         PredecessorMap pmap;
         DistanceMap dmap;
-        ng_.single_source_upperbound_dijkstra(source, delta, &pmap, &dmap);
+        ng_.single_source_upperbound_dijkstra(source_idx, delta, &pmap, &dmap);
 
         // Collect records in thread-local storage
         for (auto iter = pmap.begin(); iter != pmap.end(); ++iter) {
           NodeIndex cur_node = iter->first;
-          if (cur_node != source) {
+          if (cur_node != source_idx) {
             NodeIndex prev_node = iter->second;
             NodeIndex v = cur_node;
             NodeIndex u;
-            while ((u = pmap[v]) != source) {
+            while ((u = pmap[v]) != source_idx) {
               v = u;
             }
             NodeIndex successor = v;
             double cost = dmap[successor];
-            EdgeIndex edge_index = ng_.get_edge_index(source, successor, cost);
+            EdgeIndex edge_index = ng_.get_edge_index(source_idx, successor, cost);
             thread_records[thread_id].push_back(
-                {source,
+                {source_idx,
                  cur_node,
                  successor,
                  prev_node,
@@ -161,12 +162,13 @@ void UBODTGenAlgorithm::precompute_ubodt_omp(
 
 #pragma omp for schedule(dynamic)
       for (int source = 0; source < num_vertices; ++source) {
+        const NodeIndex source_idx = static_cast<NodeIndex>(source);
         PredecessorMap pmap;
         DistanceMap dmap;
-        ng_.single_source_upperbound_dijkstra(source, delta, &pmap, &dmap);
+        ng_.single_source_upperbound_dijkstra(source_idx, delta, &pmap, &dmap);
 
         // Write to thread-local buffer
-        write_result_csv_buffer(thread_buffers[thread_id], source, pmap, dmap);
+        write_result_csv_buffer(thread_buffers[thread_id], source_idx, pmap, dmap);
 
         thread_progress[thread_id]++;
         completed_sources++;
