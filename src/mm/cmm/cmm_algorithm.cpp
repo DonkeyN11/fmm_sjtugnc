@@ -14,12 +14,135 @@
 #include <algorithm>
 #include <cmath>
 #include <numeric>
+#include <cctype>
+#include <fstream>
+#include <sstream>
+#include <stdexcept>
+#include <unordered_map>
+#include <optional>
+#include <limits>
+
+#include <boost/property_tree/json_parser.hpp>
 
 using namespace FMM;
 using namespace FMM::CORE;
 using namespace FMM::NETWORK;
 using namespace FMM::PYTHON;
 using namespace FMM::MM;
+
+namespace {
+
+std::string trim_copy(const std::string &input) {
+    const auto begin = input.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) {
+        return "";
+    }
+    const auto end = input.find_last_not_of(" \t\r\n");
+    return input.substr(begin, end - begin + 1);
+}
+
+std::string to_lower_copy(const std::string &input) {
+    std::string lowered = input;
+    std::transform(lowered.begin(), lowered.end(), lowered.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+    return lowered;
+}
+
+std::vector<std::string> split_line(const std::string &line, char delimiter) {
+    std::vector<std::string> tokens;
+    std::stringstream ss(line);
+    std::string token;
+    while (std::getline(ss, token, delimiter)) {
+        tokens.push_back(token);
+    }
+    if (!line.empty() && line.back() == delimiter) {
+        tokens.emplace_back("");
+    }
+    return tokens;
+}
+
+std::optional<double> parse_double(const std::string &value) {
+    try {
+        size_t parsed = 0;
+        double result = std::stod(value, &parsed);
+        if (parsed != value.size()) {
+            return std::nullopt;
+        }
+        return result;
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
+std::optional<long long> parse_integer(const std::string &value) {
+    try {
+        size_t parsed = 0;
+        long long result = std::stoll(value, &parsed);
+        if (parsed != value.size()) {
+            return std::nullopt;
+        }
+        return result;
+    } catch (const std::exception &) {
+        return std::nullopt;
+    }
+}
+
+template <typename T>
+bool parse_numeric_array(const std::string &json_text, std::vector<T> *output) {
+    output->clear();
+    const std::string trimmed = trim_copy(json_text);
+    if (trimmed.empty()) {
+        return false;
+    }
+    try {
+        boost::property_tree::ptree tree;
+        std::stringstream ss(trimmed);
+        boost::property_tree::read_json(ss, tree);
+        output->reserve(tree.size());
+        for (const auto &node : tree) {
+            output->push_back(node.second.get_value<T>());
+        }
+    } catch (const std::exception &ex) {
+        SPDLOG_ERROR("Failed to parse numeric array from '{}': {}", trimmed, ex.what());
+        return false;
+    }
+    return true;
+}
+
+bool parse_covariance_array(const std::string &json_text,
+                            std::vector<CovarianceMatrix> *output) {
+    output->clear();
+    const std::string trimmed = trim_copy(json_text);
+    if (trimmed.empty()) {
+        return false;
+    }
+    try {
+        boost::property_tree::ptree tree;
+        std::stringstream ss(trimmed);
+        boost::property_tree::read_json(ss, tree);
+        output->reserve(tree.size());
+        for (const auto &row : tree) {
+            std::vector<double> values;
+            values.reserve(row.second.size());
+            for (const auto &value_node : row.second) {
+                values.push_back(value_node.second.get_value<double>());
+            }
+            if (values.size() < 6) {
+                SPDLOG_WARN("Covariance row has {} values, expected at least 6", values.size());
+                return false;
+            }
+            output->push_back(
+                CovarianceMatrix{values[0], values[1], values[2],
+                                 values[3], values[4], values[5]});
+        }
+    } catch (const std::exception &ex) {
+        SPDLOG_ERROR("Failed to parse covariance array: {}", ex.what());
+        return false;
+    }
+    return true;
+}
+
+} // namespace
 
 // Implementation of CovarianceMapMatchConfig
 CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates_arg,
@@ -390,7 +513,6 @@ std::string CovarianceMapMatch::match_gps_file(
     const FMM::CONFIG::ResultConfig &result_config,
     const CovarianceMapMatchConfig &cmm_config,
     bool use_omp) {
-
     std::ostringstream oss;
     std::string status;
     bool validate = true;
@@ -413,10 +535,416 @@ std::string CovarianceMapMatch::match_gps_file(
         return oss.str();
     }
 
-    // For now, return message indicating that GPS file with covariance data is needed
-    oss << "CMM match_gps_file requires trajectory data with covariance and protection level information.\n";
-    oss << "Please provide enhanced GPS data files that include covariance matrices and protection levels.\n";
-    oss << "Current implementation requires CMMTrajectory objects with complete metadata.\n";
+    std::ifstream ifs(gps_config.file);
+    if (!ifs.is_open()) {
+        SPDLOG_CRITICAL("Failed to open GPS file {}", gps_config.file);
+        oss << "Failed to open GPS file " << gps_config.file << '\n';
+        oss << "match_gps_file canceled\n";
+        return oss.str();
+    }
+
+    std::string header_line;
+    if (!std::getline(ifs, header_line)) {
+        SPDLOG_CRITICAL("GPS file {} is empty", gps_config.file);
+        oss << "GPS file empty\n";
+        oss << "match_gps_file canceled\n";
+        return oss.str();
+    }
+
+    header_line = trim_copy(header_line);
+    if (header_line.empty()) {
+        SPDLOG_CRITICAL("GPS file {} header is empty", gps_config.file);
+        oss << "GPS header empty\n";
+        oss << "match_gps_file canceled\n";
+        return oss.str();
+    }
+
+    const std::vector<std::string> headers = split_line(header_line, ';');
+    std::unordered_map<std::string, int> header_index;
+    for (int idx = 0; idx < static_cast<int>(headers.size()); ++idx) {
+        header_index[to_lower_copy(trim_copy(headers[idx]))] = idx;
+    }
+
+    auto find_index = [&](const std::vector<std::string> &candidates) -> int {
+        for (const auto &candidate : candidates) {
+            const std::string key = to_lower_copy(trim_copy(candidate));
+            auto it = header_index.find(key);
+            if (it != header_index.end()) {
+                return it->second;
+            }
+        }
+        return -1;
+    };
+
+    const int id_idx = find_index({gps_config.id, "id"});
+    if (id_idx < 0) {
+        SPDLOG_CRITICAL("Required id column not found in {}", gps_config.file);
+        oss << "id column not found\n";
+        oss << "match_gps_file canceled\n";
+        return oss.str();
+    }
+
+    const int geom_idx = find_index({gps_config.geom, "geom"});
+    const int timestamp_idx = find_index({gps_config.timestamp, "timestamps", "timestamp"});
+    int covariance_idx = find_index({"covariances", "covariance", "covariance_json"});
+    int protection_idx = find_index({"protection_levels", "protection_level", "pl"});
+
+    bool aggregated_format = geom_idx >= 0 &&
+                             timestamp_idx >= 0 &&
+                             covariance_idx >= 0 &&
+                             protection_idx >= 0;
+
+    const int x_idx = aggregated_format ? -1 : find_index({gps_config.x, "x"});
+    const int y_idx = aggregated_format ? -1 : find_index({gps_config.y, "y"});
+    const int sdn_idx = aggregated_format ? -1 : find_index({"sdn"});
+    const int sde_idx = aggregated_format ? -1 : find_index({"sde"});
+    const int sdne_idx = aggregated_format ? -1 : find_index({"sdne"});
+    const int sdu_idx = aggregated_format ? -1 : find_index({"sdu"});
+    const int sdeu_idx = aggregated_format ? -1 : find_index({"sdeu"});
+    const int sdun_idx = aggregated_format ? -1 : find_index({"sdun"});
+
+    if (!aggregated_format) {
+        if (timestamp_idx < 0) {
+            SPDLOG_CRITICAL("Timestamp column not found in {}", gps_config.file);
+            oss << "timestamp column not found\n";
+            oss << "match_gps_file canceled\n";
+            return oss.str();
+        }
+        if (protection_idx < 0) {
+            SPDLOG_CRITICAL("Protection level column not found in {}", gps_config.file);
+            oss << "protection_level column not found\n";
+            oss << "match_gps_file canceled\n";
+            return oss.str();
+        }
+        if (x_idx < 0 || y_idx < 0 || sdn_idx < 0 || sde_idx < 0) {
+            SPDLOG_CRITICAL("Point-based GPS file requires x, y, sdn, sde columns");
+            oss << "point GPS format missing required covariance columns\n";
+            oss << "match_gps_file canceled\n";
+            return oss.str();
+        }
+    }
+
+    std::vector<CMMTrajectory> trajectories;
+    trajectories.reserve(1024);
+    int invalid_records = 0;
+    int line_number = 1;
+
+    if (aggregated_format) {
+        const int required_max_index = std::max(
+            std::max(id_idx, geom_idx),
+            std::max(timestamp_idx, std::max(covariance_idx, protection_idx)));
+
+        std::string line;
+        while (std::getline(ifs, line)) {
+            ++line_number;
+            line = trim_copy(line);
+            if (line.empty()) {
+                continue;
+            }
+            std::vector<std::string> columns = split_line(line, ';');
+            if (static_cast<int>(columns.size()) <= required_max_index) {
+                SPDLOG_WARN("Line {} skipped: insufficient columns ({})", line_number, columns.size());
+                ++invalid_records;
+                continue;
+            }
+
+            const std::string id_token = trim_copy(columns[id_idx]);
+            const auto id_opt = parse_integer(id_token);
+            if (!id_opt) {
+                SPDLOG_WARN("Line {} skipped: invalid id '{}'", line_number, id_token);
+                ++invalid_records;
+                continue;
+            }
+            if (*id_opt > std::numeric_limits<int>::max() ||
+                *id_opt < std::numeric_limits<int>::min()) {
+                SPDLOG_WARN("Line {} skipped: id {} out of range", line_number, *id_opt);
+                ++invalid_records;
+                continue;
+            }
+            const int traj_id = static_cast<int>(*id_opt);
+
+            CORE::LineString geom;
+            try {
+                boost::geometry::read_wkt(trim_copy(columns[geom_idx]), geom.get_geometry());
+            } catch (const std::exception &ex) {
+                SPDLOG_WARN("Line {} skipped: invalid geometry '{}': {}", line_number, columns[geom_idx], ex.what());
+                ++invalid_records;
+                continue;
+            }
+
+            std::vector<double> timestamps;
+            if (!parse_numeric_array(columns[timestamp_idx], &timestamps)) {
+                SPDLOG_WARN("Line {} skipped: unable to parse timestamps", line_number);
+                ++invalid_records;
+                continue;
+            }
+
+            std::vector<CovarianceMatrix> covariances;
+            if (!parse_covariance_array(columns[covariance_idx], &covariances)) {
+                SPDLOG_WARN("Line {} skipped: unable to parse covariances", line_number);
+                ++invalid_records;
+                continue;
+            }
+
+            std::vector<double> protection_levels;
+            if (!parse_numeric_array(columns[protection_idx], &protection_levels)) {
+                SPDLOG_WARN("Line {} skipped: unable to parse protection levels", line_number);
+                ++invalid_records;
+                continue;
+            }
+
+            const int num_points = geom.get_num_points();
+            if (num_points == 0) {
+                SPDLOG_WARN("Line {} skipped: geometry contains no points", line_number);
+                ++invalid_records;
+                continue;
+            }
+            if (!timestamps.empty() && static_cast<int>(timestamps.size()) != num_points) {
+                SPDLOG_WARN("Line {} skipped: timestamps size {} does not match point count {}",
+                            line_number, timestamps.size(), num_points);
+                ++invalid_records;
+                continue;
+            }
+            if (static_cast<int>(covariances.size()) != num_points ||
+                static_cast<int>(protection_levels.size()) != num_points) {
+                SPDLOG_WARN("Line {} skipped: metadata length mismatch (covariances {}, protection {}, points {})",
+                            line_number, covariances.size(), protection_levels.size(), num_points);
+                ++invalid_records;
+                continue;
+            }
+
+            CMMTrajectory traj;
+            traj.id = traj_id;
+            traj.geom = std::move(geom);
+            traj.timestamps = std::move(timestamps);
+            traj.covariances = std::move(covariances);
+            traj.protection_levels = std::move(protection_levels);
+
+            if (!traj.is_valid()) {
+                SPDLOG_WARN("Line {} skipped: trajectory metadata invalid", line_number);
+                ++invalid_records;
+                continue;
+            }
+
+            trajectories.push_back(std::move(traj));
+        }
+    } else {
+        struct TrajectoryBuilder {
+            CORE::LineString geom;
+            std::vector<double> timestamps;
+            std::vector<CovarianceMatrix> covariances;
+            std::vector<double> protection_levels;
+        };
+
+        std::unordered_map<long long, size_t> id_to_index;
+        std::vector<long long> insertion_order;
+        std::vector<TrajectoryBuilder> builders;
+
+        const int required_max_index = [&]() {
+            int max_index = id_idx;
+            max_index = std::max(max_index, timestamp_idx);
+            max_index = std::max(max_index, protection_idx);
+            max_index = std::max(max_index, x_idx);
+            max_index = std::max(max_index, y_idx);
+            max_index = std::max(max_index, sdn_idx);
+            max_index = std::max(max_index, sde_idx);
+            max_index = std::max(max_index, sdne_idx);
+            max_index = std::max(max_index, sdu_idx);
+            max_index = std::max(max_index, sdeu_idx);
+            max_index = std::max(max_index, sdun_idx);
+            return max_index;
+        }();
+
+        std::string line;
+        while (std::getline(ifs, line)) {
+            ++line_number;
+            line = trim_copy(line);
+            if (line.empty()) {
+                continue;
+            }
+            std::vector<std::string> columns = split_line(line, ';');
+            if (static_cast<int>(columns.size()) <= required_max_index) {
+                SPDLOG_WARN("Line {} skipped: insufficient columns ({})", line_number, columns.size());
+                ++invalid_records;
+                continue;
+            }
+
+            const std::string id_token = trim_copy(columns[id_idx]);
+            const auto id_opt = parse_integer(id_token);
+            if (!id_opt) {
+                SPDLOG_WARN("Line {} skipped: invalid id '{}'", line_number, id_token);
+                ++invalid_records;
+                continue;
+            }
+            if (*id_opt > std::numeric_limits<int>::max() ||
+                *id_opt < std::numeric_limits<int>::min()) {
+                SPDLOG_WARN("Line {} skipped: id {} out of range", line_number, *id_opt);
+                ++invalid_records;
+                continue;
+            }
+            const long long id_value = *id_opt;
+
+            auto get_builder_index = [&]() -> size_t {
+                auto it = id_to_index.find(id_value);
+                if (it != id_to_index.end()) {
+                    return it->second;
+                }
+                const size_t new_index = builders.size();
+                id_to_index.emplace(id_value, new_index);
+                insertion_order.push_back(id_value);
+                builders.emplace_back();
+                builders.back().geom = CORE::LineString();
+                return new_index;
+            };
+
+            const auto timestamp_opt = parse_double(trim_copy(columns[timestamp_idx]));
+            const auto x_opt = parse_double(trim_copy(columns[x_idx]));
+            const auto y_opt = parse_double(trim_copy(columns[y_idx]));
+            const auto sdn_opt = parse_double(trim_copy(columns[sdn_idx]));
+            const auto sde_opt = parse_double(trim_copy(columns[sde_idx]));
+            const auto sdne_opt = (sdne_idx >= 0) ? parse_double(trim_copy(columns[sdne_idx])) : std::optional<double>(0.0);
+            const auto sdu_opt = (sdu_idx >= 0) ? parse_double(trim_copy(columns[sdu_idx])) : std::optional<double>(0.0);
+            const auto sdeu_opt = (sdeu_idx >= 0) ? parse_double(trim_copy(columns[sdeu_idx])) : std::optional<double>(0.0);
+            const auto sdun_opt = (sdun_idx >= 0) ? parse_double(trim_copy(columns[sdun_idx])) : std::optional<double>(0.0);
+            const auto protection_opt = parse_double(trim_copy(columns[protection_idx]));
+
+            if (!timestamp_opt || !x_opt || !y_opt || !sdn_opt || !sde_opt || !protection_opt || !sdne_opt || !sdu_opt || !sdeu_opt || !sdun_opt) {
+                SPDLOG_WARN("Line {} skipped: invalid numeric values", line_number);
+                ++invalid_records;
+                continue;
+            }
+
+            const size_t builder_index = get_builder_index();
+            TrajectoryBuilder &builder = builders[builder_index];
+
+            CORE::Point pt((*x_opt), (*y_opt));
+            builder.geom.add_point(pt);
+            builder.timestamps.push_back(*timestamp_opt);
+            builder.covariances.push_back(CovarianceMatrix{
+                *sdn_opt, *sde_opt, *sdu_opt, *sdne_opt, *sdeu_opt, *sdun_opt
+            });
+            builder.protection_levels.push_back(*protection_opt);
+        }
+
+        trajectories.reserve(builders.size());
+        for (const long long id_value : insertion_order) {
+            const size_t builder_index = id_to_index[id_value];
+            TrajectoryBuilder &builder = builders[builder_index];
+            const int num_points = builder.geom.get_num_points();
+            if (num_points == 0) {
+                SPDLOG_WARN("Trajectory {} skipped: no points collected", id_value);
+                ++invalid_records;
+                continue;
+            }
+            if (static_cast<int>(builder.timestamps.size()) != num_points ||
+                static_cast<int>(builder.covariances.size()) != num_points ||
+                static_cast<int>(builder.protection_levels.size()) != num_points) {
+                SPDLOG_WARN("Trajectory {} skipped: metadata length mismatch (timestamps {}, covariance {}, protection {})",
+                            id_value, builder.timestamps.size(),
+                            builder.covariances.size(), builder.protection_levels.size());
+                ++invalid_records;
+                continue;
+            }
+
+            if (id_value > std::numeric_limits<int>::max() ||
+                id_value < std::numeric_limits<int>::min()) {
+                SPDLOG_WARN("Trajectory {} skipped: id out of int range", id_value);
+                ++invalid_records;
+                continue;
+            }
+
+            CMMTrajectory traj;
+            traj.id = static_cast<int>(id_value);
+            traj.geom = std::move(builder.geom);
+            traj.timestamps = std::move(builder.timestamps);
+            traj.covariances = std::move(builder.covariances);
+            traj.protection_levels = std::move(builder.protection_levels);
+
+            if (!traj.is_valid()) {
+                SPDLOG_WARN("Trajectory {} skipped: invalid metadata", id_value);
+                ++invalid_records;
+                continue;
+            }
+
+            trajectories.push_back(std::move(traj));
+        }
+    }
+
+    SPDLOG_INFO("Loaded {} trajectories ({} skipped) from {}", trajectories.size(), invalid_records, gps_config.file);
+    ifs.close();
+
+    FMM::IO::CSVMatchResultWriter writer(result_config.file, result_config.output_config);
+    const int step_size = 1000;
+    int progress = 0;
+    int points_matched = 0;
+    int total_points = 0;
+    int traj_matched = 0;
+    int total_trajs = 0;
+    auto begin_time = UTIL::get_current_time();
+
+    if (use_omp && trajectories.size() > 1) {
+#ifdef _OPENMP
+        const int trajectories_count = static_cast<int>(trajectories.size());
+        #pragma omp parallel for schedule(dynamic)
+        for (int idx = 0; idx < trajectories_count; ++idx) {
+            const CMMTrajectory &trajectory = trajectories[idx];
+            MM::MatchResult result = match_traj(trajectory, cmm_config);
+            CORE::Trajectory simple_traj{trajectory.id, trajectory.geom, trajectory.timestamps};
+            #pragma omp critical(writer_section)
+            {
+                writer.write_result(simple_traj, result);
+            }
+            const int points_in_tr = trajectory.geom.get_num_points();
+            #pragma omp critical(progress_section)
+            {
+                ++progress;
+                ++total_trajs;
+                total_points += points_in_tr;
+                if (!result.cpath.empty()) {
+                    points_matched += points_in_tr;
+                    ++traj_matched;
+                }
+                if (step_size > 0 && progress % step_size == 0) {
+                    std::stringstream buf;
+                    buf << "Progress " << progress << '\n';
+                    std::cout << buf.rdbuf();
+                }
+            }
+        }
+#else
+        use_omp = false;
+#endif
+    }
+
+    if (!use_omp || trajectories.size() <= 1) {
+        for (const auto &trajectory : trajectories) {
+            if (progress % step_size == 0) {
+                SPDLOG_INFO("Progress {}", progress);
+            }
+            MM::MatchResult result = match_traj(trajectory, cmm_config);
+            CORE::Trajectory simple_traj{trajectory.id, trajectory.geom, trajectory.timestamps};
+            writer.write_result(simple_traj, result);
+            const int points_in_tr = trajectory.geom.get_num_points();
+            total_points += points_in_tr;
+            ++total_trajs;
+            if (!result.cpath.empty()) {
+                points_matched += points_in_tr;
+                ++traj_matched;
+            }
+            ++progress;
+        }
+    }
+
+    auto end_time = UTIL::get_current_time();
+    double duration = UTIL::get_duration(begin_time, end_time);
+    double speed = duration > 0 ? static_cast<double>(points_matched) / duration : 0.0;
+
+    oss << "Status: success\n";
+    oss << "Time takes " << duration << " seconds\n";
+    oss << "Total points " << total_points << " matched " << points_matched << "\n";
+    oss << "Trajectories processed " << total_trajs << " matched " << traj_matched << "\n";
+    oss << "Map match speed " << speed << " points/s \n";
+    oss << "Trajectories skipped " << invalid_records << "\n";
 
     return oss.str();
 }
