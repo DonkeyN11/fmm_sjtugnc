@@ -8,6 +8,7 @@ test/log/
 input_cmm/
 tmp/
 build_debug/
+plots/
 
 # Doc files
 
