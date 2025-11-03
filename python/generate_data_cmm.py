@@ -58,6 +58,7 @@ MIN_SIGMA_DEG = 1.0e-4       # ≈ 10.1 metres
 MAX_SIGMA_DEG = 1.4e-3       # ≈ 150.5 metres
 MIN_SIGMA_UP = 1.0           # metres (vertical)
 MAX_SIGMA_UP = 6.0           # metres (vertical)
+MAX_COVARIANCE_SAMPLING_ATTEMPTS = 64
 
 
 # Shared between worker processes after initialisation.
@@ -160,32 +161,61 @@ class CovarianceParams:
     pl_matrix: np.ndarray  # covariance matrix aligned with (north, east)
 
 
+def _is_positive_definite(matrix: np.ndarray, atol: float = 1e-12) -> bool:
+    """Return True if the symmetric matrix is strictly positive-definite."""
+    try:
+        eigenvalues = np.linalg.eigvalsh(matrix)
+    except np.linalg.LinAlgError:
+        return False
+    return bool(np.all(eigenvalues > atol))
+
+
 def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
     """Sample a positive-definite covariance description for one observation."""
-    sdn = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
-    sde = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
-    rho = rng.uniform(-0.6, 0.6)
-    sdne = rho * sdn * sde
-    sdu = rng.uniform(MIN_SIGMA_UP, MAX_SIGMA_UP)
-    # Keep vertical cross-covariances small but non-zero for realism.
-    sdeu = rng.uniform(-0.2, 0.2) * sde * sdu * 0.05
-    sdun = rng.uniform(-0.2, 0.2) * sdn * sdu * 0.05
+    for _ in range(MAX_COVARIANCE_SAMPLING_ATTEMPTS):
+        sdn = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
+        sde = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
+        rho = rng.uniform(-0.6, 0.6)
+        sdne = rho * sdn * sde
+        sdu = rng.uniform(MIN_SIGMA_UP, MAX_SIGMA_UP)
+        # Keep vertical cross-covariances small but non-zero for realism.
+        sdeu = rng.uniform(-0.2, 0.2) * sde * sdu * 0.05
+        sdun = rng.uniform(-0.2, 0.2) * sdn * sdu * 0.05
 
-    noise_cov = np.array(
-        [
-            [sde * sde, sdne],
-            [sdne, sdn * sdn],
-        ],
-        dtype=float,
-    )
-    pl_matrix = np.array(
-        [
-            [sdn * sdn, sdne],
-            [sdne, sde * sde],
-        ],
-        dtype=float,
-    )
-    return CovarianceParams(sdn, sde, sdu, sdne, sdeu, sdun, noise_cov, pl_matrix)
+        full_cov = np.array(
+            [
+                [sdn * sdn, sdne, sdun],
+                [sdne, sde * sde, sdeu],
+                [sdun, sdeu, sdu * sdu],
+            ],
+            dtype=float,
+        )
+        if not _is_positive_definite(full_cov):
+            continue
+
+        noise_cov = np.array(
+            [
+                [sde * sde, sdne],
+                [sdne, sdn * sdn],
+            ],
+            dtype=float,
+        )
+        if not _is_positive_definite(noise_cov):
+            continue
+
+        pl_matrix = np.array(
+            [
+                [sdn * sdn, sdne],
+                [sdne, sde * sde],
+            ],
+            dtype=float,
+        )
+        if not _is_positive_definite(pl_matrix):
+            continue
+
+        return CovarianceParams(sdn, sde, sdu, sdne, sdeu, sdun, noise_cov, pl_matrix)
+
+    raise RuntimeError("Failed to sample a positive-definite covariance matrix.")
 
 
 def _segment_lengths_m(coords: np.ndarray) -> np.ndarray:
