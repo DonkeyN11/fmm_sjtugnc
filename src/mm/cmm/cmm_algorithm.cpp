@@ -21,6 +21,9 @@
 #include <unordered_map>
 #include <optional>
 #include <limits>
+#include <memory>
+
+#include <ogrsf_frmts.h>
 
 #include <boost/property_tree/json_parser.hpp>
 
@@ -140,6 +143,188 @@ bool parse_covariance_array(const std::string &json_text,
         return false;
     }
     return true;
+}
+
+Matrix2d multiply_matrices(const Matrix2d &lhs, const Matrix2d &rhs) {
+    return Matrix2d(
+        lhs.m[0][0] * rhs.m[0][0] + lhs.m[0][1] * rhs.m[1][0],
+        lhs.m[0][0] * rhs.m[0][1] + lhs.m[0][1] * rhs.m[1][1],
+        lhs.m[1][0] * rhs.m[0][0] + lhs.m[1][1] * rhs.m[1][0],
+        lhs.m[1][0] * rhs.m[0][1] + lhs.m[1][1] * rhs.m[1][1]);
+}
+
+Matrix2d transpose_matrix(const Matrix2d &mat) {
+    return Matrix2d(mat.m[0][0], mat.m[1][0], mat.m[0][1], mat.m[1][1]);
+}
+
+bool geometry_is_projected(const CORE::LineString &geom) {
+    const int num_points = geom.get_num_points();
+    for (int i = 0; i < num_points; ++i) {
+        double x = geom.get_x(i);
+        double y = geom.get_y(i);
+        if (std::abs(x) > 180.0 || std::abs(y) > 90.0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool transform_linestring(CORE::LineString *line,
+                          OGRCoordinateTransformation *transform) {
+    if (!line || transform == nullptr) {
+        return false;
+    }
+    const int num_points = line->get_num_points();
+    for (int idx = 0; idx < num_points; ++idx) {
+        double x = line->get_x(idx);
+        double y = line->get_y(idx);
+        if (!transform->Transform(1, &x, &y)) {
+            return false;
+        }
+        line->set_x(idx, x);
+        line->set_y(idx, y);
+    }
+    return true;
+}
+
+struct TransformInfo {
+    Matrix2d jacobian;
+    double proj_x;
+    double proj_y;
+    double scale_lon;
+    double scale_lat;
+};
+
+std::optional<TransformInfo> compute_transform_info(
+    OGRCoordinateTransformation *transform,
+    double lon_deg,
+    double lat_deg) {
+    if (transform == nullptr) {
+        return std::nullopt;
+    }
+    constexpr double delta = 1e-6;
+
+    double x0 = lon_deg;
+    double y0 = lat_deg;
+    if (!transform->Transform(1, &x0, &y0)) {
+        return std::nullopt;
+    }
+
+    double x_lon = lon_deg + delta;
+    double y_lon = lat_deg;
+    if (!transform->Transform(1, &x_lon, &y_lon)) {
+        return std::nullopt;
+    }
+
+    double x_lat = lon_deg;
+    double y_lat = lat_deg + delta;
+    if (!transform->Transform(1, &x_lat, &y_lat)) {
+        return std::nullopt;
+    }
+
+    double dx_dlon = (x_lon - x0) / delta;
+    double dy_dlon = (y_lon - y0) / delta;
+    double dx_dlat = (x_lat - x0) / delta;
+    double dy_dlat = (y_lat - y0) / delta;
+
+    TransformInfo info;
+    info.proj_x = x0;
+    info.proj_y = y0;
+    info.jacobian = Matrix2d(dx_dlon, dx_dlat, dy_dlon, dy_dlat);
+    info.scale_lon = std::hypot(dx_dlon, dy_dlon);
+    info.scale_lat = std::hypot(dx_dlat, dy_dlat);
+    return info;
+}
+
+bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
+                                  const NETWORK::Network &network,
+                                  bool convert_to_projected) {
+    if (!convert_to_projected || trajectories == nullptr || trajectories->empty()) {
+        return false;
+    }
+    if (!network.is_projected()) {
+        SPDLOG_WARN("Coordinate conversion requested but network CRS is not projected; skip trajectory reprojection.");
+        return false;
+    }
+    if (!network.has_spatial_ref()) {
+        SPDLOG_WARN("Network CRS information unavailable; skip trajectory reprojection.");
+        return false;
+    }
+
+    bool all_projected = true;
+    for (const auto &traj : *trajectories) {
+        if (!geometry_is_projected(traj.geom)) {
+            all_projected = false;
+            break;
+        }
+    }
+    if (all_projected) {
+        SPDLOG_INFO("Trajectories already appear to be in a projected CRS; no reprojection applied.");
+        return false;
+    }
+
+    OGRSpatialReference target_sr;
+    if (target_sr.importFromWkt(network.get_spatial_ref_wkt().c_str()) != OGRERR_NONE) {
+        SPDLOG_WARN("Failed to import network CRS from WKT; skip trajectory reprojection.");
+        return false;
+    }
+    target_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    OGRSpatialReference source_sr;
+    source_sr.SetWellKnownGeogCS("WGS84");
+    source_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+    OGRCoordinateTransformation *transform = OGRCreateCoordinateTransformation(&source_sr, &target_sr);
+    if (transform == nullptr) {
+        SPDLOG_WARN("Failed to create coordinate transformation for trajectories.");
+        return false;
+    }
+
+    bool transformed_any = false;
+    try {
+        for (auto &traj : *trajectories) {
+            if (geometry_is_projected(traj.geom)) {
+                continue;
+            }
+            const int num_points = traj.geom.get_num_points();
+            for (int idx = 0; idx < num_points; ++idx) {
+                double lon = traj.geom.get_x(idx);
+                double lat = traj.geom.get_y(idx);
+                auto info_opt = compute_transform_info(transform, lon, lat);
+                if (!info_opt) {
+                    throw std::runtime_error("Coordinate transformation failed for trajectory point.");
+                }
+                const TransformInfo &info = *info_opt;
+                traj.geom.set_x(idx, info.proj_x);
+                traj.geom.set_y(idx, info.proj_y);
+
+                if (idx < static_cast<int>(traj.covariances.size())) {
+                    CovarianceMatrix &cov = traj.covariances[idx];
+                    Matrix2d cov2d = cov.to_2d_matrix();
+                    Matrix2d temp = multiply_matrices(info.jacobian, cov2d);
+                    Matrix2d cov_new = multiply_matrices(temp, transpose_matrix(info.jacobian));
+                    cov.sdn = std::sqrt(std::max(cov_new.m[0][0], 0.0));
+                    cov.sde = std::sqrt(std::max(cov_new.m[1][1], 0.0));
+                    cov.sdne = cov_new.m[0][1];
+                }
+
+                if (idx < static_cast<int>(traj.protection_levels.size())) {
+                    double scale_factor = std::max(info.scale_lon, info.scale_lat);
+                    if (scale_factor > 0) {
+                        traj.protection_levels[idx] *= scale_factor;
+                    }
+                }
+            }
+            transformed_any = true;
+        }
+    } catch (const std::exception &ex) {
+        OCTDestroyCoordinateTransformation(transform);
+        throw;
+    }
+
+    OCTDestroyCoordinateTransformation(transform);
+    if (transformed_any) {
+        SPDLOG_INFO("Reprojected {} trajectories to match projected network CRS.", trajectories->size());
+    }
+    return transformed_any;
 }
 
 } // namespace
@@ -512,6 +697,7 @@ std::string CovarianceMapMatch::match_gps_file(
     const FMM::CONFIG::GPSConfig &gps_config,
     const FMM::CONFIG::ResultConfig &result_config,
     const CovarianceMapMatchConfig &cmm_config,
+    bool convert_to_projected,
     bool use_omp) {
     std::ostringstream oss;
     std::string status;
@@ -873,7 +1059,60 @@ std::string CovarianceMapMatch::match_gps_file(
     SPDLOG_INFO("Loaded {} trajectories ({} skipped) from {}", trajectories.size(), invalid_records, gps_config.file);
     ifs.close();
 
+    bool trajectories_reprojected = false;
+    if (convert_to_projected) {
+        try {
+            trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, convert_to_projected);
+        } catch (const std::exception &ex) {
+            SPDLOG_WARN("Trajectory reprojection failed: {}", ex.what());
+        }
+    }
+
     FMM::IO::CSVMatchResultWriter writer(result_config.file, result_config.output_config);
+    std::unique_ptr<OGRCoordinateTransformation, decltype(&OCTDestroyCoordinateTransformation)>
+        output_transform(nullptr, OCTDestroyCoordinateTransformation);
+    if (convert_to_projected && network_.is_projected() && network_.has_spatial_ref()) {
+        OGRSpatialReference projected_sr;
+        if (projected_sr.importFromWkt(network_.get_spatial_ref_wkt().c_str()) == OGRERR_NONE) {
+            projected_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            OGRSpatialReference geographic_sr;
+            geographic_sr.SetWellKnownGeogCS("WGS84");
+            geographic_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            if (OGRCoordinateTransformation *ct = OGRCreateCoordinateTransformation(&projected_sr, &geographic_sr)) {
+                output_transform.reset(ct);
+            } else {
+                SPDLOG_WARN("Failed to create output coordinate transformation; results remain in projected CRS.");
+            }
+        } else {
+            SPDLOG_WARN("Failed to reconstruct network CRS for output transformation.");
+        }
+    }
+    OGRCoordinateTransformation *output_transform_ptr = output_transform.get();
+    if (!trajectories_reprojected) {
+        output_transform_ptr = nullptr;
+    }
+    auto apply_output_transform = [&](CORE::Trajectory *traj, MM::MatchResult *match) {
+        if (output_transform_ptr == nullptr || traj == nullptr || match == nullptr) {
+            return;
+        }
+        if (!transform_linestring(&traj->geom, output_transform_ptr)) {
+            SPDLOG_WARN("Failed to transform trajectory geometry back to geographic CRS; keeping projected coordinates.");
+            return;
+        }
+        if (!transform_linestring(&match->mgeom, output_transform_ptr)) {
+            SPDLOG_WARN("Failed to transform matched geometry back to geographic CRS; keeping projected coordinates.");
+        }
+        for (auto &matched : match->opt_candidate_path) {
+            double px = boost::geometry::get<0>(matched.c.point);
+            double py = boost::geometry::get<1>(matched.c.point);
+            if (output_transform_ptr->Transform(1, &px, &py)) {
+                boost::geometry::set<0>(matched.c.point, px);
+                boost::geometry::set<1>(matched.c.point, py);
+            } else {
+                SPDLOG_TRACE("Failed to transform candidate point back to geographic CRS.");
+            }
+        }
+    };
     const int step_size = 1000;
     int progress = 0;
     int points_matched = 0;
@@ -892,7 +1131,10 @@ std::string CovarianceMapMatch::match_gps_file(
             CORE::Trajectory simple_traj{trajectory.id, trajectory.geom, trajectory.timestamps};
             #pragma omp critical(writer_section)
             {
-                writer.write_result(simple_traj, result);
+                CORE::Trajectory output_traj = simple_traj;
+                MM::MatchResult output_result = result;
+                apply_output_transform(&output_traj, &output_result);
+                writer.write_result(output_traj, output_result);
             }
             const int points_in_tr = trajectory.geom.get_num_points();
             #pragma omp critical(progress_section)
@@ -923,7 +1165,10 @@ std::string CovarianceMapMatch::match_gps_file(
             }
             MM::MatchResult result = match_traj(trajectory, cmm_config);
             CORE::Trajectory simple_traj{trajectory.id, trajectory.geom, trajectory.timestamps};
-            writer.write_result(simple_traj, result);
+            CORE::Trajectory output_traj = simple_traj;
+            MM::MatchResult output_result = result;
+            apply_output_transform(&output_traj, &output_result);
+            writer.write_result(output_traj, output_result);
             const int points_in_tr = trajectory.geom.get_num_points();
             total_points += points_in_tr;
             ++total_trajs;

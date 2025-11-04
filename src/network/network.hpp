@@ -62,10 +62,13 @@ public:
   Network(const std::string &filename,
           const std::string &id_name = "id",
           const std::string &source_name = "source",
-          const std::string &target_name = "target"
+          const std::string &target_name = "target",
+          bool convert_to_projected = false
         );
-  Network(const CONFIG::NetworkConfig &config):Network(
-    config.file,config.id,config.source,config.target){};
+  Network(const CONFIG::NetworkConfig &config,
+          bool convert_to_projected = false)
+    :Network(config.file,config.id,config.source,config.target,
+             convert_to_projected){};
   /**
    * Get number of nodes in the network
    * @return number of nodes
@@ -185,10 +188,14 @@ public:
    * @param a candidate a
    * @param b candidate b
    * @return true if a.dist<b.dist
-   */
+  */
   static bool candidate_compare(const MM::Candidate &a, const MM::Candidate &b);
   void add_edge(EdgeID edge_id, NodeID source, NodeID target,
     const FMM::CORE::LineString &geom);
+  bool is_projected() const { return is_projected_; }
+  bool has_spatial_ref() const { return !spatial_ref_wkt_.empty(); }
+  const std::string &get_spatial_ref_wkt() const { return spatial_ref_wkt_; }
+  bool was_reprojected() const { return reprojected_; }
 private:
   void read_ogr_file(const std::string &filename,
                      const std::string &id_name,
@@ -217,6 +224,10 @@ private:
   NodeIndexMap node_map;
   EdgeIndexMap edge_map;
   std::vector<FMM::CORE::Point> vertex_points;
+  bool convert_to_projected_;
+  bool is_projected_;
+  bool reprojected_;
+  std::string spatial_ref_wkt_;
 }; // Network
 } // NETWORK
 } // FMM

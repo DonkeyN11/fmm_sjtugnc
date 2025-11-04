@@ -14,14 +14,14 @@ using namespace FMM::NETWORK;
 
 CMMApp::CMMApp(const CMMAppConfig &config)
     : config_(config),
-      network_(config_.network_config),
+      network_(config_.network_config, config_.convert_to_projected),
       graph_(network_) {
     initialize_matcher();
 }
 
 CMMApp::CMMApp(const CMMAppConfig &config, std::shared_ptr<UBODT> preloaded_ubodt)
     : config_(config),
-      network_(config_.network_config),
+      network_(config_.network_config, config_.convert_to_projected),
       graph_(network_),
       ubodt_(std::move(preloaded_ubodt)) {
     initialize_matcher();
@@ -46,6 +46,7 @@ void CMMApp::run() {
         config_.gps_config,
         config_.result_config,
         config_.cmm_config,
+        config_.convert_to_projected,
         config_.use_omp);
     if (!status.empty()) {
         SPDLOG_INFO("{}", status);
