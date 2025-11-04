@@ -30,7 +30,7 @@ def parse_arguments() -> argparse.Namespace:
     parser.add_argument(
         "--csv",
         type=Path,
-        default=Path("output/cmm_result_rearranged.csv"),
+        default=Path("output/cmm_result_positive_determ.csv"),
         help="Path to the CMM result CSV with a `pgeom` column (default: %(default)s).",
     )
     parser.add_argument(

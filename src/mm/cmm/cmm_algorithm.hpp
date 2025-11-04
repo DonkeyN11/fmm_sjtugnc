@@ -228,6 +228,7 @@ public:
         const FMM::CONFIG::GPSConfig &gps_config,
         const FMM::CONFIG::ResultConfig &result_config,
         const CovarianceMapMatchConfig &config,
+        bool convert_to_projected,
         bool use_omp = true);
 
 protected:

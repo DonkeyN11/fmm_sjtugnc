@@ -16,6 +16,7 @@ CMMAppConfig::CMMAppConfig()
       use_omp(true),
       log_level(2),
       step(100),
+      convert_to_projected(false),
       help_specified(false) {}
 
 CMMAppConfig CMMAppConfig::load_from_xml(const std::string &xml_file) {
@@ -31,6 +32,7 @@ CMMAppConfig CMMAppConfig::load_from_xml(const std::string &xml_file) {
     config.use_omp = tree.get("config.other.use_omp", true);
     config.log_level = tree.get("config.other.log_level", 2);
     config.step = tree.get("config.other.step", 100);
+    config.convert_to_projected = tree.get("config.other.convert_to_projected", false);
 
     return config;
 }
@@ -45,6 +47,7 @@ CMMAppConfig CMMAppConfig::load_from_arg(const cxxopts::ParseResult &arg_data) {
     config.use_omp = arg_data["use_omp"].as<bool>();
     config.log_level = arg_data["log_level"].as<int>();
     config.step = arg_data["step"].as<int>();
+    config.convert_to_projected = arg_data["convert_to_projected"].as<bool>();
     config.help_specified = arg_data.count("help") > 0;
 
     return config;
@@ -65,6 +68,8 @@ void CMMAppConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<int>()->default_value("2"))
         ("step", "Progress report step",
          cxxopts::value<int>()->default_value("100"))
+        ("convert_to_projected", "Convert inputs to a projected CRS when necessary",
+         cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
         ("h,help", "Print help information");
 }
 
@@ -77,6 +82,7 @@ void CMMAppConfig::register_help(std::ostringstream &oss) {
     oss << "--use_omp (optional): Use OpenMP for parallel processing (false)\n";
     oss << "--log_level (optional): Log level (0=trace, 1=debug, 2=info, 3=warn, 4=error, 5=critical) (2)\n";
     oss << "--step (optional): Progress report step (100)\n";
+    oss << "--convert_to_projected (optional): Convert inputs to a projected CRS when necessary (false)\n";
     oss << "-h/--help: Print this help information\n";
 }
 
@@ -90,6 +96,7 @@ void CMMAppConfig::print() const {
     SPDLOG_INFO("Log level {}", log_level);
     SPDLOG_INFO("Use omp {}", use_omp);
     SPDLOG_INFO("Step {}", step);
+    SPDLOG_INFO("Convert to projected {}", convert_to_projected);
     SPDLOG_INFO("---- Configuration done ----");
 }
 

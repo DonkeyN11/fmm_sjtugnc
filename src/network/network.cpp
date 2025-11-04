@@ -4,9 +4,11 @@
 #include "algorithm/geom_algorithm.hpp"
 
 #include <ogrsf_frmts.h> // C++ API for GDAL
-#include <math.h> // Calulating probability
+#include <cmath> // Calculating probability and coordinate transforms
 #include <algorithm> // Partial sort copy
 #include <stdexcept>
+#include <limits>
+#include <cstdlib>
 
 // Data structures for Rtree
 #include <boost/geometry/index/rtree.hpp>
@@ -20,6 +22,79 @@ using namespace FMM::CORE;
 using namespace FMM::MM;
 using namespace FMM::NETWORK;
 
+namespace {
+
+int extract_epsg_code(const OGRSpatialReference &sr) {
+  const char *auth_code = sr.GetAuthorityCode(nullptr);
+  if (auth_code) {
+    return std::atoi(auth_code);
+  }
+  const char *proj_auth = sr.GetAuthorityCode("PROJCS");
+  if (proj_auth) {
+    return std::atoi(proj_auth);
+  }
+  const char *geog_auth = sr.GetAuthorityCode("GEOGCS");
+  if (geog_auth) {
+    return std::atoi(geog_auth);
+  }
+  return -1;
+}
+
+int determine_utm_epsg(double lon_deg, double lat_deg) {
+  if (!std::isfinite(lon_deg) || !std::isfinite(lat_deg)) {
+    return -1;
+  }
+  if (lat_deg <= -80.0 || lat_deg >= 84.0) {
+    return -1;
+  }
+  int zone = static_cast<int>(std::floor((lon_deg + 180.0) / 6.0)) + 1;
+  if (zone < 1) zone = 1;
+  if (zone > 60) zone = 60;
+  int base = (lat_deg >= 0.0) ? 32600 : 32700;
+  return base + zone;
+}
+
+bool transform_linestring_inplace(FMM::CORE::LineString *line,
+                                  OGRCoordinateTransformation *transform) {
+  if (!line || !transform) {
+    return false;
+  }
+  const int num_points = line->get_num_points();
+  for (int idx = 0; idx < num_points; ++idx) {
+    double x = line->get_x(idx);
+    double y = line->get_y(idx);
+    if (!transform->Transform(1, &x, &y)) {
+      return false;
+    }
+    line->set_x(idx, x);
+    line->set_y(idx, y);
+  }
+  return true;
+}
+
+void rebuild_vertex_points_from_edges(const std::vector<NETWORK::Edge> &edges,
+                                      std::vector<FMM::CORE::Point> *vertex_points) {
+  if (vertex_points == nullptr) {
+    return;
+  }
+  std::vector<bool> assigned(vertex_points->size(), false);
+  for (const auto &edge : edges) {
+    if (edge.source < vertex_points->size() && !assigned[edge.source]) {
+      (*vertex_points)[edge.source] = edge.geom.get_point(0);
+      assigned[edge.source] = true;
+    }
+    if (edge.target < vertex_points->size() && !assigned[edge.target]) {
+      int npoints = edge.geom.get_num_points();
+      if (npoints > 0) {
+        (*vertex_points)[edge.target] = edge.geom.get_point(npoints - 1);
+        assigned[edge.target] = true;
+      }
+    }
+  }
+}
+
+} // namespace
+
 bool Network::candidate_compare(const Candidate &a, const Candidate &b) {
   if (a.dist != b.dist) {
     return a.dist < b.dist;
@@ -31,7 +106,11 @@ bool Network::candidate_compare(const Candidate &a, const Candidate &b) {
 Network::Network(const std::string &filename,
                  const std::string &id_name,
                  const std::string &source_name,
-                 const std::string &target_name) {
+                 const std::string &target_name,
+                 bool convert_to_projected)
+    : convert_to_projected_(convert_to_projected),
+      is_projected_(false),
+      reprojected_(false) {
   if (FMM::UTIL::check_file_extension(filename, "shp")) {
     read_ogr_file(filename,id_name,source_name,target_name);
   } else {
@@ -112,18 +191,36 @@ void Network::read_ogr_file(const std::string &filename,
                  OGRGeometryTypeToName(ogrFDefn->GetGeomType()));
   }
   const OGRSpatialReference *ogrsr = ogrFDefn->GetGeomFieldDefn(0)->GetSpatialRef();
+  std::string original_wkt;
+  bool original_is_projected = false;
   if (ogrsr != nullptr) {
-    srid = ogrsr->GetEPSGGeogCS();
-    if (srid == -1) {
+    char *wkt = nullptr;
+    if (ogrsr->exportToWkt(&wkt) == OGRERR_NONE && wkt != nullptr) {
+      original_wkt.assign(wkt);
+      CPLFree(wkt);
+    }
+    original_is_projected = ogrsr->IsProjected();
+    srid = extract_epsg_code(*ogrsr);
+    if (srid != -1) {
+      SPDLOG_DEBUG("Detected SRID {}", srid);
+    } else if (ogrsr->IsGeographic()) {
       srid = 4326;
-      SPDLOG_WARN("SRID is not found, set to 4326 by default");
+      SPDLOG_WARN("SRID not found, assume EPSG:4326");
     } else {
-      SPDLOG_DEBUG("SRID is {}", srid);
+      SPDLOG_WARN("SRID not found for projected network");
     }
   } else {
     srid = 4326;
-    SPDLOG_WARN("SRID is not found, set to 4326 by default");
+    SPDLOG_WARN("Spatial reference not found, assume EPSG:4326");
   }
+  spatial_ref_wkt_ = original_wkt;
+  is_projected_ = original_is_projected;
+
+  double min_x = std::numeric_limits<double>::infinity();
+  double max_x = -std::numeric_limits<double>::infinity();
+  double min_y = std::numeric_limits<double>::infinity();
+  double max_y = -std::numeric_limits<double>::infinity();
+
   // Read data from shapefile
   EdgeIndex index = 0;
   while ((ogrFeature = ogrlayer->GetNextFeature()) != NULL) {
@@ -161,10 +258,92 @@ void Network::read_ogr_file(const std::string &filename,
     } else {
       t_idx = node_map[target];
     }
+    int npoints = geom.get_num_points();
+    for (int i = 0; i < npoints; ++i) {
+      double px = geom.get_x(i);
+      double py = geom.get_y(i);
+      if (std::isfinite(px) && std::isfinite(py)) {
+        min_x = std::min(min_x, px);
+        max_x = std::max(max_x, px);
+        min_y = std::min(min_y, py);
+        max_y = std::max(max_y, py);
+      }
+    }
     edges.push_back({index, id, s_idx, t_idx, geom.get_length(), geom});
     edge_map.insert({id, index});
     ++index;
     OGRFeature::DestroyFeature(ogrFeature);
+  }
+  bool needs_reprojection = convert_to_projected_ && !is_projected_;
+  if (needs_reprojection) {
+    bool has_bbox = std::isfinite(min_x) && std::isfinite(max_x) &&
+                    std::isfinite(min_y) && std::isfinite(max_y);
+    if (!has_bbox) {
+      SPDLOG_WARN("Unable to determine network extent; skip reprojection.");
+    } else {
+      double center_lon = (min_x + max_x) * 0.5;
+      double center_lat = (min_y + max_y) * 0.5;
+      int target_epsg = determine_utm_epsg(center_lon, center_lat);
+      if (target_epsg > 0) {
+        OGRSpatialReference source_sr;
+        OGRErr source_err = OGRERR_NONE;
+        if (!spatial_ref_wkt_.empty()) {
+          source_err = source_sr.importFromWkt(spatial_ref_wkt_.c_str());
+        } else {
+          source_err = source_sr.SetWellKnownGeogCS("WGS84");
+        }
+        source_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+        if (source_err != OGRERR_NONE) {
+          SPDLOG_WARN("Failed to prepare source CRS for reprojection (err={}); skip reprojection.", source_err);
+        } else {
+          OGRSpatialReference target_sr;
+          if (target_sr.importFromEPSG(target_epsg) != OGRERR_NONE) {
+            SPDLOG_WARN("Failed to create target CRS EPSG:{}; skip reprojection.", target_epsg);
+          } else {
+            target_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            OGRCoordinateTransformation *ct = OGRCreateCoordinateTransformation(&source_sr, &target_sr);
+            if (ct == nullptr) {
+              SPDLOG_WARN("Failed to create coordinate transformation; skip reprojection.");
+            } else {
+              std::vector<CORE::LineString> transformed_geoms;
+              transformed_geoms.reserve(edges.size());
+              bool success = true;
+              for (const auto &edge : edges) {
+                CORE::LineString geom_copy = edge.geom;
+                if (!transform_linestring_inplace(&geom_copy, ct)) {
+                  success = false;
+                  break;
+                }
+                transformed_geoms.push_back(std::move(geom_copy));
+              }
+              if (!success) {
+                SPDLOG_WARN("Network contains coordinates outside the target projection; keep original CRS.");
+              } else {
+                for (std::size_t idx = 0; idx < edges.size(); ++idx) {
+                  edges[idx].geom = std::move(transformed_geoms[idx]);
+                  edges[idx].length = edges[idx].geom.get_length();
+                }
+                rebuild_vertex_points_from_edges(edges, &vertex_points);
+                char *target_wkt = nullptr;
+                if (target_sr.exportToWkt(&target_wkt) == OGRERR_NONE && target_wkt != nullptr) {
+                  spatial_ref_wkt_ = target_wkt;
+                  CPLFree(target_wkt);
+                } else {
+                  spatial_ref_wkt_.clear();
+                }
+                srid = target_epsg;
+                is_projected_ = true;
+                reprojected_ = true;
+                SPDLOG_INFO("Reprojected network to EPSG:{}", target_epsg);
+              }
+              OCTDestroyCoordinateTransformation(ct);
+            }
+          }
+        }
+      } else {
+        SPDLOG_WARN("Unable to determine suitable projected CRS for network; skip reprojection.");
+      }
+    }
   }
   GDALClose(poDS);
   num_vertices = node_id_vec.size();
@@ -221,6 +400,7 @@ Point Network::get_node_geom_from_idx(NodeIndex index) const {
 void Network::build_rtree_index() {
   // Build an rtree for candidate search
   SPDLOG_DEBUG("Create boost rtree");
+  rtree = Rtree();
   // create some Items
   for (std::size_t i = 0; i < edges.size(); ++i) {
     // create a boost_box

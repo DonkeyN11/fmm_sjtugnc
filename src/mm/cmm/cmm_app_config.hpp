@@ -37,6 +37,7 @@ struct CMMAppConfig {
     bool use_omp;
     int log_level;
     int step;
+    bool convert_to_projected;
     bool help_specified;
 
     /**
