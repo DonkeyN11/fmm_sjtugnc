@@ -1,37 +1,120 @@
 #!/usr/bin/env python3
-"""Generate a Mapbox GL JS viewer for FMM map-matching output."""
+"""
+Interactive Mapbox GL viewer for comparing CMM/FMM results with ground truth.
+
+The script renders three datasets for the requested trajectory IDs:
+  1. Ground truth trajectories (as lines)
+  2. CMM match results (as points)
+  3. FMM match results (as points)
+
+Hovering over CMM/FMM points displays detailed attributes such as timestamp,
+error, ep, tp, and cumulative probability.
+"""
+
+from __future__ import annotations
+
 import argparse
 import csv
+
 csv.field_size_limit(10 ** 7)
+
 import json
+import math
 import os
+import warnings
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple
+from string import Template
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Set
+
+import numpy as np
+
+try:
+    from pyproj import Geod
+except ImportError:  # pragma: no cover - optional dependency
+    Geod = None
+
+try:
+    import fiona
+except ImportError:  # pragma: no cover - optional dependency
+    fiona = None
+
+MAPBOX_DEFAULT_TOKEN = (
+    "pk.eyJ1IjoiZG9ua2V5LW5pbmciLCJhIjoiY21kenJ5OTY5MGc5azJqb25hdTVtc2tvNiJ9.CgMc9ZNXaZ1HDrC4Zl2aMQ"
+)
+
+DEFAULT_EDGES_SHP = "input/map/haikou/edges.shp"
+DEFAULT_CMM_TRAJECTORY_CSV = "input_cmm/cmm_trajectory.csv"
+ELLIPSE_SCALE = 2.0  # number of standard deviations for covariance ellipses
+ELLIPSE_SEGMENTS = 64
+CIRCLE_SEGMENTS = 64
+GEOD = Geod(ellps="WGS84") if Geod is not None else None
+
+Coordinate = Tuple[float, float]
+Bounds = Tuple[float, float, float, float]
 
 
-def parse_linestring(wkt: str) -> List[List[float]]:
-    wkt = (wkt or "").strip()
-    if not wkt.upper().startswith("LINESTRING"):
+def parse_linestring(wkt: str) -> List[Coordinate]:
+    """Parse a WKT LINESTRING into a list of [lon, lat] coordinate pairs."""
+    text = (wkt or "").strip()
+    if not text or not text.upper().startswith("LINESTRING"):
         return []
-    open_idx = wkt.find("(")
-    close_idx = wkt.rfind(")")
+    open_idx = text.find("(")
+    close_idx = text.rfind(")")
     if open_idx == -1 or close_idx == -1 or close_idx <= open_idx:
         return []
-    body = wkt[open_idx + 1:close_idx]
-    coords: List[List[float]] = []
+    body = text[open_idx + 1 : close_idx]
+    coords: List[Coordinate] = []
     for token in body.split(","):
         parts = token.strip().split()
         if len(parts) != 2:
             continue
         try:
-            lon, lat = float(parts[0]), float(parts[1])
+            lon = float(parts[0])
+            lat = float(parts[1])
         except ValueError:
             continue
-        coords.append([lon, lat])
+        coords.append((lon, lat))
     return coords
 
 
-def update_bounds(bounds: Tuple[float, float, float, float], coords: List[List[float]]):
+def parse_value_list(cell: Optional[str]) -> List[str]:
+    """Split a semicolon cell containing comma separated values."""
+    if not cell:
+        return []
+    return [part.strip() for part in cell.split(",") if part.strip()]
+
+
+def to_float(value: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        if value.lower() in {"nan", "inf", "-inf"}:  # type: ignore[arg-type]
+            return None
+    except AttributeError:
+        pass
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def initial_bounds() -> Bounds:
+    return (math.inf, math.inf, -math.inf, -math.inf)
+
+
+def bounds_valid(bounds: Bounds) -> bool:
+    min_lon, min_lat, max_lon, max_lat = bounds
+    return (
+      math.isfinite(min_lon)
+      and math.isfinite(min_lat)
+      and math.isfinite(max_lon)
+      and math.isfinite(max_lat)
+      and (max_lon > min_lon)
+      and (max_lat > min_lat)
+    )
+
+
+def update_bounds(bounds: Bounds, coords: Iterable[Coordinate]) -> Bounds:
     min_lon, min_lat, max_lon, max_lat = bounds
     for lon, lat in coords:
         if lon < min_lon:
@@ -45,266 +128,1095 @@ def update_bounds(bounds: Tuple[float, float, float, float], coords: List[List[f
     return min_lon, min_lat, max_lon, max_lat
 
 
-def build_feature(row: Dict[str, str]) -> Dict:
-    coords = parse_linestring(row.get("pgeom", ""))
-    if len(coords) < 2:
+def load_edge_geometries(shapefile: Path, id_field: Optional[str]) -> Dict[str, List[Coordinate]]:
+    """Load edges from a shapefile keyed by an ID field."""
+    if not shapefile:
         return {}
+    if not shapefile.exists():
+        warnings.warn(f"Edge shapefile not found: {shapefile}")
+        return {}
+    if fiona is None:
+        warnings.warn("Fiona is required to read the edge shapefile but is not installed.")
+        return {}
+
+    mapping: Dict[str, List[Coordinate]] = {}
+    with fiona.open(shapefile, "r") as src:
+        schema_props = src.schema.get("properties", {})
+        candidate_fields: List[str]
+        if id_field:
+            if id_field not in schema_props:
+                warnings.warn(
+                    f"Specified edge id field '{id_field}' not present in shapefile. "
+                    "Attempting to auto-detect instead."
+                )
+                candidate_fields = []
+            else:
+                candidate_fields = [id_field]
+        else:
+            candidate_fields = []
+
+        if not candidate_fields:
+            for field in ("fid", "id", "edge_id", "edgeid", "ID"):
+                if field in schema_props:
+                    candidate_fields.append(field)
+                    break
+            if not candidate_fields:
+                candidate_fields.append(next(iter(schema_props.keys()), "id"))
+
+        chosen_field = candidate_fields[0]
+
+        for feature in src:
+            geom = feature.get("geometry")
+            if not geom:
+                continue
+            geom_type = geom.get("type")
+            coords: List[Coordinate] = []
+            if geom_type == "LineString":
+                coords = [(float(x), float(y)) for x, y in geom.get("coordinates", [])]
+            elif geom_type == "MultiLineString":
+                for part in geom.get("coordinates", []):
+                    if part:
+                        coords = [(float(x), float(y)) for x, y in part]
+                        break
+            if len(coords) < 2:
+                continue
+
+            raw_id = feature["properties"].get(chosen_field)
+            if raw_id is None:
+                continue
+            mapping[str(raw_id)] = coords
+    return mapping
+
+
+def covariance_ellipse(
+    center: Coordinate,
+    covariance: np.ndarray,
+    scale: float = ELLIPSE_SCALE,
+    segments: int = ELLIPSE_SEGMENTS,
+) -> List[Coordinate]:
+    """Return polygon coordinates representing a covariance ellipse."""
     try:
-        cumu_prob = float(row.get("cumu_prob", ""))
-    except ValueError:
-        cumu_prob = None
-    feature: Dict = {
-        "type": "Feature",
-        "properties": {
-            "id": row.get("id"),
-            "cumu_prob": cumu_prob,
-            "duration": row.get("duration"),
-            "timestamp": row.get("timestamp"),
-        },
-        "geometry": {
-            "type": "LineString",
-            "coordinates": coords,
-        },
-    }
-    return feature
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+    except np.linalg.LinAlgError:
+        return []
+    eigenvalues = np.maximum(eigenvalues, 0.0)
+    radii = np.sqrt(eigenvalues) * float(scale)
+    angles = np.linspace(0.0, 2.0 * math.pi, num=segments, endpoint=False)
+    circle = np.stack((np.cos(angles), np.sin(angles)))
+    transform = eigenvectors @ np.diag(radii)
+    coords: List[Coordinate] = []
+    for idx in range(segments):
+        offset = transform @ circle[:, idx]
+        x = float(center[0] + offset[0])
+        y = float(center[1] + offset[1])
+        coords.append((x, y))
+    if coords:
+        coords.append(coords[0])
+    return coords
 
 
-def build_raw_point_features(path: Path, ids: Set[str], bounds: Tuple[float, float, float, float]) -> Tuple[List[Dict], Tuple[float, float, float, float]]:
+def protection_level_circle(
+    center: Coordinate,
+    radius_m: float,
+    segments: int = CIRCLE_SEGMENTS,
+) -> List[Coordinate]:
+    """Approximate a circle from a protection level radius in metres."""
+    if radius_m is None or radius_m <= 0:
+        return []
+    lon0, lat0 = center
+    coords: List[Coordinate] = []
+    if GEOD is None:
+        # Fallback: convert metres to degrees with simple approximation.
+        deg_lat = radius_m / 111_320.0
+        deg_lon = radius_m / max(math.cos(math.radians(lat0)) * 111_320.0, 1e-6)
+        for idx in range(segments):
+            angle = 2 * math.pi * idx / segments
+            dx = math.cos(angle) * deg_lon
+            dy = math.sin(angle) * deg_lat
+            coords.append((lon0 + dx, lat0 + dy))
+    else:
+        for idx in range(segments):
+            azimuth = 360.0 * idx / segments
+            lon, lat, _ = GEOD.fwd(lon0, lat0, azimuth, radius_m)
+            coords.append((lon, lat))
+    if coords:
+        coords.append(coords[0])
+    return coords
+
+
+def build_ground_truth_edge_features(
+    edge_sequences: Dict[str, List[str]],
+    edge_geometries: Dict[str, List[Coordinate]],
+    bounds: Bounds,
+) -> Tuple[List[Dict], Bounds]:
     features: List[Dict] = []
     updated_bounds = bounds
-    if not path or not path.exists():
-        return features, updated_bounds
-
-    with path.open(newline='', encoding='utf-8') as csv_file:
-        reader = csv.DictReader(csv_file, delimiter=';')
-        for row in reader:
-            traj_id = row.get("id")
-            if traj_id not in ids:
-                continue
-            coords = parse_linestring(row.get("geom", ""))
+    for traj_id, ids in edge_sequences.items():
+        for seq, edge_id in enumerate(ids):
+            coords = edge_geometries.get(edge_id)
             if not coords:
                 continue
             updated_bounds = update_bounds(updated_bounds, coords)
-            original_id = row.get("original_id")
-            for idx, (lon, lat) in enumerate(coords):
-                features.append({
+            features.append(
+                {
                     "type": "Feature",
                     "properties": {
                         "id": traj_id,
-                        "original_id": original_id,
+                        "edge_id": edge_id,
+                        "seq": seq,
+                        "kind": "ground_edge",
+                    },
+                    "geometry": {
+                        "type": "LineString",
+                        "coordinates": coords,
+                    },
+                }
+            )
+    return features, updated_bounds
+
+
+def collect_observation_features_from_cmm(
+    path: Path,
+    selected_ids: Sequence[str],
+    bounds: Bounds,
+    highlight_map: Optional[Dict[str, Optional[Set[int]]]] = None,
+) -> Tuple[List[Dict], List[Dict], List[Dict], Bounds]:
+    point_features: List[Dict] = []
+    ellipse_features: List[Dict] = []
+    pl_circle_features: List[Dict] = []
+    updated_bounds = bounds
+    id_set = {str(_id) for _id in selected_ids}
+    highlight_map = highlight_map or {}
+    highlight_active = bool(highlight_map)
+
+    if not path or not path.exists():
+        return point_features, ellipse_features, pl_circle_features, updated_bounds
+
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id")
+            if traj_id is None:
+                continue
+            traj_id_str = traj_id.strip()
+            if traj_id_str not in id_set:
+                continue
+
+            coords = parse_linestring(row.get("geom", ""))
+            if not coords:
+                continue
+
+            try:
+                timestamps = json.loads(row.get("timestamps", "[]"))
+            except json.JSONDecodeError:
+                timestamps = []
+            try:
+                covariance_list = json.loads(row.get("covariances", "[]"))
+            except json.JSONDecodeError:
+                covariance_list = []
+            try:
+                pl_list = json.loads(row.get("protection_levels", "[]"))
+            except json.JSONDecodeError:
+                pl_list = []
+
+            count = min(len(coords), len(covariance_list))
+            if count == 0:
+                continue
+
+            highlight_entry = highlight_map.get(traj_id_str) if highlight_active else None
+            has_highlight_for_id = highlight_active and (traj_id_str in highlight_map)
+
+            for seq in range(count):
+                lon, lat = coords[seq]
+                cov_entry = covariance_list[seq] if seq < len(covariance_list) else None
+                pl = pl_list[seq] if seq < len(pl_list) else None
+                timestamp_val = None
+                if seq < len(timestamps):
+                    try:
+                        timestamp_val = float(timestamps[seq])
+                    except (TypeError, ValueError):
+                        timestamp_val = None
+
+                if cov_entry is None or len(cov_entry) < 4:
+                    continue
+                sdn = to_float(cov_entry[0])
+                sde = to_float(cov_entry[1])
+                sdne = to_float(cov_entry[3])
+                if sdn is None or sde is None or sdne is None:
+                    continue
+
+                center = (lon, lat)
+                updated_bounds = update_bounds(updated_bounds, [center])
+
+                point_features.append(
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "id": traj_id_str,
+                            "kind": "observation_point",
+                            "seq": seq,
+                            "timestamp": timestamp_val,
+                            "timestamp_raw": timestamps[seq] if seq < len(timestamps) else None,
+                            "pl": to_float(pl),
+                            "sdn": sdn,
+                            "sde": sde,
+                            "sdne": sdne,
+                        },
+                        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                    }
+                )
+
+                cov_matrix = np.array([[sde * sde, sdne], [sdne, sdn * sdn]], dtype=float)
+                show_envelope = False
+                if highlight_active and has_highlight_for_id:
+                    seq_set = highlight_entry
+                    if seq_set is None:
+                        show_envelope = True
+                    else:
+                        show_envelope = seq in seq_set
+                # If highlight map is empty (no entries), do not render envelopes to avoid lag.
+
+                if show_envelope:
+                    ellipse_coords = covariance_ellipse(center, cov_matrix)
+                    if ellipse_coords:
+                        updated_bounds = update_bounds(updated_bounds, ellipse_coords)
+                        ellipse_features.append(
+                            {
+                                "type": "Feature",
+                                "properties": {
+                                    "id": traj_id_str,
+                                    "kind": "observation_cov",
+                                    "seq": seq,
+                                    "timestamp": timestamp_val,
+                                    "timestamp_raw": timestamps[seq] if seq < len(timestamps) else None,
+                                    "pl": to_float(pl),
+                                    "sdn": sdn,
+                                    "sde": sde,
+                                    "sdne": sdne,
+                                },
+                                "geometry": {"type": "Polygon", "coordinates": [ellipse_coords]},
+                            }
+                        )
+
+                    pl_val = to_float(pl)
+                    if pl_val is not None and pl_val > 0:
+                        circle_coords = protection_level_circle(center, pl_val)
+                        if circle_coords:
+                            updated_bounds = update_bounds(updated_bounds, circle_coords)
+                            pl_circle_features.append(
+                                {
+                                    "type": "Feature",
+                                    "properties": {
+                                        "id": traj_id_str,
+                                        "kind": "pl_circle",
+                                        "seq": seq,
+                                        "timestamp": timestamp_val,
+                                        "timestamp_raw": timestamps[seq] if seq < len(timestamps) else None,
+                                        "pl": pl_val,
+                                    },
+                                    "geometry": {"type": "Polygon", "coordinates": [circle_coords]},
+                                }
+                            )
+
+    return point_features, ellipse_features, pl_circle_features, updated_bounds
+
+
+def collect_ids(args_ids: Optional[Sequence[str]], fallback_path: Path) -> List[str]:
+    collected: List[str] = []
+    if args_ids:
+        for group in args_ids:
+            for part in group.split(","):
+                part = part.strip()
+                if part:
+                    collected.append(part)
+    if collected:
+        return collected
+
+    # Fallback: use first ID from the ground truth CSV.
+    with fallback_path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            row_id = row.get("id")
+            if row_id:
+                return [row_id.strip()]
+    raise SystemExit("Unable to determine default IDs from ground truth file.")
+
+
+def parse_observation_highlights(args_highlights: Optional[Sequence[str]]) -> Dict[str, Optional[Set[int]]]:
+    highlights: Dict[str, Optional[Set[int]]] = {}
+    if not args_highlights:
+        return highlights
+
+    for group in args_highlights:
+        for token in group.split(","):
+            item = token.strip()
+            if not item:
+                continue
+            if item.lower() == "all":
+                highlights["__all__"] = None
+                continue
+            if ":" in item:
+                traj_id, seq_text = item.split(":", 1)
+                traj_id = traj_id.strip()
+                seq_text = seq_text.strip()
+                if not traj_id or not seq_text:
+                    continue
+                try:
+                    seq_value = int(seq_text)
+                except ValueError:
+                    continue
+                seq_set = highlights.setdefault(traj_id, set())
+                if seq_set is not None:
+                    seq_set.add(seq_value)
+            else:
+                traj_id = item
+                highlights[traj_id] = None
+
+    # If special "__all__" key present, treat as highlight all observations.
+    if "__all__" in highlights:
+        return {"__all__": None}
+
+    return highlights
+
+
+def collect_ground_truth_features(
+    path: Path, selected_ids: Sequence[str], bounds: Bounds
+) -> Tuple[List[Dict], Dict[str, List[str]], Bounds]:
+    point_features: List[Dict] = []
+    edge_sequences: Dict[str, List[str]] = {}
+    updated_bounds = bounds
+    id_set = {str(_id) for _id in selected_ids}
+
+    if not path.exists():
+        raise SystemExit(f"Ground truth file not found: {path}")
+
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id")
+            if traj_id is None:
+                continue
+            traj_id_str = traj_id.strip()
+            if traj_id_str not in id_set:
+                continue
+            coords = parse_linestring(row.get("geom", ""))
+            if len(coords) < 2:
+                continue
+            updated_bounds = update_bounds(updated_bounds, coords)
+            timestamp_values = parse_value_list(row.get("timestamp", ""))
+            raw_edge_ids = parse_value_list(row.get("edge_ids", ""))
+            edge_sequences[traj_id_str] = raw_edge_ids
+            for idx, (lon, lat) in enumerate(coords):
+                timestamp_raw = timestamp_values[idx] if idx < len(timestamp_values) else None
+                point_features.append(
+                    {
+                        "type": "Feature",
+                        "properties": {
+                            "id": traj_id.strip(),
+                            "source": "ground_truth",
+                            "kind": "ground_truth_point",
+                            "seq": idx,
+                            "timestamp": to_float(timestamp_raw),
+                            "timestamp_raw": timestamp_raw,
+                            "ep": None,
+                            "ep_raw": None,
+                            "tp": None,
+                            "tp_raw": None,
+                            "cumu": None,
+                            "cumu_raw": None,
+                            "error": None,
+                            "error_raw": None,
+                        },
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [lon, lat],
+                        },
+                    }
+                )
+    return point_features, edge_sequences, updated_bounds
+
+
+def collect_point_features(
+    path: Path,
+    selected_ids: Sequence[str],
+    dataset_name: str,
+    bounds: Bounds,
+) -> Tuple[List[Dict], Bounds]:
+    features: List[Dict] = []
+    updated_bounds = bounds
+    id_set = {str(_id) for _id in selected_ids}
+
+    if not path.exists():
+        return features, updated_bounds
+
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id")
+            if traj_id is None or traj_id.strip() not in id_set:
+                continue
+
+            coords = parse_linestring(row.get("pgeom", ""))
+            if not coords:
+                continue
+
+            values_map: Dict[str, List[str]] = {
+                "timestamp": parse_value_list(row.get("timestamp", "")),
+                "ep": parse_value_list(row.get("ep", "")),
+                "tp": parse_value_list(row.get("tp", "")),
+                "cumu": parse_value_list(row.get("cumu_prob", "")),
+                "error": parse_value_list(row.get("error", "")),
+            }
+
+            for idx, (lon, lat) in enumerate(coords):
+                updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
+
+                def get_value(key: str) -> Optional[str]:
+                    series = values_map.get(key, [])
+                    return series[idx] if idx < len(series) else None
+
+                feature = {
+                    "type": "Feature",
+                    "properties": {
+                        "id": traj_id.strip(),
+                        "source": dataset_name,
+                        "kind": f"{dataset_name}_point",
                         "seq": idx,
+                        "timestamp": to_float(get_value("timestamp")),
+                        "timestamp_raw": get_value("timestamp"),
+                        "ep": to_float(get_value("ep")),
+                        "ep_raw": get_value("ep"),
+                        "tp": to_float(get_value("tp")),
+                        "tp_raw": get_value("tp"),
+                        "cumu": to_float(get_value("cumu")),
+                        "cumu_raw": get_value("cumu"),
+                        "error": to_float(get_value("error")),
+                        "error_raw": get_value("error"),
                     },
                     "geometry": {
                         "type": "Point",
                         "coordinates": [lon, lat],
                     },
-                })
+                }
+                features.append(feature)
     return features, updated_bounds
 
 
-def render_html(token: str, geojson: Dict, bounds: Tuple[float, float, float, float], raw_points: Optional[Dict] = None) -> str:
-    min_lon, min_lat, max_lon, max_lat = bounds
-    bounds_js = json.dumps([[min_lon, min_lat], [max_lon, max_lat]])
-    geojson_js = json.dumps(geojson)
-    raw_points_js = json.dumps(raw_points) if raw_points is not None else "null"
-    html = f"""<!DOCTYPE html>
+def requires_token(token: Optional[str]) -> str:
+    if token:
+        return token
+    env_token = os.environ.get("MAPBOX_ACCESS_TOKEN")
+    if env_token:
+        return env_token
+    return MAPBOX_DEFAULT_TOKEN
+
+
+def bounds_to_json(bounds: Bounds) -> str:
+    if bounds_valid(bounds):
+        min_lon, min_lat, max_lon, max_lat = bounds
+        return json.dumps([[min_lon, min_lat], [max_lon, max_lat]])
+    return "null"
+
+
+def render_html(
+    token: str,
+    bounds: Bounds,
+    selected_ids: Sequence[str],
+    ground_truth_points_geojson: Dict,
+    ground_truth_edge_geojson: Dict,
+    observation_points_geojson: Dict,
+    observation_ellipses_geojson: Dict,
+    pl_circles_geojson: Dict,
+    cmm_geojson: Dict,
+    fmm_geojson: Dict,
+    edge_sequences: Dict[str, List[str]],
+) -> str:
+    bounds_js = bounds_to_json(bounds)
+    ids_label = ", ".join(str(_id) for _id in selected_ids)
+    edge_lines: List[str] = []
+    for _id in selected_ids:
+        edge_list = edge_sequences.get(str(_id), [])
+        if edge_list:
+            edge_lines.append(f"{_id}: " + ", ".join(edge_list))
+        else:
+            edge_lines.append(f"{_id}: (none)")
+    edge_info_html = "<br/>".join(edge_lines) if edge_lines else "无可用边ID"
+
+    template = Template("""<!DOCTYPE html>
 <html>
 <head>
-<meta charset=\"utf-8\" />
-<title>FMM Mapbox 3D Viewer</title>
-<meta name=\"viewport\" content=\"initial-scale=1,maximum-scale=1,user-scalable=no\" />
-<script src=\"https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js\"></script>
-<link href=\"https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css\" rel=\"stylesheet\" />
+<meta charset="utf-8" />
+<title>CMM vs FMM Mapbox Viewer</title>
+<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
+<script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet" />
 <style>
-  body {{ margin: 0; padding: 0; }}
-  #map {{ position: absolute; top: 0; bottom: 0; width: 100%; }}
-  #info {{ position: absolute; top: 12px; left: 12px; background: rgba(0, 0, 0, 0.55); color: #fff; padding: 8px 12px; font-family: sans-serif; font-size: 13px; border-radius: 4px; }}
+  body { margin: 0; padding: 0; }
+  #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+  #info {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(0, 0, 0, 0.55);
+    color: #fff;
+    padding: 10px 14px;
+    font-family: "Segoe UI", sans-serif;
+    font-size: 13px;
+    border-radius: 6px;
+    max-width: 320px;
+    line-height: 1.5;
+  }
+  #legend {
+    margin-top: 8px;
+  }
+  #legend span {
+    display: inline-flex;
+    align-items: center;
+    margin-right: 12px;
+  }
+  #legend i {
+    width: 12px;
+    height: 12px;
+    display: inline-block;
+    margin-right: 6px;
+    border-radius: 50%;
+  }
 </style>
 </head>
 <body>
-<div id=\"map\"></div>
-<div id=\"info\">Scroll to zoom • Drag to look around <br/>Color encodes \"cumu_prob\"</div>
+<div id="map"></div>
+<div id="info">
+  <strong>Trajectory IDs:</strong> $IDS_LABEL<br/>
+  Hover layers to inspect details.
+  <div id="legend">
+    <span><i style="background:#ff7f0e;"></i>CMM point</span>
+    <span><i style="background:#2ca02c;"></i>FMM point</span>
+    <span><i style="background:#17becf;"></i>Observation point</span>
+    <span><i style="background:#6a3d9a;border-radius:0;width:18px;height:3px;"></i>Ground truth edge</span>
+    <span><i style="background:#17becf;border-radius:0;width:18px;height:12px;opacity:0.4;border:1px solid #0f4c5c;"></i>Observation covariance</span>
+    <span><i style="background:#9467bd;border-radius:0;width:18px;height:12px;opacity:0.3;border:1px solid #4a2352;"></i>Protection level</span>
+  </div>
+  <div id="edge-info" style="margin-top:8px;">
+    <strong>Edge IDs:</strong><br/>
+    <span id="edge-list">$EDGE_INFO_HTML</span>
+  </div>
+</div>
 <script>
-  mapboxgl.accessToken = {json.dumps(token)};
-  const routeGeojson = {geojson_js};
-  const rawPointsGeojson = {raw_points_js};
-  const bounds = {bounds_js};
-  const map = new mapboxgl.Map({{
+  mapboxgl.accessToken = $TOKEN;
+  const selectedIds = $SELECTED_IDS;
+  const bounds = $BOUNDS;
+  const groundTruthPointsGeojson = $GROUND_POINTS_GEOJSON;
+  const groundTruthEdgeGeojson = $GROUND_EDGES_GEOJSON;
+  const observationPointGeojson = $OBS_POINT_GEOJSON;
+  const observationEllipseGeojson = $OBS_ELLIPSE_GEOJSON;
+  const plCircleGeojson = $PL_CIRCLE_GEOJSON;
+  const cmmGeojson = $CMM_GEOJSON;
+  const fmmGeojson = $FMM_GEOJSON;
+
+  const map = new mapboxgl.Map({
     container: 'map',
     style: 'mapbox://styles/mapbox/navigation-day-v1',
-    center: [(bounds[0][0] + bounds[1][0]) / 2, (bounds[0][1] + bounds[1][1]) / 2],
-    zoom: 12,
+    center: [0, 0],
+    zoom: 2,
     pitch: 60,
     bearing: -20
-  }});
+  });
 
-  map.on('load', () => {{
+  map.on('load', () => {
     map.addControl(new mapboxgl.NavigationControl(), 'top-right');
 
-    map.addSource('mapbox-dem', {{
+    if (bounds) {
+      map.fitBounds(bounds, { padding: 70, maxZoom: 16 });
+    }
+
+    map.addSource('mapbox-dem', {
       type: 'raster-dem',
       url: 'mapbox://mapbox.mapbox-terrain-dem-v1',
       tileSize: 512,
       maxzoom: 14
-    }});
-    map.setTerrain({{ source: 'mapbox-dem', exaggeration: 1.4 }});
-
-    map.addSource('matched-route', {{
-      type: 'geojson',
-      data: routeGeojson
-    }});
-
-    map.addLayer({{
-      id: 'matched-route-line',
-      type: 'line',
-      source: 'matched-route',
-      paint: {{
-        'line-color': [
-          'interpolate', ['linear'], ['coalesce', ['get', 'cumu_prob'], 0],
-          0, '#2b83ba',
-          0.5, '#ffffbf',
-          1, '#d7191c'
-        ],
-        'line-width': [
-          'interpolate', ['linear'], ['zoom'],
-          10, 3,
-          16, 12
-        ],
-        'line-opacity': 0.85
-      }}
-    }});
-
-    if (rawPointsGeojson) {{
-      map.addSource('raw-points', {{
-        type: 'geojson',
-        data: rawPointsGeojson
-      }});
-      map.addLayer({{
-        id: 'raw-points-layer',
-        type: 'circle',
-        source: 'raw-points',
-        paint: {{
-          'circle-radius': [
-            'interpolate', ['linear'], ['zoom'],
-            10, 3,
-            16, 8
-          ],
-          'circle-color': '#ff8c00',
-          'circle-stroke-color': '#ffffff',
-          'circle-stroke-width': 1
-        }}
-      }});
-    }}
+    });
+    map.setTerrain({ source: 'mapbox-dem', exaggeration: 1.2 });
 
     const layers = map.getStyle().layers || [];
     let labelLayerId = null;
-    for (const layer of layers) {{
-      if (layer.type === 'symbol' && layer.layout && layer.layout['text-field']) {{
+    for (const layer of layers) {
+      if (layer.type === 'symbol' && layer.layout && layer.layout['text-field']) {
         labelLayerId = layer.id;
         break;
-      }}
-    }}
+      }
+    }
 
-    const buildingLayer = {{
+    const buildingLayer = {
       id: 'custom-3d-buildings',
       source: 'composite',
       'source-layer': 'building',
       filter: ['==', ['get', 'extrude'], 'true'],
       type: 'fill-extrusion',
       minzoom: 15,
-      paint: {{
+      paint: {
         'fill-extrusion-color': '#aaa',
         'fill-extrusion-height': ['get', 'height'],
         'fill-extrusion-base': ['get', 'min_height'],
         'fill-extrusion-opacity': 0.6
-      }}
-    }};
-    if (labelLayerId) {{
+      }
+    };
+    if (labelLayerId) {
       map.addLayer(buildingLayer, labelLayerId);
-    }} else {{
+    } else {
       map.addLayer(buildingLayer);
-    }}
+    }
 
-    const hasExtent = bounds[0][0] !== bounds[1][0] || bounds[0][1] !== bounds[1][1];
-    if (hasExtent) {{
-      map.fitBounds(bounds, {{ padding: 64, maxZoom: 16 }});
-    }} else {{
-      map.setZoom(15);
-    }}
-  }});
+    const hasGroundTruthPoints = groundTruthPointsGeojson.features.length > 0;
+    const hasGroundTruthEdges = groundTruthEdgeGeojson.features.length > 0;
+    const hasObservationPoints = observationPointGeojson.features.length > 0;
+    const hasObservationEllipses = observationEllipseGeojson.features.length > 0;
+    const hasPlCircles = plCircleGeojson.features.length > 0;
+    const hasCmm = cmmGeojson.features.length > 0;
+    const hasFmm = fmmGeojson.features.length > 0;
+
+    if (hasGroundTruthEdges) {
+      map.addSource('ground-truth-edges', {
+        type: 'geojson',
+        data: groundTruthEdgeGeojson
+      });
+      map.addLayer({
+        id: 'ground-truth-edge-layer',
+        type: 'line',
+        source: 'ground-truth-edges',
+        paint: {
+          'line-color': '#6a3d9a',
+          'line-width': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 2,
+            16, 6
+          ],
+          'line-dasharray': [2, 2],
+          'line-opacity': 0.85
+        }
+      });
+    }
+
+    if (hasGroundTruthPoints) {
+      map.addSource('ground-truth-points', {
+        type: 'geojson',
+        data: groundTruthPointsGeojson
+      });
+      map.addLayer({
+        id: 'ground-truth-points-layer',
+        type: 'circle',
+        source: 'ground-truth-points',
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 4,
+            16, 9
+          ],
+          'circle-color': '#1f78b4',
+          'circle-opacity': 0.9,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1
+        }
+      });
+    }
+
+    if (hasObservationPoints) {
+      map.addSource('observation-points', {
+        type: 'geojson',
+        data: observationPointGeojson
+      });
+    }
+
+    if (hasObservationEllipses) {
+      map.addSource('observation-ellipses', {
+        type: 'geojson',
+        data: observationEllipseGeojson
+      });
+    }
+
+    if (hasPlCircles) {
+      map.addSource('pl-circles', {
+        type: 'geojson',
+        data: plCircleGeojson
+      });
+    }
+
+    if (hasObservationPoints) {
+      map.addLayer({
+        id: 'observation-point-layer',
+        type: 'circle',
+        source: 'observation-points',
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 3,
+            16, 8
+          ],
+          'circle-color': '#17becf',
+          'circle-opacity': 0.9,
+          'circle-stroke-color': '#103f5c',
+          'circle-stroke-width': 1
+        }
+      });
+    }
+
+    if (hasObservationEllipses) {
+      map.addLayer({
+        id: 'observation-cov-layer',
+        type: 'fill',
+        source: 'observation-ellipses',
+        layout: {
+          'visibility': 'none'
+        },
+        paint: {
+          'fill-color': '#17becf',
+          'fill-opacity': 0.25,
+          'fill-outline-color': '#0f4c5c'
+        }
+      });
+    }
+
+    if (hasPlCircles) {
+      map.addLayer({
+        id: 'pl-circle-layer',
+        type: 'fill',
+        source: 'pl-circles',
+        layout: {
+          'visibility': 'none'
+        },
+        paint: {
+          'fill-color': '#9467bd',
+          'fill-opacity': 0.2,
+          'fill-outline-color': '#4a2352'
+        }
+      });
+    }
+
+    if (hasCmm) {
+      map.addSource('cmm-points', {
+        type: 'geojson',
+        data: cmmGeojson
+      });
+      map.addLayer({
+        id: 'cmm-points-layer',
+        type: 'circle',
+        source: 'cmm-points',
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 4,
+            16, 10
+          ],
+          'circle-color': '#ff7f0e',
+          'circle-opacity': 0.85,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1.2
+        }
+      });
+    }
+
+    if (hasFmm) {
+      map.addSource('fmm-points', {
+        type: 'geojson',
+        data: fmmGeojson
+      });
+      map.addLayer({
+        id: 'fmm-points-layer',
+        type: 'circle',
+        source: 'fmm-points',
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 4,
+            16, 10
+          ],
+          'circle-color': '#2ca02c',
+          'circle-opacity': 0.85,
+          'circle-stroke-color': '#ffffff',
+          'circle-stroke-width': 1.2
+        }
+      });
+    }
+
+    const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
+
+    function formatNumber(value, digits = 4) {
+      if (value === null || value === undefined || Number.isNaN(value)) {
+        return 'N/A';
+      }
+      return Number(value).toFixed(digits);
+    }
+
+    function formatTimestamp(rawValue) {
+      if (!rawValue) {
+        return 'N/A';
+      }
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) {
+        return rawValue;
+      }
+      return numeric.toFixed(3);
+    }
+
+    function buildPopupHTML(props) {
+      const kind = props.kind || '';
+      if (kind === 'cmm_point' || kind === 'fmm_point') {
+        const label = kind === 'cmm_point' ? 'CMM' : 'FMM';
+        return '<strong>' + label + ' ID: ' + props.id + '</strong><br/>' +
+          'Seq: ' + props.seq + '<br/>' +
+          'Timestamp: ' + formatTimestamp(props.timestamp_raw) + '<br/>' +
+          'Error: ' + formatNumber(props.error, 3) + '<br/>' +
+          'EP: ' + formatNumber(props.ep, 6) + '<br/>' +
+          'TP: ' + formatNumber(props.tp, 6) + '<br/>' +
+          'CUMU: ' + formatNumber(props.cumu, 6);
+      }
+      if (kind === 'ground_truth_point') {
+        return '<strong>Ground Truth ID: ' + props.id + '</strong><br/>' +
+          'Seq: ' + props.seq + '<br/>' +
+          'Timestamp: ' + formatTimestamp(props.timestamp_raw);
+      }
+      if (kind === 'ground_edge') {
+        return '<strong>Ground Truth Edge</strong><br/>' +
+          'Trajectory: ' + props.id + '<br/>' +
+          'Edge ID: ' + props.edge_id + '<br/>' +
+          'Order: ' + props.seq;
+      }
+      if (kind === 'observation_point' || kind === 'observation_cov') {
+        const label = kind === 'observation_point' ? 'Observation' : 'Observation Ellipse';
+        return '<strong>' + label + ' ID: ' + props.id + '</strong><br/>' +
+          'Seq: ' + props.seq + '<br/>' +
+          'Timestamp: ' + formatTimestamp(props.timestamp_raw) + '<br/>' +
+          'PL: ' + formatNumber(props.pl, 3) + '<br/>' +
+          'sdN: ' + formatNumber(props.sdn, 6) + '<br/>' +
+          'sdE: ' + formatNumber(props.sde, 6) + '<br/>' +
+          'sdNE: ' + formatNumber(props.sdne, 6);
+      }
+      if (kind === 'pl_circle') {
+        return '<strong>Protection Level</strong><br/>' +
+          'ID: ' + props.id + '<br/>' +
+          'Seq: ' + props.seq + '<br/>' +
+          'Timestamp: ' + formatTimestamp(props.timestamp_raw) + '<br/>' +
+          'PL: ' + formatNumber(props.pl, 3);
+      }
+      return '<strong>Feature</strong><br/>ID: ' + props.id;
+    }
+
+    function attachHover(layerId) {
+      if (!map.getLayer(layerId)) {
+        return;
+      }
+      map.on('mouseenter', layerId, (event) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const features = event.features || [];
+        if (!features.length) {
+          return;
+        }
+        const feature = features[0];
+        popup
+          .setLngLat(feature.geometry.coordinates.slice())
+          .setHTML(buildPopupHTML(feature.properties))
+          .addTo(map);
+      });
+
+      map.on('mouseleave', layerId, () => {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+      });
+    }
+
+    attachHover('cmm-points-layer');
+    attachHover('fmm-points-layer');
+    attachHover('ground-truth-points-layer');
+    attachHover('ground-truth-edge-layer');
+
+    if (hasObservationPoints) {
+      map.on('mouseenter', 'observation-point-layer', (event) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const features = event.features || [];
+        if (!features.length) {
+          return;
+        }
+        const feature = features[0];
+        popup
+          .setLngLat(feature.geometry.coordinates.slice())
+          .setHTML(buildPopupHTML(feature.properties))
+          .addTo(map);
+
+        if (hasObservationEllipses) {
+          map.setLayoutProperty('observation-cov-layer', 'visibility', 'visible');
+          map.setFilter('observation-cov-layer', ['all', ['==', ['get', 'id'], feature.properties.id], ['==', ['get', 'seq'], feature.properties.seq]]);
+        }
+        if (hasPlCircles) {
+          map.setLayoutProperty('pl-circle-layer', 'visibility', 'visible');
+          map.setFilter('pl-circle-layer', ['all', ['==', ['get', 'id'], feature.properties.id], ['==', ['get', 'seq'], feature.properties.seq]]);
+        }
+        if (hasCmm) {
+          map.setPaintProperty('cmm-points-layer', 'circle-stroke-width', [
+            'case',
+            ['all', ['==', ['get', 'id'], feature.properties.id], ['==', ['get', 'seq'], feature.properties.seq]],
+            3,
+            1.2
+          ]);
+        }
+        if (hasFmm) {
+          map.setPaintProperty('fmm-points-layer', 'circle-stroke-width', [
+            'case',
+            ['all', ['==', ['get', 'id'], feature.properties.id], ['==', ['get', 'seq'], feature.properties.seq]],
+            3,
+            1.2
+          ]);
+        }
+      });
+
+      map.on('mouseleave', 'observation-point-layer', () => {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+        if (hasObservationEllipses) {
+          map.setLayoutProperty('observation-cov-layer', 'visibility', 'none');
+          map.setFilter('observation-cov-layer', null);
+        }
+        if (hasPlCircles) {
+          map.setLayoutProperty('pl-circle-layer', 'visibility', 'none');
+          map.setFilter('pl-circle-layer', null);
+        }
+        if (hasCmm) {
+          map.setPaintProperty('cmm-points-layer', 'circle-stroke-width', 1.2);
+        }
+        if (hasFmm) {
+          map.setPaintProperty('fmm-points-layer', 'circle-stroke-width', 1.2);
+        }
+      });
+    }
+  });
 </script>
 </body>
 </html>
-"""
+""")
+    html = template.substitute(
+        TOKEN=json.dumps(token),
+        SELECTED_IDS=json.dumps(list(selected_ids)),
+        BOUNDS=bounds_js,
+        GROUND_POINTS_GEOJSON=json.dumps(ground_truth_points_geojson),
+        GROUND_EDGES_GEOJSON=json.dumps(ground_truth_edge_geojson),
+        OBS_POINT_GEOJSON=json.dumps(observation_points_geojson),
+        OBS_ELLIPSE_GEOJSON=json.dumps(observation_ellipses_geojson),
+        PL_CIRCLE_GEOJSON=json.dumps(pl_circles_geojson),
+        CMM_GEOJSON=json.dumps(cmm_geojson),
+        FMM_GEOJSON=json.dumps(fmm_geojson),
+        IDS_LABEL=ids_label,
+        EDGE_INFO_HTML=edge_info_html,
+    )
     return html
 
 
-def main():
-    parser = argparse.ArgumentParser(description="Create a Mapbox 3D viewer for FMM map-matching results.")
-    parser.add_argument("input", help="Path to the FMM output CSV containing a 'pgeom' LINESTRING column")
-    parser.add_argument("--output", default="output/fmm_mapbox_view.html", help="HTML file to write")
-    parser.add_argument(
-        "--raw-trajectories",
-        help="CSV with original trajectories (id;original_id;geom) to overlay as point features",
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Create an interactive Mapbox viewer for CMM/FMM results alongside ground truth."
     )
-    parser.add_argument("--limit", type=int, default=5, help="Number of trajectories to include (0 means all)")
-    parser.add_argument("--token", default=os.environ.get("MAPBOX_ACCESS_TOKEN"), help="Mapbox access token (defaults to MAPBOX_ACCESS_TOKEN env var)")
+    parser.add_argument("--cmm", default="output/cmm_result.csv", help="CMM result CSV path.")
+    parser.add_argument("--fmm", default="output/fmm_result.csv", help="FMM result CSV path.")
+    parser.add_argument(
+        "--ground-truth",
+        default="input_cmm/ground_truth.csv",
+        help="Ground truth CSV path containing LINESTRING geometries.",
+    )
+    parser.add_argument(
+        "--cmm-trajectory",
+        default=DEFAULT_CMM_TRAJECTORY_CSV,
+        help="CMM trajectory CSV containing observation geometry, covariance, and protection levels.",
+    )
+    parser.add_argument(
+        "--edges-shapefile",
+        default=DEFAULT_EDGES_SHP,
+        help="Edge shapefile for reconstructing edge geometries.",
+    )
+    parser.add_argument(
+        "--edge-id-field",
+        default=None,
+        help="Field name in the edge shapefile matching edge_ids (auto-detected if omitted).",
+    )
+    parser.add_argument(
+        "--show-observation",
+        action="append",
+        help="Observation identifiers to display covariance/PL (format id or id:seq, can be repeated).",
+    )
+    parser.add_argument(
+        "--ids",
+        action="append",
+        help="Trajectory IDs to visualize. Accepts multiple --ids arguments or comma separated lists.",
+    )
+    parser.add_argument("--output", default="output/mapbox_cmm_fmm.html", help="Output HTML file.")
+    parser.add_argument(
+        "--token",
+        default=MAPBOX_DEFAULT_TOKEN,
+        help="Mapbox access token (defaults to built-in token; can be overridden).",
+    )
 
     args = parser.parse_args()
 
-    if not args.token:
-        raise SystemExit("Mapbox access token is required. Pass --token or set MAPBOX_ACCESS_TOKEN.")
+    ground_path = Path(args.ground_truth)
+    selected_ids = collect_ids(args.ids, ground_path)
+    if not selected_ids:
+        raise SystemExit("At least one trajectory ID must be provided.")
 
-    input_path = Path(args.input)
-    if not input_path.exists():
-        raise SystemExit(f"Input file not found: {input_path}")
+    bounds = initial_bounds()
+    highlight_map = parse_observation_highlights(args.show_observation)
+    if "__all__" in highlight_map:
+        highlight_map = {str(_id): None for _id in selected_ids}
 
-    features: List[Dict] = []
-    bounds = (float("inf"), float("inf"), float("-inf"), float("-inf"))
+    (
+        ground_point_features,
+        edge_sequences,
+        bounds,
+    ) = collect_ground_truth_features(
+        ground_path, selected_ids, bounds
+    )
+    edge_geometries = load_edge_geometries(Path(args.edges_shapefile), args.edge_id_field)
+    ground_edge_features, bounds = build_ground_truth_edge_features(
+        edge_sequences, edge_geometries, bounds
+    )
+    observation_point_features, observation_ellipse_features, pl_circle_features, bounds = collect_observation_features_from_cmm(
+        Path(args.cmm_trajectory), selected_ids, bounds, highlight_map
+    )
+    cmm_features, bounds = collect_point_features(Path(args.cmm), selected_ids, "cmm", bounds)
+    fmm_features, bounds = collect_point_features(Path(args.fmm), selected_ids, "fmm", bounds)
 
-    with input_path.open(newline='', encoding='utf-8') as csv_file:
-        reader = csv.DictReader(csv_file, delimiter=';')
-        for row in reader:
-            feature = build_feature(row)
-            if not feature:
-                continue
-            coords = feature["geometry"]["coordinates"]
-            bounds = update_bounds(bounds, coords)
-            features.append(feature)
-            if args.limit and len(features) >= args.limit:
-                break
+    if not (
+        ground_point_features
+        or ground_edge_features
+        or observation_point_features
+        or observation_ellipse_features
+        or pl_circle_features
+        or cmm_features
+        or fmm_features
+    ):
+        raise SystemExit("No features found for the requested IDs. Nothing to visualize.")
 
-    if not features:
-        raise SystemExit("No valid LINESTRING geometries found in the input file.")
+    ground_points_geojson = {"type": "FeatureCollection", "features": ground_point_features}
+    ground_edges_geojson = {"type": "FeatureCollection", "features": ground_edge_features}
+    observation_points_geojson = {"type": "FeatureCollection", "features": observation_point_features}
+    observation_ellipses_geojson = {"type": "FeatureCollection", "features": observation_ellipse_features}
+    pl_circles_geojson = {"type": "FeatureCollection", "features": pl_circle_features}
+    cmm_geojson = {"type": "FeatureCollection", "features": cmm_features}
+    fmm_geojson = {"type": "FeatureCollection", "features": fmm_features}
 
-    id_set: Set[str] = set()
-    for feature in features:
-        props = feature.get("properties", {})
-        feature_id = props.get("id")
-        if feature_id is not None:
-            id_set.add(str(feature_id))
-
-    raw_points_geojson: Optional[Dict] = None
-    raw_path: Optional[Path]
-    if args.raw_trajectories:
-        raw_path = Path(args.raw_trajectories)
-    else:
-        default_raw_path = Path("input/trajectory/all_2hour_data/all_2hour_data_Jan_parallel_filtered.csv")
-        raw_path = default_raw_path if default_raw_path.exists() else None
-
-    if raw_path:
-        if not raw_path.exists():
-            raise SystemExit(f"Raw trajectory file not found: {raw_path}")
-        raw_point_features, bounds = build_raw_point_features(raw_path, id_set, bounds)
-        if raw_point_features:
-            raw_points_geojson = {"type": "FeatureCollection", "features": raw_point_features}
-
-    geojson = {"type": "FeatureCollection", "features": features}
-    html = render_html(args.token, geojson, bounds, raw_points_geojson)
+    token = requires_token(args.token)
+    html = render_html(
+        token,
+        bounds,
+        selected_ids,
+        ground_points_geojson,
+        ground_edges_geojson,
+        observation_points_geojson,
+        observation_ellipses_geojson,
+        pl_circles_geojson,
+        cmm_geojson,
+        fmm_geojson,
+        edge_sequences,
+    )
 
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
-    output_path.write_text(html, encoding='utf-8')
+    output_path.write_text(html, encoding="utf-8")
     print(f"Wrote Mapbox viewer to {output_path}")
 
 

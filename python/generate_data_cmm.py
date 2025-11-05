@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -54,16 +54,17 @@ except ImportError as exc:  # pragma: no cover - import guard
 # --------------------------------------------------------------------------- #
 GEOD = Geod(ellps="WGS84")
 CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
-MIN_SIGMA_DEG = 1.0e-4       # ≈ 10.1 metres
-MAX_SIGMA_DEG = 1.4e-3       # ≈ 150.5 metres
+MIN_SIGMA_DEG = 1.0e-5       # ≈ 1.01 metres
+MAX_SIGMA_DEG = 1.4e-4       # ≈ 15.05 metres
 MIN_SIGMA_UP = 1.0           # metres (vertical)
-MAX_SIGMA_UP = 6.0           # metres (vertical)
+MAX_SIGMA_UP = 10.0           # metres (vertical)
 MAX_COVARIANCE_SAMPLING_ATTEMPTS = 64
 
 
 # Shared between worker processes after initialisation.
-ROAD_SEGMENTS: List[Tuple[np.ndarray, str, str]] = []
-NODE_TO_SEGMENTS: Dict[str, List[int]] = {}
+ROAD_SEGMENTS: List[Tuple[np.ndarray, str, str, str]] = []
+OUTGOING_SEGMENTS: Dict[str, List[int]] = {}
+INCOMING_SEGMENTS: Dict[str, List[int]] = {}
 
 
 @dataclass(frozen=True)
@@ -96,6 +97,7 @@ class TrajectoryResult:
     timestamps: List[float]
     truth_coords: List[Tuple[float, float]]
     observations: List[Observation]
+    edge_ids: List[str]
 
     @property
     def truth_wkt(self) -> str:
@@ -106,28 +108,31 @@ class TrajectoryResult:
 # Helper functions
 # --------------------------------------------------------------------------- #
 
-def _initialize_worker(segments: Sequence[Tuple[Sequence[Sequence[float]], str, str]]) -> None:
+def _initialize_worker(segments: Sequence[Tuple[Sequence[Sequence[float]], str, str, str]]) -> None:
     """Store road segments and adjacency in worker-local state."""
-    global ROAD_SEGMENTS, NODE_TO_SEGMENTS
+    global ROAD_SEGMENTS, OUTGOING_SEGMENTS, INCOMING_SEGMENTS
     ROAD_SEGMENTS = []
-    NODE_TO_SEGMENTS = {}
-    for idx, (coords, u, v) in enumerate(segments):
+    OUTGOING_SEGMENTS = {}
+    INCOMING_SEGMENTS = {}
+    for idx, (coords, u, v, edge_id) in enumerate(segments):
         arr = np.asarray(coords, dtype=float)
         src = str(u)
         dst = str(v)
-        ROAD_SEGMENTS.append((arr, src, dst))
-        NODE_TO_SEGMENTS.setdefault(src, []).append(idx)
-        NODE_TO_SEGMENTS.setdefault(dst, []).append(idx)
+        ROAD_SEGMENTS.append((arr, src, dst, edge_id))
+        OUTGOING_SEGMENTS.setdefault(src, []).append(idx)
+        INCOMING_SEGMENTS.setdefault(dst, []).append(idx)
 
 
-def _load_roads(shapefile: Path) -> List[Tuple[List[List[float]], str, str]]:
+def _load_roads(shapefile: Path) -> List[Tuple[List[List[float]], str, str, str]]:
     """Load road segments with node connectivity information."""
     gdf = gpd.read_file(shapefile)
     if "u" not in gdf.columns or "v" not in gdf.columns:
         raise ValueError("Shapefile must contain 'u' and 'v' columns for connectivity.")
 
-    segments: List[Tuple[List[List[float]], str, str]] = []
-    for _, row in gdf.iterrows():
+    id_columns = [col for col in ("fid", "id", "edge_id") if col in gdf.columns]
+
+    segments: List[Tuple[List[List[float]], str, str, str]] = []
+    for idx, row in gdf.iterrows():
         geom = row.geometry
         if geom is None or geom.is_empty:
             continue
@@ -138,12 +143,18 @@ def _load_roads(shapefile: Path) -> List[Tuple[List[List[float]], str, str]]:
         else:
             continue
 
+        if id_columns:
+            edge_identifier = row[id_columns[0]]
+        else:
+            edge_identifier = idx
+        edge_identifier_str = str(edge_identifier)
+
         u = str(row["u"])
         v = str(row["v"])
         for part in parts:
             coords = [list(coord) for coord in part.coords]
             if len(coords) >= 2:
-                segments.append((coords, u, v))
+                segments.append((coords, u, v, edge_identifier_str))
     if not segments:
         raise ValueError(f"No valid road segments found in {shapefile}")
     return segments
@@ -257,6 +268,8 @@ def _compute_protection_level(params: CovarianceParams) -> float:
 def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
     if not ROAD_SEGMENTS:
         raise RuntimeError("ROAD_SEGMENTS has not been initialised")
+    if not OUTGOING_SEGMENTS or not INCOMING_SEGMENTS:
+        raise RuntimeError("Road segment adjacency has not been initialised")
 
     rng = np.random.default_rng(config.seed)
 
@@ -274,75 +287,79 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
     def try_extend_path(path: List[List[float]],
                         start: str,
                         end: str,
-                        visited_edges: set[int]) -> Tuple[str, str, bool]:
-        choices = [("forward", end), ("backward", start)]
+                        visited_edges: set[int]) -> Tuple[str, str, bool, Optional[str], Optional[str]]:
+        choices = ["forward", "backward"]
         order = list(rng.permutation(len(choices)))
         for idx in order:
-            direction, anchor = choices[idx]
-            candidate_edges = [
-                edge_idx for edge_idx in NODE_TO_SEGMENTS.get(anchor, [])
-                if edge_idx not in visited_edges
-            ]
-            if not candidate_edges:
-                continue
-            edge_idx = int(candidate_edges[int(rng.integers(0, len(candidate_edges)))])
-            coords_edge, u, v = ROAD_SEGMENTS[edge_idx]
-
+            direction = choices[idx]
             if direction == "forward":
-                if anchor == u:
-                    new_points = coords_edge[1:]
-                    if new_points.size == 0:
-                        continue
-                    path.extend(new_points.tolist())
-                    visited_edges.add(edge_idx)
-                    return start, v, True
-                if anchor == v:
-                    new_points = coords_edge[::-1][1:]
-                    if new_points.size == 0:
-                        continue
-                    path.extend(new_points.tolist())
-                    visited_edges.add(edge_idx)
-                    return start, u, True
+                candidate_edges = [
+                    edge_idx for edge_idx in OUTGOING_SEGMENTS.get(end, [])
+                    if edge_idx not in visited_edges
+                ]
+                if not candidate_edges:
+                    continue
+                edge_idx = int(candidate_edges[int(rng.integers(0, len(candidate_edges)))])
+                coords_edge, u, v, edge_identifier = ROAD_SEGMENTS[edge_idx]
+                if u != end or coords_edge.shape[0] < 2:
+                    continue
+                new_points = coords_edge[1:]
+                if new_points.size == 0:
+                    continue
+                path.extend(new_points.tolist())
+                visited_edges.add(edge_idx)
+                return start, v, True, edge_identifier, "append"
             else:
-                if anchor == u:
-                    new_points = coords_edge[::-1][1:]
-                    if new_points.size == 0:
-                        continue
-                    path[0:0] = new_points.tolist()
-                    visited_edges.add(edge_idx)
-                    return v, end, True
-                if anchor == v:
-                    new_points = coords_edge[:-1]
-                    if new_points.size == 0:
-                        continue
-                    path[0:0] = new_points.tolist()
-                    visited_edges.add(edge_idx)
-                    return u, end, True
-        return start, end, False
+                candidate_edges = [
+                    edge_idx for edge_idx in INCOMING_SEGMENTS.get(start, [])
+                    if edge_idx not in visited_edges
+                ]
+                if not candidate_edges:
+                    continue
+                edge_idx = int(candidate_edges[int(rng.integers(0, len(candidate_edges)))])
+                coords_edge, u, v, edge_identifier = ROAD_SEGMENTS[edge_idx]
+                if v != start or coords_edge.shape[0] < 2:
+                    continue
+                new_points = coords_edge[:-1]
+                if new_points.size == 0:
+                    continue
+                path[0:0] = new_points.tolist()
+                visited_edges.add(edge_idx)
+                return u, end, True, edge_identifier, "prepend"
+        return start, end, False, None, None
 
     for _ in range(max_global_attempts):
         chosen_coords: np.ndarray | None = None
+        chosen_edges: List[str] | None = None
         seg_lengths = None
         cumulative = None
 
         for _ in range(max_attempts):
             base_idx = int(rng.integers(0, options_count))
-            base_coords, start_node, end_node = ROAD_SEGMENTS[base_idx]
+            base_coords, start_node, end_node, base_edge_id = ROAD_SEGMENTS[base_idx]
             if base_coords.shape[0] < 2:
                 continue
 
             path_coords = base_coords.tolist()
             visited_edges = {base_idx}
+            edge_sequence = [base_edge_id]
 
             current_span = segment_span(base_coords)
 
             extension_counter = 0
             while current_span < min_span_deg and extension_counter < max_extension_steps:
-                start_node, end_node, extended = try_extend_path(path_coords, start_node, end_node, visited_edges)
+                start_node, end_node, extended, new_edge_id, mode = try_extend_path(
+                    path_coords, start_node, end_node, visited_edges
+                )
                 if not extended:
                     break
                 extension_counter += 1
                 current_span = segment_span(np.asarray(path_coords, dtype=float))
+                if new_edge_id is not None and mode:
+                    if mode == "append":
+                        edge_sequence.append(new_edge_id)
+                    elif mode == "prepend":
+                        edge_sequence.insert(0, new_edge_id)
 
             if current_span < min_span_deg:
                 continue
@@ -352,11 +369,12 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             if seg_lengths_candidate.size == 0:
                 continue
             chosen_coords = candidate_arr
+            chosen_edges = edge_sequence
             seg_lengths = seg_lengths_candidate
             cumulative = np.concatenate(([0.0], np.cumsum(seg_lengths_candidate)))
             break
 
-        if chosen_coords is None or seg_lengths is None or cumulative is None:
+        if chosen_coords is None or chosen_edges is None or seg_lengths is None or cumulative is None:
             continue
 
         sample_distances = np.linspace(0.0, cumulative[-1], num=config.num_points, dtype=float)
@@ -413,6 +431,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             timestamps=timestamps,
             truth_coords=truth_coords,
             observations=observations,
+            edge_ids=chosen_edges,
         )
 
     raise RuntimeError("Unable to generate a trajectory with ≥0.1° combined longitude/latitude span.")
@@ -530,14 +549,15 @@ def _write_cmm_trajectory_csv(results: List[TrajectoryResult], destination: Path
 
 
 def _write_ground_truth_csv(results: List[TrajectoryResult], destination: Path) -> None:
-    header = ["id", "geom", "timestamp"]
+    header = ["id", "geom", "timestamp", "edge_ids"]
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8", newline="") as fh:
         writer = csv.writer(fh, delimiter=";")
         writer.writerow(header)
         for traj in sorted(results, key=lambda item: item.traj_id):
             timestamp_str = ",".join(f"{ts:.6f}" for ts in traj.timestamps)
-            writer.writerow([traj.traj_id, traj.truth_wkt, timestamp_str])
+            edge_str = ",".join(traj.edge_ids)
+            writer.writerow([traj.traj_id, traj.truth_wkt, timestamp_str, edge_str])
 
 
 def _write_ground_truth_points(results: List[TrajectoryResult], destination: Path) -> None:
@@ -577,6 +597,7 @@ def _write_metadata(results: List[TrajectoryResult], args: argparse.Namespace, d
                 "id": traj.traj_id,
                 "num_points": len(traj.truth_coords),
                 "duration": traj.timestamps[-1] - traj.timestamps[0] if len(traj.timestamps) > 1 else 0.0,
+                "edge_ids": traj.edge_ids,
             }
             for traj in sorted(results, key=lambda item: item.traj_id)
         ],

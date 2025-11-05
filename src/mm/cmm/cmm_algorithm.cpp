@@ -440,7 +440,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         const CovarianceMatrix &cov = covariances[i];
         double protection_level = protection_levels[i];
 
-        // double uncertainty = cov.get_2d_uncertainty(); uncertainty is already included in the covariance
+        // double uncertainty = cov.get_2d_uncertainty();
         // double search_radius = protection_level * config.protection_level_multiplier + uncertainty;
         double search_radius = protection_level * config.protection_level_multiplier;
 
