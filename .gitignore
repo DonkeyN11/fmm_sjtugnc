@@ -10,6 +10,7 @@ tmp/
 build_debug/
 plots/
 output_backup251104/
+input_cmm_backup251104/
 # Doc files
 
 docs/html
