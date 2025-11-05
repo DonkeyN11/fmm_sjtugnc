@@ -37,6 +37,7 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_mgeom) header += ";mgeom";
   if (config_.write_ep) header += ";ep";
   if (config_.write_tp) header += ";tp";
+  if (config_.write_trustworthiness) header += ";trustworthiness";
   if (config_.write_cumu_prob) header += ";cumu_prob";
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
@@ -140,6 +141,20 @@ void CSVMatchResultWriter::write_result(
         buf << result.opt_candidate_path[i].tp << ",";
       }
       buf << result.opt_candidate_path[N - 1].tp;
+    }
+  }
+  if (config_.write_trustworthiness) {
+    buf << ";";
+    if (!result.opt_candidate_path.empty()) {
+      int N = result.opt_candidate_path.size();
+      for (int i = 0; i < N; ++i) {
+        const auto &matched = result.opt_candidate_path[i];
+        double trust = (i == 0) ? matched.ep : matched.ep * matched.tp;
+        buf << trust;
+        if (i != N - 1) {
+          buf << ",";
+        }
+      }
     }
   }
   if (config_.write_cumu_prob) {
