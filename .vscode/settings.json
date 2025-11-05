@@ -2,5 +2,6 @@
     "chatgpt.openOnStartup": true,
     "files.associations": {
         "h3_util.hpp": "c"
-    }
+    },
+    "editor.maxTokenizationLineLength": 2000000
 }
