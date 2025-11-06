@@ -5,6 +5,7 @@
 #include "mm/fmm/ubodt.hpp"
 #include "util/util.hpp"
 
+#include <cstdint>
 #include <fstream>
 #include <stdexcept>
 #include <sys/mman.h>
@@ -195,8 +196,14 @@ std::shared_ptr<UBODT> UBODT::read_ubodt_file(const std::string &filename,
 
   // Check if it's a memory-mapped binary file by checking file content pattern
   if (UTIL::check_file_extension(filename,"bin")){
-    // Check if it's a memory-mapped format by looking at the file structure
-    if (is_mmap_binary_format(filename)) {
+    uint64_t indexed_records = 0;
+    uint64_t indexed_sources = 0;
+    uint64_t indexed_header_size = 0;
+    if (is_indexed_binary_format(filename, &indexed_records, &indexed_sources,
+                                 &indexed_header_size)) {
+      ubodt = read_ubodt_indexed_binary(filename, multiplier);
+    } else if (is_mmap_binary_format(filename)) {
+      // Check if it's a memory-mapped format by looking at the file structure
       ubodt = read_ubodt_mmap_binary(filename,multiplier);
     } else {
       ubodt = read_ubodt_binary(filename,multiplier);
@@ -374,6 +381,78 @@ std::shared_ptr<UBODT> UBODT::read_ubodt_mmap_binary(const std::string &filename
   return table;
 }
 
+std::shared_ptr<UBODT> UBODT::read_ubodt_indexed_binary(const std::string &filename,
+                                                        int multiplier) {
+  uint64_t num_records = 0;
+  uint64_t num_sources = 0;
+  uint64_t header_bytes = 0;
+  if (!is_indexed_binary_format(filename, &num_records, &num_sources, &header_bytes)) {
+    SPDLOG_CRITICAL("File {} is not recognised as indexed UBODT binary", filename);
+    throw std::runtime_error("Invalid indexed UBODT format: " + filename);
+  }
+
+  SPDLOG_INFO("Reading UBODT file (indexed binary format) from {}", filename);
+  SPDLOG_INFO("Header contains {} records and {} source buckets", num_records, num_sources);
+
+  std::ifstream ifs(filename, std::ios::binary);
+  if (!ifs.is_open()) {
+    SPDLOG_CRITICAL("Failed to open indexed UBODT file: {}", filename);
+    throw std::runtime_error("Failed to open indexed UBODT file: " + filename);
+  }
+
+  // Skip header (record count + source index)
+  ifs.seekg(static_cast<std::streamoff>(header_bytes), std::ios::beg);
+  if (!ifs.good()) {
+    SPDLOG_CRITICAL("Failed to seek to record section in {}", filename);
+    throw std::runtime_error("Indexed UBODT header corrupt: " + filename);
+  }
+
+  const size_t record_size = sizeof(NETWORK::NodeIndex) * 4 +
+                             sizeof(NETWORK::EdgeIndex) + sizeof(double);
+  if (record_size == 0) {
+    SPDLOG_CRITICAL("Unexpected zero record size while loading {}", filename);
+    throw std::runtime_error("Invalid record size for UBODT");
+  }
+
+  int buckets = (num_records > 0)
+                    ? find_prime_number(num_records / LOAD_FACTOR)
+                    : find_prime_number(1.0);
+  std::shared_ptr<UBODT> table = std::make_shared<UBODT>(buckets, multiplier);
+
+  double delta = 0.0;
+  int progress_step = 1000000;
+
+  for (uint64_t i = 0; i < num_records; ++i) {
+    Record *r = (Record *) malloc(sizeof(Record));
+    ifs.read(reinterpret_cast<char *>(&r->source), sizeof(NETWORK::NodeIndex));
+    ifs.read(reinterpret_cast<char *>(&r->target), sizeof(NETWORK::NodeIndex));
+    ifs.read(reinterpret_cast<char *>(&r->first_n), sizeof(NETWORK::NodeIndex));
+    ifs.read(reinterpret_cast<char *>(&r->prev_n), sizeof(NETWORK::NodeIndex));
+    ifs.read(reinterpret_cast<char *>(&r->next_e), sizeof(NETWORK::EdgeIndex));
+    ifs.read(reinterpret_cast<char *>(&r->cost), sizeof(double));
+
+    if (!ifs.good()) {
+      free(r);
+      SPDLOG_CRITICAL("Unexpected end of file while reading indexed UBODT {}", filename);
+      throw std::runtime_error("Indexed UBODT truncated: " + filename);
+    }
+
+    r->next = nullptr;
+    table->insert(r);
+    if (r->cost > delta) delta = r->cost;
+
+    if ((i + 1) % progress_step == 0) {
+      SPDLOG_INFO("Read rows {}", i + 1);
+    }
+  }
+
+  ifs.close();
+
+  table->update_delta(delta);
+  SPDLOG_INFO("Finish reading indexed UBODT with {} rows, delta {}", num_records, delta);
+  return table;
+}
+
 bool UBODT::is_mmap_binary_format(const std::string &filename) {
   // Open the file
   int fd = open(filename.c_str(), O_RDONLY);
@@ -420,4 +499,55 @@ bool UBODT::is_mmap_binary_format(const std::string &filename) {
 
   // If first value is reasonable (not extremely large), likely mmap format
   return first_value < 1000000; // Reasonable upper bound for node indices
+}
+
+bool UBODT::is_indexed_binary_format(const std::string &filename,
+                                     uint64_t *record_count,
+                                     uint64_t *source_count,
+                                     uint64_t *header_size) {
+  std::ifstream ifs(filename, std::ios::binary);
+  if (!ifs.is_open()) {
+    return false;
+  }
+
+  uint64_t num_records = 0;
+  uint64_t num_sources = 0;
+  ifs.read(reinterpret_cast<char *>(&num_records), sizeof(num_records));
+  ifs.read(reinterpret_cast<char *>(&num_sources), sizeof(num_sources));
+
+  if (!ifs.good()) {
+    return false;
+  }
+
+  const size_t index_entry_size = sizeof(uint32_t) + 2 * sizeof(uint64_t);
+  const size_t record_size = sizeof(NETWORK::NodeIndex) * 4 +
+                             sizeof(NETWORK::EdgeIndex) + sizeof(double);
+  const uint64_t header_bytes = sizeof(num_records) + sizeof(num_sources) +
+                                num_sources * static_cast<uint64_t>(index_entry_size);
+
+  ifs.seekg(0, std::ios::end);
+  std::streampos file_size_pos = ifs.tellg();
+  if (!ifs.good() || file_size_pos < 0) {
+    return false;
+  }
+
+  const uint64_t file_size = static_cast<uint64_t>(file_size_pos);
+  if (file_size < header_bytes) {
+    return false;
+  }
+
+  const uint64_t payload_bytes = file_size - header_bytes;
+  if (record_size == 0 || payload_bytes % record_size != 0) {
+    return false;
+  }
+
+  const uint64_t computed_records = payload_bytes / record_size;
+  if (computed_records != num_records) {
+    return false;
+  }
+
+  if (record_count) *record_count = num_records;
+  if (source_count) *source_count = num_sources;
+  if (header_size) *header_size = header_bytes;
+  return true;
 }
