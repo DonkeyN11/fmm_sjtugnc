@@ -58,6 +58,7 @@ struct MatchedCandidate {
   double tp;  /**< transition probability to previous matched candidate */
   double cumu_prob; /**< cumulative probability of the point */
   double sp_dist; /**< shortest path distance to previous matched candidate */
+  double trustworthiness; /**< combined score ep*tp (ep for first layer) */
 };
 
 /**

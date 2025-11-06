@@ -595,17 +595,6 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 
 double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
                                       double reverse_tolerance) {
-    // Handle transitions along the same edge directly, consistent with FMM logic.
-    if (ca->edge->id == cb->edge->id) {
-        if (ca->offset <= cb->offset) {
-            return cb->offset - ca->offset;
-        }
-        double reverse_limit = ca->edge->length * reverse_tolerance;
-        if (reverse_tolerance > 0 && (ca->offset - cb->offset) < reverse_limit) {
-            return 0.0;
-        }
-    }
-
     NodeIndex s = ca->edge->target;
     NodeIndex e = cb->edge->source;
     auto *r = ubodt_->look_up(s, e);

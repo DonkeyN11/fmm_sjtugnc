@@ -149,8 +149,7 @@ void CSVMatchResultWriter::write_result(
       int N = result.opt_candidate_path.size();
       for (int i = 0; i < N; ++i) {
         const auto &matched = result.opt_candidate_path[i];
-        double trust = (i == 0) ? matched.ep : matched.ep * matched.tp;
-        buf << trust;
+        buf << matched.trustworthiness;
         if (i != N - 1) {
           buf << ",";
         }

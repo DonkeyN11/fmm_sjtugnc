@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Plot frequency histograms for ep, tp, and cumulative probability columns.
+Plot frequency histograms for ep, tp, and trustworthi probability columns.
 
 Usage example:
     python analyze_eptpcumu.py output/cmm_result_rearranged.csv output/fmm_positive_rearranged.csv
@@ -26,13 +26,13 @@ import pandas as pd
 COLUMN_ALIASES: Dict[str, Sequence[str]] = {
     "ep": ("ep",),
     "tp": ("tp",),
-    "cumu": ("cumu", "cumu_prob", "cumu_probability"),
+    "trustworthiness": ("trust", "trust_prob", "trustworthiness"),
 }
 
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot ep/tp/cumu histograms from one or more rearranged CSV files.",
+        description="Plot ep/tp/trustworthiness histograms from one or more rearranged CSV files.",
     )
     parser.add_argument(
         "inputs",

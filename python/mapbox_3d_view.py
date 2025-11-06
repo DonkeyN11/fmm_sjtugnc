@@ -8,7 +8,7 @@ The script renders three datasets for the requested trajectory IDs:
   3. FMM match results (as points)
 
 Hovering over CMM/FMM points displays detailed attributes such as timestamp,
-error, ep, tp, and cumulative probability.
+error, ep, tp, and trustworthiness, cumulative probability.
 """
 
 from __future__ import annotations
@@ -190,26 +190,46 @@ def load_edge_geometries(shapefile: Path, id_field: Optional[str]) -> Dict[str, 
 
 def covariance_ellipse(
     center: Coordinate,
-    covariance: np.ndarray,
+    covariance_m: np.ndarray,
     scale: float = ELLIPSE_SCALE,
     segments: int = ELLIPSE_SEGMENTS,
 ) -> List[Coordinate]:
-    """Return polygon coordinates representing a covariance ellipse."""
+    """Return polygon coordinates representing a covariance ellipse in metres."""
+    if covariance_m.shape != (2, 2):
+        return []
     try:
-        eigenvalues, eigenvectors = np.linalg.eigh(covariance)
+        eigenvalues, eigenvectors = np.linalg.eigh(covariance_m)
     except np.linalg.LinAlgError:
         return []
     eigenvalues = np.maximum(eigenvalues, 0.0)
     radii = np.sqrt(eigenvalues) * float(scale)
-    angles = np.linspace(0.0, 2.0 * math.pi, num=segments, endpoint=False)
-    circle = np.stack((np.cos(angles), np.sin(angles)))
     transform = eigenvectors @ np.diag(radii)
+
+    lon0, lat0 = center
     coords: List[Coordinate] = []
     for idx in range(segments):
-        offset = transform @ circle[:, idx]
-        x = float(center[0] + offset[0])
-        y = float(center[1] + offset[1])
-        coords.append((x, y))
+        angle = 2.0 * math.pi * idx / segments
+        unit = np.array([math.cos(angle), math.sin(angle)])
+        offset = transform @ unit
+        dx = float(offset[0])  # metres east
+        dy = float(offset[1])  # metres north
+        if dx == 0 and dy == 0:
+            coords.append(center)
+            continue
+        distance = math.hypot(dx, dy)
+        if distance == 0:
+            coords.append(center)
+            continue
+        azimuth = math.degrees(math.atan2(dx, dy))
+        if GEOD is not None:
+            lon, lat, _ = GEOD.fwd(lon0, lat0, azimuth, distance)
+        else:
+            deg_lat = dy / 111_320.0
+            cos_lat = max(math.cos(math.radians(lat0)), 1e-6)
+            deg_lon = dx / (cos_lat * 111_320.0)
+            lon = lon0 + deg_lon
+            lat = lat0 + deg_lat
+        coords.append((lon, lat))
     if coords:
         coords.append(coords[0])
     return coords
@@ -346,6 +366,13 @@ def collect_observation_features_from_cmm(
                     continue
 
                 center = (lon, lat)
+                is_lon_lat = (-180.0 <= lon <= 180.0) and (-90.0 <= lat <= 90.0)
+                if is_lon_lat:
+                    metres_per_lat = 111_320.0
+                    metres_per_lon = max(math.cos(math.radians(lat)) * 111_320.0, 1e-6)
+                else:
+                    metres_per_lat = 1.0
+                    metres_per_lon = 1.0
                 updated_bounds = update_bounds(updated_bounds, [center])
 
                 point_features.append(
@@ -361,23 +388,24 @@ def collect_observation_features_from_cmm(
                             "sdn": sdn,
                             "sde": sde,
                             "sdne": sdne,
-                        },
-                        "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                    }
-                )
+                                },
+                                "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                            }
+                        )
 
                 cov_matrix = np.array([[sde * sde, sdne], [sdne, sdn * sdn]], dtype=float)
-                show_envelope = False
-                if highlight_active and has_highlight_for_id:
-                    seq_set = highlight_entry
-                    if seq_set is None:
-                        show_envelope = True
-                    else:
-                        show_envelope = seq in seq_set
-                # If highlight map is empty (no entries), do not render envelopes to avoid lag.
+                scaling = np.array([[metres_per_lon, 0.0], [0.0, metres_per_lat]], dtype=float)
+                cov_matrix_m = scaling @ cov_matrix @ scaling.T
 
+                show_envelope = True
+                if highlight_active:
+                    seq_set = highlight_entry
+                    if not has_highlight_for_id:
+                        show_envelope = False
+                    elif seq_set is not None:
+                        show_envelope = seq in seq_set
                 if show_envelope:
-                    ellipse_coords = covariance_ellipse(center, cov_matrix)
+                    ellipse_coords = covariance_ellipse(center, cov_matrix_m)
                     if ellipse_coords:
                         updated_bounds = update_bounds(updated_bounds, ellipse_coords)
                         ellipse_features.append(
@@ -395,12 +423,13 @@ def collect_observation_features_from_cmm(
                                     "sdne": sdne,
                                 },
                                 "geometry": {"type": "Polygon", "coordinates": [ellipse_coords]},
-                            }
-                        )
+                                }
+                            )
 
                     pl_val = to_float(pl)
                     if pl_val is not None and pl_val > 0:
-                        circle_coords = protection_level_circle(center, pl_val)
+                        radius_m = pl_val * metres_per_lat if is_lon_lat else pl_val
+                        circle_coords = protection_level_circle(center, radius_m)
                         if circle_coords:
                             updated_bounds = update_bounds(updated_bounds, circle_coords)
                             pl_circle_features.append(
@@ -522,8 +551,8 @@ def collect_ground_truth_features(
                             "ep_raw": None,
                             "tp": None,
                             "tp_raw": None,
-                            "cumu": None,
-                            "cumu_raw": None,
+                            "trustworthiness": None,
+                            "trustworthiness_raw": None,
                             "error": None,
                             "error_raw": None,
                         },
@@ -560,11 +589,15 @@ def collect_point_features(
             if not coords:
                 continue
 
+            trust_raw = row.get("trustworthiness")
+            if not trust_raw:
+                trust_raw = row.get("trustworthiness_prob", "")
+
             values_map: Dict[str, List[str]] = {
                 "timestamp": parse_value_list(row.get("timestamp", "")),
                 "ep": parse_value_list(row.get("ep", "")),
                 "tp": parse_value_list(row.get("tp", "")),
-                "cumu": parse_value_list(row.get("cumu_prob", "")),
+                "trustworthiness": parse_value_list(trust_raw),
                 "error": parse_value_list(row.get("error", "")),
             }
 
@@ -588,8 +621,8 @@ def collect_point_features(
                         "ep_raw": get_value("ep"),
                         "tp": to_float(get_value("tp")),
                         "tp_raw": get_value("tp"),
-                        "cumu": to_float(get_value("cumu")),
-                        "cumu_raw": get_value("cumu"),
+                        "trustworthiness": to_float(get_value("trustworthiness")),
+                        "trustworthiness_raw": get_value("trustworthiness"),
                         "error": to_float(get_value("error")),
                         "error_raw": get_value("error"),
                     },
@@ -873,6 +906,7 @@ def render_html(
           'fill-outline-color': '#0f4c5c'
         }
       });
+      map.setFilter('observation-cov-layer', ['==', ['get', 'id'], '__none__']);
     }
 
     if (hasPlCircles) {
@@ -889,6 +923,7 @@ def render_html(
           'fill-outline-color': '#4a2352'
         }
       });
+      map.setFilter('pl-circle-layer', ['==', ['get', 'id'], '__none__']);
     }
 
     if (hasCmm) {
@@ -911,6 +946,60 @@ def render_html(
           'circle-stroke-color': '#ffffff',
           'circle-stroke-width': 1.2
         }
+      });
+    }
+
+    if (hasObservationPoints && (hasObservationEllipses || hasPlCircles)) {
+      let highlightedKey = null;
+      function showObservationEnvelope(feature) {
+        if (!feature) return;
+        const props = feature.properties || {};
+        const id = props.id;
+        const seq = props.seq;
+        if (id === undefined || seq === undefined) return;
+        const key = id + ':' + seq;
+        if (highlightedKey === key) return;
+        highlightedKey = key;
+        if (hasObservationEllipses) {
+          map.setFilter('observation-cov-layer', ['all',
+            ['==', ['get', 'id'], id],
+            ['==', ['get', 'seq'], seq]
+          ]);
+          map.setLayoutProperty('observation-cov-layer', 'visibility', 'visible');
+        }
+        if (hasPlCircles) {
+          map.setFilter('pl-circle-layer', ['all',
+            ['==', ['get', 'id'], id],
+            ['==', ['get', 'seq'], seq]
+          ]);
+          map.setLayoutProperty('pl-circle-layer', 'visibility', 'visible');
+        }
+      }
+
+      function hideObservationEnvelope() {
+        highlightedKey = null;
+        if (hasObservationEllipses) {
+          map.setLayoutProperty('observation-cov-layer', 'visibility', 'none');
+          map.setFilter('observation-cov-layer', ['==', ['get', 'id'], '__none__']);
+        }
+        if (hasPlCircles) {
+          map.setLayoutProperty('pl-circle-layer', 'visibility', 'none');
+          map.setFilter('pl-circle-layer', ['==', ['get', 'id'], '__none__']);
+        }
+      }
+
+      map.on('mouseenter', 'observation-point-layer', () => {
+        map.getCanvas().style.cursor = 'pointer';
+      });
+      map.on('mousemove', 'observation-point-layer', (event) => {
+        if (!event.features || !event.features.length) {
+          return;
+        }
+        showObservationEnvelope(event.features[0]);
+      });
+      map.on('mouseleave', 'observation-point-layer', () => {
+        map.getCanvas().style.cursor = '';
+        hideObservationEnvelope();
       });
     }
 
@@ -967,7 +1056,7 @@ def render_html(
           'Error: ' + formatNumber(props.error, 3) + '<br/>' +
           'EP: ' + formatNumber(props.ep, 6) + '<br/>' +
           'TP: ' + formatNumber(props.tp, 6) + '<br/>' +
-          'CUMU: ' + formatNumber(props.cumu, 6);
+          'TRUSTWORTHINESS: ' + formatNumber(props.trustworthiness, 6);
       }
       if (kind === 'ground_truth_point') {
         return '<strong>Ground Truth ID: ' + props.id + '</strong><br/>' +
