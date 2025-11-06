@@ -722,12 +722,26 @@ def render_html(
   <strong>Trajectory IDs:</strong> $IDS_LABEL<br/>
   Hover layers to inspect details.
   <div id="legend">
-    <span><i style="background:#ff7f0e;"></i>CMM point</span>
-    <span><i style="background:#2ca02c;"></i>FMM point</span>
-    <span><i style="background:#17becf;"></i>Observation point</span>
-    <span><i style="background:#6a3d9a;border-radius:0;width:18px;height:3px;"></i>Ground truth edge</span>
-    <span><i style="background:#17becf;border-radius:0;width:18px;height:12px;opacity:0.4;border:1px solid #0f4c5c;"></i>Observation covariance</span>
-    <span><i style="background:#9467bd;border-radius:0;width:18px;height:12px;opacity:0.3;border:1px solid #4a2352;"></i>Protection level</span>
+    <div style="display:flex;align-items:center;margin-bottom:6px;">
+      <i style="background:#6a3d9a;border-radius:0;width:18px;height:3px;margin-right:6px;"></i>
+      Ground truth edge (always on)
+    </div>
+    <label style="display:block;margin-bottom:6px;">
+      <input type="checkbox" id="toggle-ground-truth-points" style="margin-right:6px;"/>
+      Ground truth points
+    </label>
+    <label style="display:block;margin-bottom:6px;">
+      <input type="checkbox" id="toggle-observation" style="margin-right:6px;"/>
+      Observation points (hover to reveal covariance/PL)
+    </label>
+    <label style="display:block;margin-bottom:6px;">
+      <input type="checkbox" id="toggle-cmm" style="margin-right:6px;"/>
+      CMM points
+    </label>
+    <label style="display:block;">
+      <input type="checkbox" id="toggle-fmm" style="margin-right:6px;"/>
+      FMM points
+    </label>
   </div>
   <div id="edge-info" style="margin-top:8px;">
     <strong>Edge IDs:</strong><br/>
@@ -838,6 +852,9 @@ def render_html(
         id: 'ground-truth-points-layer',
         type: 'circle',
         source: 'ground-truth-points',
+        layout: {
+          'visibility': 'none'
+        },
         paint: {
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
@@ -878,6 +895,9 @@ def render_html(
         id: 'observation-point-layer',
         type: 'circle',
         source: 'observation-points',
+        layout: {
+          'visibility': 'none'
+        },
         paint: {
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
@@ -935,6 +955,9 @@ def render_html(
         id: 'cmm-points-layer',
         type: 'circle',
         source: 'cmm-points',
+        layout: {
+          'visibility': 'none'
+        },
         paint: {
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
@@ -949,60 +972,6 @@ def render_html(
       });
     }
 
-    if (hasObservationPoints && (hasObservationEllipses || hasPlCircles)) {
-      let highlightedKey = null;
-      function showObservationEnvelope(feature) {
-        if (!feature) return;
-        const props = feature.properties || {};
-        const id = props.id;
-        const seq = props.seq;
-        if (id === undefined || seq === undefined) return;
-        const key = id + ':' + seq;
-        if (highlightedKey === key) return;
-        highlightedKey = key;
-        if (hasObservationEllipses) {
-          map.setFilter('observation-cov-layer', ['all',
-            ['==', ['get', 'id'], id],
-            ['==', ['get', 'seq'], seq]
-          ]);
-          map.setLayoutProperty('observation-cov-layer', 'visibility', 'visible');
-        }
-        if (hasPlCircles) {
-          map.setFilter('pl-circle-layer', ['all',
-            ['==', ['get', 'id'], id],
-            ['==', ['get', 'seq'], seq]
-          ]);
-          map.setLayoutProperty('pl-circle-layer', 'visibility', 'visible');
-        }
-      }
-
-      function hideObservationEnvelope() {
-        highlightedKey = null;
-        if (hasObservationEllipses) {
-          map.setLayoutProperty('observation-cov-layer', 'visibility', 'none');
-          map.setFilter('observation-cov-layer', ['==', ['get', 'id'], '__none__']);
-        }
-        if (hasPlCircles) {
-          map.setLayoutProperty('pl-circle-layer', 'visibility', 'none');
-          map.setFilter('pl-circle-layer', ['==', ['get', 'id'], '__none__']);
-        }
-      }
-
-      map.on('mouseenter', 'observation-point-layer', () => {
-        map.getCanvas().style.cursor = 'pointer';
-      });
-      map.on('mousemove', 'observation-point-layer', (event) => {
-        if (!event.features || !event.features.length) {
-          return;
-        }
-        showObservationEnvelope(event.features[0]);
-      });
-      map.on('mouseleave', 'observation-point-layer', () => {
-        map.getCanvas().style.cursor = '';
-        hideObservationEnvelope();
-      });
-    }
-
     if (hasFmm) {
       map.addSource('fmm-points', {
         type: 'geojson',
@@ -1012,6 +981,9 @@ def render_html(
         id: 'fmm-points-layer',
         type: 'circle',
         source: 'fmm-points',
+        layout: {
+          'visibility': 'none'
+        },
         paint: {
           'circle-radius': [
             'interpolate', ['linear'], ['zoom'],
@@ -1117,6 +1089,99 @@ def render_html(
     attachHover('ground-truth-points-layer');
     attachHover('ground-truth-edge-layer');
 
+    const toggleCmm = document.getElementById('toggle-cmm');
+    const toggleFmm = document.getElementById('toggle-fmm');
+    const toggleObservation = document.getElementById('toggle-observation');
+    const toggleGroundTruthPoints = document.getElementById('toggle-ground-truth-points');
+
+    function setLayerVisibility(layerId, visible) {
+      if (!map.getLayer(layerId)) return;
+      map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+    }
+
+    let highlightedKey = null;
+
+    function hideObservationEnvelope() {
+      highlightedKey = null;
+      if (hasObservationEllipses) {
+        map.setLayoutProperty('observation-cov-layer', 'visibility', 'none');
+        map.setFilter('observation-cov-layer', ['==', ['get', 'id'], '__none__']);
+      }
+      if (hasPlCircles) {
+        map.setLayoutProperty('pl-circle-layer', 'visibility', 'none');
+        map.setFilter('pl-circle-layer', ['==', ['get', 'id'], '__none__']);
+      }
+      if (hasCmm) {
+        map.setPaintProperty('cmm-points-layer', 'circle-stroke-width', 1.2);
+      }
+      if (hasFmm) {
+        map.setPaintProperty('fmm-points-layer', 'circle-stroke-width', 1.2);
+      }
+    }
+
+    function showObservationEnvelope(feature) {
+      if (!feature) return;
+      const props = feature.properties || {};
+      const id = props.id;
+      const seq = props.seq;
+      if (id === undefined || seq === undefined) return;
+      const key = id + ':' + seq;
+      if (highlightedKey === key) return;
+      highlightedKey = key;
+      if (hasObservationEllipses) {
+        map.setFilter('observation-cov-layer', ['all',
+          ['==', ['get', 'id'], id],
+          ['==', ['get', 'seq'], seq]
+        ]);
+        map.setLayoutProperty('observation-cov-layer', 'visibility', 'visible');
+      }
+      if (hasPlCircles) {
+        map.setFilter('pl-circle-layer', ['all',
+          ['==', ['get', 'id'], id],
+          ['==', ['get', 'seq'], seq]
+        ]);
+        map.setLayoutProperty('pl-circle-layer', 'visibility', 'visible');
+      }
+    }
+
+    if (toggleCmm && hasCmm) {
+      toggleCmm.addEventListener('change', (event) => {
+        const visible = event.target.checked;
+        setLayerVisibility('cmm-points-layer', visible);
+      });
+      setLayerVisibility('cmm-points-layer', toggleCmm.checked);
+    }
+
+    if (toggleFmm && hasFmm) {
+      toggleFmm.addEventListener('change', (event) => {
+        const visible = event.target.checked;
+        setLayerVisibility('fmm-points-layer', visible);
+      });
+      setLayerVisibility('fmm-points-layer', toggleFmm.checked);
+    }
+
+    if (toggleObservation) {
+      toggleObservation.addEventListener('change', (event) => {
+        const visible = event.target.checked;
+        setLayerVisibility('observation-point-layer', visible);
+        if (!visible) {
+          hideObservationEnvelope();
+        }
+      });
+      setLayerVisibility('observation-point-layer', toggleObservation.checked);
+      if (!toggleObservation.checked) {
+        hideObservationEnvelope();
+      }
+    }
+
+    if (toggleGroundTruthPoints && hasGroundTruthPoints) {
+      toggleGroundTruthPoints.addEventListener('change', (event) => {
+        const visible = event.target.checked;
+        setLayerVisibility('ground-truth-points-layer', visible);
+      });
+      setLayerVisibility('ground-truth-points-layer', toggleGroundTruthPoints.checked);
+    }
+
     if (hasObservationPoints) {
       map.on('mouseenter', 'observation-point-layer', (event) => {
         map.getCanvas().style.cursor = 'pointer';
@@ -1129,15 +1194,7 @@ def render_html(
           .setLngLat(feature.geometry.coordinates.slice())
           .setHTML(buildPopupHTML(feature.properties))
           .addTo(map);
-
-        if (hasObservationEllipses) {
-          map.setLayoutProperty('observation-cov-layer', 'visibility', 'visible');
-          map.setFilter('observation-cov-layer', ['all', ['==', ['get', 'id'], feature.properties.id], ['==', ['get', 'seq'], feature.properties.seq]]);
-        }
-        if (hasPlCircles) {
-          map.setLayoutProperty('pl-circle-layer', 'visibility', 'visible');
-          map.setFilter('pl-circle-layer', ['all', ['==', ['get', 'id'], feature.properties.id], ['==', ['get', 'seq'], feature.properties.seq]]);
-        }
+        showObservationEnvelope(feature);
         if (hasCmm) {
           map.setPaintProperty('cmm-points-layer', 'circle-stroke-width', [
             'case',
@@ -1159,20 +1216,7 @@ def render_html(
       map.on('mouseleave', 'observation-point-layer', () => {
         map.getCanvas().style.cursor = '';
         popup.remove();
-        if (hasObservationEllipses) {
-          map.setLayoutProperty('observation-cov-layer', 'visibility', 'none');
-          map.setFilter('observation-cov-layer', null);
-        }
-        if (hasPlCircles) {
-          map.setLayoutProperty('pl-circle-layer', 'visibility', 'none');
-          map.setFilter('pl-circle-layer', null);
-        }
-        if (hasCmm) {
-          map.setPaintProperty('cmm-points-layer', 'circle-stroke-width', 1.2);
-        }
-        if (hasFmm) {
-          map.setPaintProperty('fmm-points-layer', 'circle-stroke-width', 1.2);
-        }
+        hideObservationEnvelope();
       });
     }
   });
