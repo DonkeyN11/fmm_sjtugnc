@@ -148,7 +148,7 @@ MatchResult STMATCH::match_traj(const Trajectory &traj,
                  matched_candidate_path.begin(),
                  [](const TGNode *a) {
     return MatchedCandidate{
-      *(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist
+      *(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist, a->trustworthiness
     };
   });
   O_Path opath(tg_opath.size());
@@ -307,6 +307,7 @@ void STMATCH::update_layer(int level, TGLayer *la_ptr, TGLayer *lb_ptr,
         iter_b->prev = &(*iter_a);
         iter_b->sp_dist = distances[i];
         iter_b->tp = tp;
+        iter_b->trustworthiness = (tp > 0) ? iter_b->ep * tp : 0;
       }
     }
   }

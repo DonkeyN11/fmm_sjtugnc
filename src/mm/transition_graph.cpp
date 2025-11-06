@@ -26,7 +26,7 @@ TransitionGraph::TransitionGraph(const Traj_Candidates &tc, double gps_error){
     for (auto iter = cs->begin(); iter!=cs->end(); ++iter) {
       double ep = calc_ep(iter->dist,gps_error);
       layer.push_back(TGNode{&(*iter),nullptr,ep,0,
-        -std::numeric_limits<double>::infinity(),0});
+        -std::numeric_limits<double>::infinity(),0,0});
     }
     layers.push_back(layer);
   }
@@ -60,7 +60,7 @@ TransitionGraph::TransitionGraph(const Traj_Candidates &tc,
         ep = std::max(0.0, (*probabilities)[j]);
       }
       layer.push_back(TGNode{&point_candidates[j], nullptr, ep, 0,
-                             -std::numeric_limits<double>::infinity(), 0});
+                             -std::numeric_limits<double>::infinity(), 0, 0});
     }
     layers.push_back(layer);
   }
@@ -84,8 +84,10 @@ void TransitionGraph::reset_layer(TGLayer *layer){
   for (auto iter=layer->begin(); iter!=layer->end(); ++iter) {
     if (iter->ep > 0) {
       iter->cumu_prob = std::log(iter->ep);
+      iter->trustworthiness = iter->ep;
     } else {
       iter->cumu_prob = -std::numeric_limits<double>::infinity();
+      iter->trustworthiness = 0;
     }
     iter->prev = nullptr;
     iter->tp = 0;

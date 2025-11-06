@@ -34,6 +34,7 @@ struct TGNode {
   double cumu_prob; /**< current node's accumulative probability */
   double sp_dist; /**< shorest path distance from previous optimal
                        candidate to current node */
+  double trustworthiness; /**< heuristic score combining emission and transition */
 };
 
 /**
