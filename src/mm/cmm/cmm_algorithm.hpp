@@ -109,12 +109,16 @@ struct CovarianceMapMatchConfig {
      */
     CovarianceMapMatchConfig(int k_arg = 8, int min_candidates_arg = 3,
                            double protection_level_multiplier_arg = 1.0,
-                           double reverse_tolerance = 0.0);
+                           double reverse_tolerance = 0.0,
+                           bool normalized_arg = true,
+                           bool use_mahalanobis_candidates_arg = true);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
     double protection_level_multiplier; /**< Multiplier for protection level */
     double reverse_tolerance;       /**< Reverse movement tolerance */
+    bool normalized;                /**< Whether to normalize emission probabilities */
+    bool use_mahalanobis_candidates; /**< Whether to use Mahalanobis-based candidate search */
 
     /**
      * Check if the configuration is valid or not
