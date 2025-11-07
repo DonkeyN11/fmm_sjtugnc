@@ -19,6 +19,7 @@
 #include <sstream>
 #include <stdexcept>
 #include <unordered_map>
+#include <unordered_set>
 #include <optional>
 #include <limits>
 #include <memory>
@@ -143,6 +144,107 @@ bool parse_covariance_array(const std::string &json_text,
         return false;
     }
     return true;
+}
+
+double compute_mahalanobis_sq(const Matrix2d &cov_inv, double dx, double dy) {
+    return cov_inv.m[0][0] * dx * dx +
+           2 * cov_inv.m[0][1] * dx * dy +
+           cov_inv.m[1][1] * dy * dy;
+}
+
+double compute_euclidean_sq(double dx, double dy) {
+    return dx * dx + dy * dy;
+}
+
+struct CandidateWithMetric {
+    Candidate candidate;
+    double metric;
+};
+
+std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
+                                                         const CORE::Point &obs_point,
+                                                         bool valid_covariance,
+                                                         const Matrix2d &cov_inv,
+                                                         NodeIndex *next_candidate_index) {
+    if (edge == nullptr || edge->geom.get_num_points() < 2) {
+        return std::nullopt;
+    }
+
+    const double obs_x = boost::geometry::get<0>(obs_point);
+    const double obs_y = boost::geometry::get<1>(obs_point);
+
+    double best_metric = std::numeric_limits<double>::infinity();
+    double best_eucl_sq = std::numeric_limits<double>::infinity();
+    double best_offset = 0.0;
+    CORE::Point best_point;
+    bool found = false;
+
+    const FMM::CORE::LineString &geom = edge->geom;
+    const int num_points = geom.get_num_points();
+    double accumulated = 0.0;
+
+    for (int seg = 0; seg < num_points - 1; ++seg) {
+        double sx = geom.get_x(seg);
+        double sy = geom.get_y(seg);
+        double tx = geom.get_x(seg + 1);
+        double ty = geom.get_y(seg + 1);
+        double dx = tx - sx;
+        double dy = ty - sy;
+        double seg_len_sq = dx * dx + dy * dy;
+        if (seg_len_sq <= 0) {
+            continue;
+        }
+        double seg_len = std::sqrt(seg_len_sq);
+        double obs_minus_start_x = obs_x - sx;
+        double obs_minus_start_y = obs_y - sy;
+        double t = 0.0;
+        if (valid_covariance) {
+            double numerator = dx * (cov_inv.m[0][0] * obs_minus_start_x + cov_inv.m[0][1] * obs_minus_start_y) +
+                               dy * (cov_inv.m[1][0] * obs_minus_start_x + cov_inv.m[1][1] * obs_minus_start_y);
+            double denominator = dx * (cov_inv.m[0][0] * dx + cov_inv.m[0][1] * dy) +
+                                 dy * (cov_inv.m[1][0] * dx + cov_inv.m[1][1] * dy);
+            if (std::abs(denominator) < 1e-12) {
+                t = (obs_minus_start_x * dx + obs_minus_start_y * dy) / seg_len_sq;
+            } else {
+                t = numerator / denominator;
+            }
+        } else {
+            t = (obs_minus_start_x * dx + obs_minus_start_y * dy) / seg_len_sq;
+        }
+        if (t < 0.0) t = 0.0;
+        if (t > 1.0) t = 1.0;
+
+        double px = sx + t * dx;
+        double py = sy + t * dy;
+        double diff_x = obs_x - px;
+        double diff_y = obs_y - py;
+        double eucl_sq = compute_euclidean_sq(diff_x, diff_y);
+        double metric = valid_covariance ? compute_mahalanobis_sq(cov_inv, diff_x, diff_y) : eucl_sq;
+
+        if (metric < best_metric) {
+            boost::geometry::set<0>(best_point, px);
+            boost::geometry::set<1>(best_point, py);
+            best_metric = metric;
+            best_eucl_sq = eucl_sq;
+            best_offset = accumulated + t * seg_len;
+            found = true;
+        }
+        accumulated += seg_len;
+    }
+
+    if (!found) {
+        return std::nullopt;
+    }
+
+    Candidate candidate{};
+    candidate.index = (*next_candidate_index)++;
+    candidate.edge = edge;
+    candidate.offset = best_offset;
+    candidate.dist = std::sqrt(std::max(best_eucl_sq, 0.0));
+    candidate.point = best_point;
+
+    CandidateWithMetric result{candidate, best_metric};
+    return result;
 }
 
 Matrix2d multiply_matrices(const Matrix2d &lhs, const Matrix2d &rhs) {
@@ -332,16 +434,20 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
 // Implementation of CovarianceMapMatchConfig
 CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates_arg,
                                                    double protection_level_multiplier_arg,
-                                                   double reverse_tolerance)
+                                                   double reverse_tolerance,
+                                                   bool normalized_arg,
+                                                   bool use_mahalanobis_candidates_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
-      reverse_tolerance(reverse_tolerance) {
+      reverse_tolerance(reverse_tolerance),
+      normalized(normalized_arg),
+      use_mahalanobis_candidates(use_mahalanobis_candidates_arg) {
 }
 
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
-    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {}",
-                k, min_candidates, protection_level_multiplier, reverse_tolerance);
+    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {}",
+                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates);
 }
 
 CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
@@ -350,7 +456,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     int min_candidates = xml_data.get("config.parameters.min_candidates", 3);
     double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 1.0);
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance};
+    bool normalized = xml_data.get("config.parameters.normalized", true);
+    bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates};
 }
 
 CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
@@ -359,7 +467,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     int min_candidates = arg_data["min_candidates"].as<int>();
     double protection_level_multiplier = arg_data["protection_level_multiplier"].as<double>();
     double reverse_tolerance = arg_data["reverse_tolerance"].as<double>();
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance};
+    bool normalized = arg_data["normalized"].as<bool>();
+    bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates};
 }
 
 void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
@@ -371,7 +481,11 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("protection_level_multiplier", "Multiplier for protection level",
          cxxopts::value<double>()->default_value("2.0"))
         ("reverse_tolerance", "Ratio of reverse movement allowed",
-         cxxopts::value<double>()->default_value("0.0"));
+         cxxopts::value<double>()->default_value("0.0"))
+        ("normalized", "Normalize emission probabilities",
+         cxxopts::value<bool>()->default_value("true"))
+        ("use_mahalanobis", "Use Mahalanobis-based candidate search",
+         cxxopts::value<bool>()->default_value("true"));
 }
 
 void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
@@ -379,6 +493,8 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--min_candidates (optional) <int>: Minimum number of candidates to keep (3)\n";
     oss << "--protection_level_multiplier (optional) <double>: Multiplier for protection level (1.0)\n";
     oss << "--reverse_tolerance (optional) <double>: proportion of reverse movement allowed on an edge\n";
+    oss << "--normalized (optional) <bool>: whether to normalize emission probabilities (true)\n";
+    oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
 }
 
 bool CovarianceMapMatchConfig::validate() const {
@@ -434,6 +550,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
     int num_points = geom.get_num_points();
     result.candidates.reserve(num_points);
     result.emission_probabilities.reserve(num_points);
+    NETWORK::NodeIndex next_candidate_index = network_.get_node_count();
 
     for (int i = 0; i < num_points; ++i) {
         CORE::Point point = geom.get_point(i);
@@ -447,11 +564,6 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         SPDLOG_TRACE("Point {}: protection_level={}, search_radius={}",
                      i, protection_level, search_radius);
 
-        CORE::LineString single_point_geom;
-        single_point_geom.add_point(point);
-        Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
-        Point_Candidates point_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
-
         Matrix2d cov_mat = cov.to_2d_matrix();
         double det = cov_mat.determinant();
         bool valid_covariance = det > 0;
@@ -460,73 +572,175 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             cov_inv = cov_mat.inverse();
         }
 
-        Point_Candidates selected_candidates;
-        std::vector<double> raw_probabilities;
-        selected_candidates.reserve(point_candidates.size());
-        raw_probabilities.reserve(point_candidates.size());
-
         double obs_x = boost::geometry::get<0>(point);
         double obs_y = boost::geometry::get<1>(point);
 
-        for (const Candidate &cand : point_candidates) {
-            double cand_x = boost::geometry::get<0>(cand.point);
-            double cand_y = boost::geometry::get<1>(cand.point);
-            double dx = obs_x - cand_x;
-            double dy = obs_y - cand_y;
+        Point_Candidates selected_candidates;
+        std::vector<double> raw_probabilities;
 
-            double probability = 0.0;
-            if (valid_covariance) {
-                double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
-                                             2 * cov_inv.m[0][1] * dx * dy +
-                                             cov_inv.m[1][1] * dy * dy;
-                double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
-                probability = normalization * std::exp(-0.5 * mahalanobis_dist_sq);
+        if (config.use_mahalanobis_candidates) {
+            bool radius_expanded = false;
+
+            while (true) {
+                CORE::LineString single_point_geom;
+                single_point_geom.add_point(point);
+                Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
+                Point_Candidates base_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
+
+                std::vector<NETWORK::Edge *> edges_to_consider;
+                edges_to_consider.reserve(base_candidates.size());
+                std::unordered_set<NETWORK::EdgeIndex> seen_edges;
+                for (const Candidate &seed : base_candidates) {
+                    if (seed.edge == nullptr) {
+                        continue;
+                    }
+                    NETWORK::EdgeIndex edge_idx = seed.edge->index;
+                    if (seen_edges.insert(edge_idx).second) {
+                        edges_to_consider.push_back(seed.edge);
+                    }
+                }
+
+                std::vector<CandidateWithMetric> candidate_pool;
+                candidate_pool.reserve(edges_to_consider.size() * 3);
+                double search_radius_sq = search_radius * search_radius;
+
+                for (NETWORK::Edge *edge : edges_to_consider) {
+                    if (auto edge_candidate = create_edge_candidate(edge, point, valid_covariance, cov_inv, &next_candidate_index)) {
+                        candidate_pool.push_back(*edge_candidate);
+                    }
+
+                    auto process_node = [&](NETWORK::NodeIndex node_idx, bool use_target) {
+                        const CORE::Point &node_point = network_.get_vertex_point(node_idx);
+                        double dx = obs_x - boost::geometry::get<0>(node_point);
+                        double dy = obs_y - boost::geometry::get<1>(node_point);
+                        double eucl_sq = compute_euclidean_sq(dx, dy);
+                        if (search_radius > 0 && eucl_sq > search_radius_sq) {
+                            return;
+                        }
+                        double metric = valid_covariance ? compute_mahalanobis_sq(cov_inv, dx, dy) : eucl_sq;
+                        Candidate candidate{};
+                        candidate.index = next_candidate_index++;
+                        candidate.edge = edge;
+                        candidate.offset = use_target ? edge->length : 0.0;
+                        candidate.dist = std::sqrt(eucl_sq);
+                        candidate.point = node_point;
+                        candidate_pool.push_back(CandidateWithMetric{candidate, metric});
+                    };
+
+                    process_node(edge->source, false);
+                    process_node(edge->target, true);
+                }
+
+                const size_t desired_candidates = std::max(config.k, config.min_candidates);
+                if (!candidate_pool.empty()) {
+                    std::sort(candidate_pool.begin(), candidate_pool.end(),
+                              [](const CandidateWithMetric &lhs, const CandidateWithMetric &rhs) {
+                                  return lhs.metric < rhs.metric;
+                              });
+                    if (candidate_pool.size() > desired_candidates) {
+                        candidate_pool.resize(desired_candidates);
+                    }
+                }
+
+                selected_candidates.clear();
+                raw_probabilities.clear();
+                selected_candidates.reserve(candidate_pool.size());
+                raw_probabilities.reserve(candidate_pool.size());
+
+                for (const auto &entry : candidate_pool) {
+                    selected_candidates.push_back(entry.candidate);
+                    double probability = 0.0;
+                    if (valid_covariance) {
+                        double dx = obs_x - boost::geometry::get<0>(entry.candidate.point);
+                        double dy = obs_y - boost::geometry::get<1>(entry.candidate.point);
+                        double mahal_sq = compute_mahalanobis_sq(cov_inv, dx, dy);
+                        double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
+                        probability = normalization * std::exp(-0.5 * mahal_sq);
+                    }
+                    raw_probabilities.push_back(probability);
+                }
+
+                if (selected_candidates.size() >= static_cast<size_t>(config.min_candidates) ||
+                    edges_to_consider.empty() || radius_expanded) {
+                    break;
+                }
+
+                search_radius *= 2.0;
+                radius_expanded = true;
+            }
+        } else {
+            CORE::LineString single_point_geom;
+            single_point_geom.add_point(point);
+            Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
+            Point_Candidates point_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
+
+            selected_candidates.reserve(point_candidates.size());
+            raw_probabilities.reserve(point_candidates.size());
+
+            for (const Candidate &cand : point_candidates) {
+                double cand_x = boost::geometry::get<0>(cand.point);
+                double cand_y = boost::geometry::get<1>(cand.point);
+                double dx = obs_x - cand_x;
+                double dy = obs_y - cand_y;
+
+                double probability = 0.0;
+                if (valid_covariance) {
+                    double mahalanobis_dist_sq = compute_mahalanobis_sq(cov_inv, dx, dy);
+                    double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
+                    probability = normalization * std::exp(-0.5 * mahalanobis_dist_sq);
+                }
+
+                selected_candidates.push_back(cand);
+                raw_probabilities.push_back(probability);
             }
 
-            selected_candidates.push_back(cand);
-            raw_probabilities.push_back(probability);
-        }
+            if (selected_candidates.size() < static_cast<size_t>(config.min_candidates) && !point_candidates.empty()) {
+                Point_Candidates sorted_candidates = point_candidates;
+                std::sort(sorted_candidates.begin(), sorted_candidates.end(),
+                          [](const Candidate &a, const Candidate &b) {
+                              return a.dist < b.dist;
+                          });
 
-        if (selected_candidates.size() < static_cast<size_t>(config.min_candidates) && !point_candidates.empty()) {
-            Point_Candidates sorted_candidates = point_candidates;
-            std::sort(sorted_candidates.begin(), sorted_candidates.end(),
-                      [](const Candidate &a, const Candidate &b) {
-                          return a.dist < b.dist;
-                      });
-
-            size_t keep_count = std::min(static_cast<size_t>(config.min_candidates), sorted_candidates.size());
-            for (size_t idx = 0; idx < keep_count; ++idx) {
-                const Candidate &candidate = sorted_candidates[idx];
-                auto already_selected = std::any_of(selected_candidates.begin(), selected_candidates.end(),
-                                                    [&candidate](const Candidate &existing) {
-                                                        return existing.index == candidate.index &&
-                                                               existing.edge == candidate.edge &&
-                                                               existing.offset == candidate.offset;
-                                                    });
-                if (!already_selected) {
-                    selected_candidates.push_back(candidate);
-                    raw_probabilities.push_back(0.0);
+                size_t keep_count = std::min(static_cast<size_t>(config.min_candidates), sorted_candidates.size());
+                for (size_t idx = 0; idx < keep_count; ++idx) {
+                    const Candidate &candidate = sorted_candidates[idx];
+                    auto already_selected = std::any_of(selected_candidates.begin(), selected_candidates.end(),
+                                                        [&candidate](const Candidate &existing) {
+                                                            return existing.index == candidate.index &&
+                                                                   existing.edge == candidate.edge &&
+                                                                   existing.offset == candidate.offset;
+                                                        });
+                    if (!already_selected) {
+                        selected_candidates.push_back(candidate);
+                        raw_probabilities.push_back(0.0);
+                    }
                 }
             }
         }
 
-        double prob_sum = std::accumulate(raw_probabilities.begin(), raw_probabilities.end(), 0.0);
-        std::vector<double> normalized_probabilities;
-        normalized_probabilities.reserve(raw_probabilities.size());
+        std::vector<double> emission_probs;
+        if (config.normalized) {
+            double prob_sum = std::accumulate(raw_probabilities.begin(), raw_probabilities.end(), 0.0);
+            std::vector<double> normalized_probabilities;
+            normalized_probabilities.reserve(raw_probabilities.size());
 
-        if (prob_sum > 0.0) {
-            for (double prob : raw_probabilities) {
-                normalized_probabilities.push_back(prob / prob_sum);
+            if (prob_sum > 0.0) {
+                for (double prob : raw_probabilities) {
+                    normalized_probabilities.push_back(prob / prob_sum);
+                }
+            } else if (!raw_probabilities.empty()) {
+                double uniform_prob = 1.0 / raw_probabilities.size();
+                normalized_probabilities.assign(raw_probabilities.size(), uniform_prob);
+                SPDLOG_WARN("Point {}: covariance determinant non-positive or no candidates within PL, using uniform emission", i);
             }
-        } else if (!raw_probabilities.empty()) {
-            double uniform_prob = 1.0 / raw_probabilities.size();
-            normalized_probabilities.assign(raw_probabilities.size(), uniform_prob);
-            SPDLOG_WARN("Point {}: covariance determinant non-positive or no candidates within PL, using uniform emission", i);
+            emission_probs = std::move(normalized_probabilities);
+        } else {
+            emission_probs = raw_probabilities;
         }
 
         SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
         result.candidates.push_back(std::move(selected_candidates));
-        result.emission_probabilities.push_back(std::move(normalized_probabilities));
+        result.emission_probabilities.push_back(std::move(emission_probs));
     }
 
     SPDLOG_DEBUG("Candidate search completed");
