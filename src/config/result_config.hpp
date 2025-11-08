@@ -57,6 +57,7 @@ struct OutputConfig {
                                   will be exported */
   bool write_timestamp = false; /**< if true, timestamp (original timestamp
                                     of each GPS point) will be exported */
+  bool write_candidates = false; /**< if true, emit all candidates per observation */
 };
 
 /**

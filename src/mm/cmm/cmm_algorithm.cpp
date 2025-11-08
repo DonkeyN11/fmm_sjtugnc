@@ -767,6 +767,22 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     SPDLOG_DEBUG("Trajectory candidate {}", tc);
     if (tc.empty()) return MatchResult{};
 
+    std::vector<std::vector<CandidateEmission>> candidate_details(tc.size());
+    for (size_t idx = 0; idx < tc.size(); ++idx) {
+        const Point_Candidates &cand_list = tc[idx];
+        const std::vector<double> *prob_list = (idx < emission_probabilities.size())
+                                               ? &emission_probabilities[idx]
+                                               : nullptr;
+        candidate_details[idx].reserve(cand_list.size());
+        for (size_t j = 0; j < cand_list.size(); ++j) {
+            CandidateEmission ce;
+            ce.x = boost::geometry::get<0>(cand_list[j].point);
+            ce.y = boost::geometry::get<1>(cand_list[j].point);
+            ce.ep = (prob_list && j < prob_list->size()) ? (*prob_list)[j] : 0.0;
+            candidate_details[idx].push_back(ce);
+        }
+    }
+
     SPDLOG_DEBUG("Generate transition graph");
     TransitionGraph tg(tc, emission_probabilities);
 
@@ -803,8 +819,10 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     SPDLOG_DEBUG("Complete path is {}", cpath);
 
     LineString mgeom = network_.complete_path_to_geometry(traj.geom, cpath);
-    return MatchResult{
+    MatchResult match_result{
         traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
+    match_result.candidate_details = std::move(candidate_details);
+    return match_result;
 }
 
 double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,

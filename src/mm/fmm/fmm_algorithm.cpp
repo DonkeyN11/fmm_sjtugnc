@@ -89,6 +89,18 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
     traj.geom, config.k, config.radius);
   SPDLOG_DEBUG("Trajectory candidate {}", tc);
   if (tc.empty()) return MatchResult{};
+  std::vector<std::vector<CandidateEmission>> candidate_details(tc.size());
+  for (size_t idx = 0; idx < tc.size(); ++idx) {
+    const Point_Candidates &cand_list = tc[idx];
+    candidate_details[idx].reserve(cand_list.size());
+    for (const Candidate &cand : cand_list) {
+      CandidateEmission ce;
+      ce.x = boost::geometry::get<0>(cand.point);
+      ce.y = boost::geometry::get<1>(cand.point);
+      ce.ep = TransitionGraph::calc_ep(cand.dist, config.gps_error);
+      candidate_details[idx].push_back(ce);
+    }
+  }
   SPDLOG_DEBUG("Generate transition graph");
   TransitionGraph tg(tc, config.gps_error);
   SPDLOG_DEBUG("Update cost in transition graph");
@@ -121,8 +133,10 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   SPDLOG_DEBUG("Complete path is {}", cpath);
   LineString mgeom = network_.complete_path_to_geometry(
     traj.geom, cpath);
-  return MatchResult{
+  MatchResult match_result{
     traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
+  match_result.candidate_details = std::move(candidate_details);
+  return match_result;
 }
 
 PyMatchResult FastMapMatch::match_wkt(
