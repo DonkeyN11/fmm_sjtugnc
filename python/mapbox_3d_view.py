@@ -721,6 +721,14 @@ def render_html(
 <div id="info">
   <strong>Trajectory IDs:</strong> $IDS_LABEL<br/>
   Hover layers to inspect details.
+  <div id="search-box" style="margin-top:10px;">
+    <label style="display:flex;align-items:center;gap:6px;">
+      <span>Search seq:</span>
+      <input type="number" id="seq-search-input" placeholder="e.g. 15" style="flex:1;padding:2px 6px;" />
+      <button id="seq-search-btn" style="padding:2px 8px;">Go</button>
+    </label>
+    <div id="seq-search-results" style="margin-top:6px;font-size:12px;color:#ddd;"></div>
+  </div>
   <div id="legend">
     <div style="display:flex;align-items:center;margin-bottom:6px;">
       <i style="background:#6a3d9a;border-radius:0;width:18px;height:3px;margin-right:6px;"></i>
@@ -998,6 +1006,30 @@ def render_html(
       });
     }
 
+    map.addSource('search-highlight', {
+      type: 'geojson',
+      data: { type: 'FeatureCollection', features: [] }
+    });
+    map.addLayer({
+      id: 'search-highlight-layer',
+      type: 'circle',
+      source: 'search-highlight',
+      layout: {
+        'visibility': 'none'
+      },
+      paint: {
+        'circle-radius': [
+          'interpolate', ['linear'], ['zoom'],
+          10, 5,
+          16, 12
+        ],
+        'circle-color': '#ffff00',
+        'circle-opacity': 0.9,
+        'circle-stroke-color': '#000000',
+        'circle-stroke-width': 2
+      }
+    });
+
     const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
 
     function formatNumber(value, digits = 4) {
@@ -1093,6 +1125,11 @@ def render_html(
     const toggleFmm = document.getElementById('toggle-fmm');
     const toggleObservation = document.getElementById('toggle-observation');
     const toggleGroundTruthPoints = document.getElementById('toggle-ground-truth-points');
+    const seqSearchInput = document.getElementById('seq-search-input');
+    const seqSearchButton = document.getElementById('seq-search-btn');
+    const seqSearchResults = document.getElementById('seq-search-results');
+    const searchHighlightSource = map.getSource('search-highlight');
+    const emptySearchGeojson = { type: 'FeatureCollection', features: [] };
 
     function setLayerVisibility(layerId, visible) {
       if (!map.getLayer(layerId)) return;
@@ -1100,6 +1137,139 @@ def render_html(
     }
 
     let highlightedKey = null;
+
+    function setSearchResultsHtml(html) {
+      if (seqSearchResults) {
+        seqSearchResults.innerHTML = html;
+      }
+    }
+
+    function focusOnFeatures(features) {
+      if (!features.length) {
+        return;
+      }
+      const coords = features
+        .map(f => f.geometry && f.geometry.coordinates)
+        .filter(Boolean);
+      if (!coords.length) {
+        return;
+      }
+      if (coords.length === 1) {
+        map.easeTo({ center: coords[0], zoom: Math.max(map.getZoom(), 15) });
+      } else {
+        const bounds = coords.reduce(
+          (acc, coord) => acc.extend(coord),
+          new mapboxgl.LngLatBounds(coords[0], coords[0])
+        );
+        map.fitBounds(bounds, { padding: 80, maxZoom: 17 });
+      }
+    }
+
+    function updateHighlightLayer(features) {
+      if (!searchHighlightSource) return;
+      if (!features.length) {
+        searchHighlightSource.setData(emptySearchGeojson);
+        setLayerVisibility('search-highlight-layer', false);
+        return;
+      }
+      searchHighlightSource.setData({
+        type: 'FeatureCollection',
+        features: features.map(f => ({
+          type: 'Feature',
+          properties: {
+            dataset: (f.properties && f.properties.source) || f.properties.kind || 'feature',
+            seq: f.properties ? f.properties.seq : undefined
+          },
+          geometry: f.geometry
+        }))
+      });
+      setLayerVisibility('search-highlight-layer', true);
+    }
+
+    function ensureLayerVisibility(layerId, toggleEl) {
+      if (toggleEl && !toggleEl.checked) {
+        toggleEl.checked = true;
+      }
+      setLayerVisibility(layerId, true);
+    }
+
+    function describeFeature(label, feature) {
+      const coords = feature.geometry && feature.geometry.coordinates
+        ? feature.geometry.coordinates
+        : [NaN, NaN];
+      const seq = feature.properties ? feature.properties.seq : 'N/A';
+      return '<div>' + label + ' seq ' + seq + ' @ (' +
+        formatNumber(coords[0], 6) + ', ' + formatNumber(coords[1], 6) + ')</div>';
+    }
+
+    function handleSeqSearch() {
+      if (!seqSearchInput) return;
+      const value = seqSearchInput.value.trim();
+      if (!value) {
+        setSearchResultsHtml('<em>Enter a seq index.</em>');
+        updateHighlightLayer([]);
+        return;
+      }
+      const seqValue = Number(value);
+      if (!Number.isFinite(seqValue) || !Number.isInteger(seqValue)) {
+        setSearchResultsHtml('<em>Please enter an integer seq.</em>');
+        updateHighlightLayer([]);
+        return;
+      }
+      const seq = seqValue;
+      const matches = [];
+      const summary = [];
+
+      if (hasCmm) {
+        const cmmMatches = cmmGeojson.features.filter(f => f.properties && f.properties.seq === seq);
+        if (cmmMatches.length) {
+          matches.push(...cmmMatches);
+          summary.push('<strong>CMM</strong> (' + cmmMatches.length + ')');
+          ensureLayerVisibility('cmm-points-layer', toggleCmm);
+        }
+      }
+
+      if (hasFmm) {
+        const fmmMatches = fmmGeojson.features.filter(f => f.properties && f.properties.seq === seq);
+        if (fmmMatches.length) {
+          matches.push(...fmmMatches);
+          summary.push('<strong>FMM</strong> (' + fmmMatches.length + ')');
+          ensureLayerVisibility('fmm-points-layer', toggleFmm);
+        }
+      }
+
+      if (hasObservationPoints) {
+        const obsMatches = observationPointGeojson.features.filter(f => f.properties && f.properties.seq === seq);
+        if (obsMatches.length) {
+          matches.push(...obsMatches);
+          summary.push('<strong>Observation</strong> (' + obsMatches.length + ')');
+          ensureLayerVisibility('observation-point-layer', toggleObservation);
+        }
+      }
+
+      if (hasGroundTruthPoints) {
+        const gtMatches = groundTruthPointsGeojson.features.filter(f => f.properties && f.properties.seq === seq);
+        if (gtMatches.length) {
+          matches.push(...gtMatches);
+          summary.push('<strong>Ground Truth</strong> (' + gtMatches.length + ')');
+          ensureLayerVisibility('ground-truth-points-layer', toggleGroundTruthPoints);
+        }
+      }
+
+      if (!matches.length) {
+        setSearchResultsHtml('<em>No features found for seq ' + seq + '.</em>');
+        updateHighlightLayer([]);
+        return;
+      }
+
+      focusOnFeatures(matches);
+      updateHighlightLayer(matches);
+      const detailHtml = matches
+        .map(f => describeFeature((f.properties && f.properties.source) || f.properties.kind || 'feature', f))
+        .join('');
+      const summaryHtml = summary.length ? summary.join(' | ') + '<br/>' : '';
+      setSearchResultsHtml(summaryHtml + detailHtml);
+    }
 
     function hideObservationEnvelope() {
       highlightedKey = null;
@@ -1172,6 +1342,15 @@ def render_html(
       if (!toggleObservation.checked) {
         hideObservationEnvelope();
       }
+    }
+
+    if (seqSearchButton && seqSearchInput) {
+      seqSearchButton.addEventListener('click', handleSeqSearch);
+      seqSearchInput.addEventListener('keyup', (event) => {
+        if (event.key === 'Enter') {
+          handleSeqSearch();
+        }
+      });
     }
 
     if (toggleGroundTruthPoints && hasGroundTruthPoints) {
