@@ -36,6 +36,15 @@ struct Candidate
   FMM::CORE::Point point; /**< boost point */
 };
 
+/**
+ * Candidate emission information for export
+ */
+struct CandidateEmission {
+  double x; /**< candidate x coordinate */
+  double y; /**< candidate y coordinate */
+  double ep; /**< emission probability associated with the candidate */
+};
+
 typedef std::vector<Candidate> Point_Candidates; /**< Point candidates */
 typedef std::vector<Point_Candidates> Traj_Candidates;
 /**< trajectory  candidates */
@@ -83,6 +92,7 @@ struct MatchResult {
                      trajectory.  */
   std::vector<int> indices; /**< index of opath edge in cpath */
   CORE::LineString mgeom; /**< the geometry of the matched path */
+  std::vector<std::vector<CandidateEmission>> candidate_details; /**< optional per-observation candidate list */
 };
 
 #ifndef SWIG

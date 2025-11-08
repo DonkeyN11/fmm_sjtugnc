@@ -39,6 +39,7 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_tp) header += ";tp";
   if (config_.write_trustworthiness) header += ";trustworthiness";
   if (config_.write_cumu_prob) header += ";cumu_prob";
+  if (config_.write_candidates) header += ";candidates";
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
   if (config_.write_speed) header += ";speed";
@@ -164,6 +165,22 @@ void CSVMatchResultWriter::write_result(
         buf << result.opt_candidate_path[i].cumu_prob << ",";
       }
       buf << result.opt_candidate_path[N - 1].cumu_prob;
+    }
+  }
+  if (config_.write_candidates) {
+    buf << ";";
+    if (!result.candidate_details.empty()) {
+      for (size_t i = 0; i < result.candidate_details.size(); ++i) {
+        buf << "(";
+        const auto &list = result.candidate_details[i];
+        for (size_t j = 0; j < list.size(); ++j) {
+          const auto &cand = list[j];
+          buf << "(" << cand.x << "," << cand.y << "," << cand.ep << ")";
+          if (j + 1 < list.size()) buf << ",";
+        }
+        buf << ")";
+        if (i + 1 < result.candidate_details.size()) buf << "|";
+      }
     }
   }
   if (config_.write_length) {
