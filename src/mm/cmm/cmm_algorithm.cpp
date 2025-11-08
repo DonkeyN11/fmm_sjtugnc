@@ -161,6 +161,39 @@ struct CandidateWithMetric {
     double metric;
 };
 
+void normalize_layer_trust(TGLayer *layer) {
+    if (layer == nullptr || layer->empty()) {
+        return;
+    }
+    double trust_sum = 0.0;
+    for (auto &node : *layer) {
+        if (std::isfinite(node.trustworthiness) && node.trustworthiness > 0) {
+            trust_sum += node.trustworthiness;
+        }
+    }
+    if (trust_sum > 0) {
+        for (auto &node : *layer) {
+            if (node.trustworthiness > 0) {
+                node.trustworthiness /= trust_sum;
+            }
+        }
+        return;
+    }
+    size_t positive_count = 0;
+    for (auto &node : *layer) {
+        if (node.ep > 0) {
+            positive_count++;
+        }
+    }
+    if (positive_count == 0) {
+        return;
+    }
+    double uniform = 1.0 / positive_count;
+    for (auto &node : *layer) {
+        node.trustworthiness = (node.ep > 0) ? uniform : 0.0;
+    }
+}
+
 std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
                                                          const CORE::Point &obs_point,
                                                          bool valid_covariance,
@@ -578,7 +611,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         Point_Candidates selected_candidates;
         std::vector<double> raw_probabilities;
 
-        if (config.use_mahalanobis_candidates) {
+    if (config.use_mahalanobis_candidates) {
             bool radius_expanded = false;
 
             while (true) {
@@ -873,6 +906,7 @@ void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
 
     // Reset first layer
     tg->reset_layer(&layers[0]);
+    normalize_layer_trust(&layers[0]);
 
     for (int level = 0; level < N - 1; ++level) {
         TGLayer *la_ptr = &layers[level];
@@ -899,37 +933,36 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
                                          const CMMTrajectory &traj,
                                          const CovarianceMapMatchConfig &config) {
     bool layer_connected = false;
-    const int prev_candidate_count = la_ptr->size();
-    const int next_candidate_count = lb_ptr->size();
-    int usable_prev = 0;
-    std::size_t total_pairs = 0;
-    std::size_t skipped_ep_zero = 0;
-    std::size_t skipped_no_path = 0;
-    std::size_t skipped_tp_zero = 0;
+    const size_t prev_candidate_count = la_ptr->size();
+    const size_t next_candidate_count = lb_ptr->size();
+    std::vector<double> trust_contrib(next_candidate_count, 0.0);
+    double trust_total = 0.0;
+
     for (auto &node_a : *la_ptr) {
-        if (!(std::isfinite(node_a.trustworthiness) && node_a.trustworthiness > 0)) {
+        if (!(std::isfinite(node_a.trustworthiness) && node_a.trustworthiness > 0) ||
+            !std::isfinite(node_a.cumu_prob)) {
             continue;
         }
-        ++usable_prev;
 
-        for (auto &node_b : *lb_ptr) {
-            ++total_pairs;
+        for (size_t b_idx = 0; b_idx < next_candidate_count; ++b_idx) {
+            auto &node_b = (*lb_ptr)[b_idx];
             if (node_b.ep <= 0) {
-                ++skipped_ep_zero;
                 continue;
             }
 
             double cur_sp_dist = get_sp_dist(node_a.c, node_b.c, reverse_tolerance);
             if (cur_sp_dist < 0) {
-                ++skipped_no_path;
                 continue;
             }
 
             double tp = TransitionGraph::calc_tp(cur_sp_dist, eu_dist);
             if (tp <= 0) {
-                ++skipped_tp_zero;
                 continue;
             }
+
+            double trust_val = node_a.trustworthiness * node_b.ep * tp;
+            trust_contrib[b_idx] += trust_val;
+            trust_total += trust_val;
 
             double temp = node_a.cumu_prob + std::log(tp) + std::log(node_b.ep);
             if (temp > node_b.cumu_prob) {
@@ -937,19 +970,38 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
                 node_b.prev = &node_a;
                 node_b.tp = tp;
                 node_b.sp_dist = cur_sp_dist;
-                node_b.trustworthiness = (tp > 0) ? node_b.ep * tp : 0;
                 layer_connected = true;
+            }
+        }
+    }
+
+    if (next_candidate_count > 0) {
+        if (trust_total > 0) {
+            for (size_t b_idx = 0; b_idx < next_candidate_count; ++b_idx) {
+                (*lb_ptr)[b_idx].trustworthiness = trust_contrib[b_idx] / trust_total;
+            }
+        } else {
+            double ep_sum = 0.0;
+            for (auto &node_b : *lb_ptr) {
+                if (node_b.ep > 0) {
+                    ep_sum += node_b.ep;
+                }
+            }
+            if (ep_sum > 0) {
+                for (auto &node_b : *lb_ptr) {
+                    node_b.trustworthiness = (node_b.ep > 0) ? node_b.ep / ep_sum : 0.0;
+                }
+            } else {
+                double uniform = next_candidate_count > 0 ? 1.0 / next_candidate_count : 0.0;
+                for (auto &node_b : *lb_ptr) {
+                    node_b.trustworthiness = uniform;
+                }
             }
         }
     }
 
     if (connected != nullptr) {
         *connected = layer_connected;
-    }
-    if (!layer_connected) {
-        SPDLOG_WARN("Trajectory {} disconnected at level {} (prev={}, usable_prev={}, next={}, checked_pairs={}, ep<=0={}, no_path={}, tp<=0={})",
-                    traj.id, level, prev_candidate_count, usable_prev, next_candidate_count,
-                    total_pairs, skipped_ep_zero, skipped_no_path, skipped_tp_zero);
     }
 }
 
@@ -1370,6 +1422,18 @@ std::string CovarianceMapMatch::match_gps_file(
                 boost::geometry::set<1>(matched.c.point, py);
             } else {
                 SPDLOG_TRACE("Failed to transform candidate point back to geographic CRS.");
+            }
+        }
+        for (auto &cand_list : match->candidate_details) {
+            for (auto &cand_info : cand_list) {
+                double px = cand_info.x;
+                double py = cand_info.y;
+                if (output_transform_ptr->Transform(1, &px, &py)) {
+                    cand_info.x = px;
+                    cand_info.y = py;
+                } else {
+                    SPDLOG_TRACE("Failed to transform candidate detail back to geographic CRS.");
+                }
             }
         }
     };
