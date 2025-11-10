@@ -13,6 +13,7 @@ window containing one subplot per input file.
 from __future__ import annotations
 
 import argparse
+import csv
 import math
 import sys
 from pathlib import Path
@@ -57,6 +58,19 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         help="Skip showing the figures (useful for headless runs).",
     )
     return parser.parse_args(argv)
+
+
+def set_max_csv_field_size() -> None:
+    """Raise the csv module field size limit to handle very wide columns."""
+    max_size = sys.maxsize
+    while True:
+        try:
+            csv.field_size_limit(max_size)
+            break
+        except OverflowError:
+            max_size //= 2
+            if max_size <= 0:
+                raise RuntimeError("Unable to set CSV field size limit.") from None
 
 
 def parse_numeric_values(value: object) -> List[float]:
@@ -179,6 +193,7 @@ def plot_metric_histograms(
 
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
+    set_max_csv_field_size()
 
     if args.bins <= 0:
         print("[ERROR] --bins must be a positive integer.", file=sys.stderr)
