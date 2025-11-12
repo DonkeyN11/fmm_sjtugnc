@@ -42,6 +42,7 @@ void FMMAppConfig::load_xml(const std::string &file){
   log_level = tree.get("config.other.log_level",2);
   step =  tree.get("config.other.step",100);
   use_omp = !(!tree.get_child_optional("config.other.use_omp"));
+  convert_to_projected = tree.get("config.other.convert_to_projected", false);
   SPDLOG_INFO("Finish with reading FMM xml configuration");
 };
 
@@ -58,7 +59,9 @@ void FMMAppConfig::load_arg(int argc, char **argv){
     ("l,log_level","Log level",cxxopts::value<int>()->default_value("2"))
     ("s,step","Step report",cxxopts::value<int>()->default_value("100"))
     ("h,help","Help information")
-    ("use_omp","Use parallel computing if specified");
+    ("use_omp","Use parallel computing if specified")
+    ("convert_to_projected", "Convert inputs to a projected CRS when necessary",
+     cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
   if (argc==1) {
     help_specified = true;
     return;
@@ -72,6 +75,7 @@ void FMMAppConfig::load_arg(int argc, char **argv){
   log_level = result["log_level"].as<int>();
   step = result["step"].as<int>();
   use_omp = result.count("use_omp")>0;
+  convert_to_projected = result["convert_to_projected"].as<bool>();
   if (result.count("help")>0) {
     help_specified = true;
   }
@@ -89,6 +93,7 @@ void FMMAppConfig::print_help(){
   oss<<"-l/--log_level (optional) <int>: log level (2)\n";
   oss<<"-s/--step (optional) <int>: progress report step (100)\n";
   oss<<"--use_omp: use OpenMP for multithreaded map matching\n";
+  oss<<"--convert_to_projected (optional): Convert inputs to a projected CRS when necessary (false)\n";
   oss<<"-h/--help:print help information\n";
   oss<<"For xml configuration, check example folder\n";
   std::cout<<oss.str();
@@ -103,6 +108,7 @@ void FMMAppConfig::print() const {
   SPDLOG_INFO("Log level {}",UTIL::LOG_LEVESLS[log_level]);
   SPDLOG_INFO("Step {}",step);
   SPDLOG_INFO("Use omp {}",(use_omp ? "true" : "false"));
+  SPDLOG_INFO("Convert to projected {}", (convert_to_projected ? "true" : "false"));
   SPDLOG_INFO("---- Print configuration done ----");
 };
 

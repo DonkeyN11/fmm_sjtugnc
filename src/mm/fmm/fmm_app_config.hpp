@@ -68,6 +68,7 @@ class FMMAppConfig
   int log_level = 2;  /**< log level, 0-trace,1-debug,2-info,
                           3-warn,4-err,5-critical,6-off */
   int step = 100; /**< progress report step */
+  bool convert_to_projected = false; /**< Convert inputs to projected CRS when needed */
 }; // FMMAppConfig
 }
 }
