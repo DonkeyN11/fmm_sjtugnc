@@ -41,10 +41,10 @@ except ImportError as exc:  # pragma: no cover - import guard
     ) from exc
 
 try:
-    from pyproj import Geod
+    from pyproj import CRS
 except ImportError as exc:  # pragma: no cover - import guard
     raise SystemExit(
-        "pyproj is required to compute geodesic distances. "
+        "pyproj is required to build the local ENU projection. "
         "Install it with `pip install pyproj`."
     ) from exc
 
@@ -52,13 +52,14 @@ except ImportError as exc:  # pragma: no cover - import guard
 # --------------------------------------------------------------------------- #
 # Configuration constants
 # --------------------------------------------------------------------------- #
-GEOD = Geod(ellps="WGS84")
+WGS84_CRS = CRS.from_epsg(4326)
 CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
-MIN_SIGMA_DEG = 1.0e-5       # ≈ 1.01 metres
-MAX_SIGMA_DEG = 1.4e-4       # ≈ 15.05 metres
+MIN_SIGMA_M = 1.0            # metres (horizontal)
+MAX_SIGMA_M = 15.0           # metres (horizontal)
 MIN_SIGMA_UP = 1.0           # metres (vertical)
 MAX_SIGMA_UP = 10.0           # metres (vertical)
 MAX_COVARIANCE_SAMPLING_ATTEMPTS = 64
+MIN_TRAJECTORY_SPAN_M = 11_000.0  # ≈ 0.1 degrees at the equator
 
 
 # Shared between worker processes after initialisation.
@@ -123,9 +124,49 @@ def _initialize_worker(segments: Sequence[Tuple[Sequence[Sequence[float]], str, 
         INCOMING_SEGMENTS.setdefault(dst, []).append(idx)
 
 
+def _determine_utm_epsg(lon_deg: float, lat_deg: float) -> Optional[int]:
+    """Determine the EPSG code for the UTM zone covering the provided lon/lat."""
+    if not (np.isfinite(lon_deg) and np.isfinite(lat_deg)):
+        return None
+    if lat_deg <= -80.0 or lat_deg >= 84.0:
+        return None
+    zone = int(math.floor((lon_deg + 180.0) / 6.0)) + 1
+    zone = max(1, min(zone, 60))
+    base = 32600 if lat_deg >= 0.0 else 32700
+    return base + zone
+
+
+def _project_to_local_utm(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    """Project the road network to the appropriate UTM zone (metres)."""
+    working = gdf
+    if working.crs is None:
+        working = working.set_crs(WGS84_CRS, allow_override=True)
+
+    lonlat_gdf = working.to_crs(WGS84_CRS) if working.crs != WGS84_CRS else working
+    min_lon, min_lat, max_lon, max_lat = lonlat_gdf.total_bounds
+    bounds = np.array([min_lon, min_lat, max_lon, max_lat], dtype=float)
+    if not np.all(np.isfinite(bounds)):
+        raise ValueError("Shapefile bounds contain invalid values, cannot derive UTM zone.")
+    if abs(max_lon - min_lon) < 1e-12 and abs(max_lat - min_lat) < 1e-12:
+        raise ValueError("Shapefile bounds too small to derive a UTM projection.")
+
+    lon0 = float((min_lon + max_lon) * 0.5)
+    lat0 = float((min_lat + max_lat) * 0.5)
+    epsg = _determine_utm_epsg(lon0, lat0)
+    if epsg is None:
+        raise ValueError(
+            f"Unable to determine UTM zone for map centre ({lon0:.6f}, {lat0:.6f})."
+        )
+    utm_crs = CRS.from_epsg(epsg)
+    projected = lonlat_gdf.to_crs(utm_crs)
+    print(f"Projected road network to UTM EPSG:{epsg} (lat0={lat0:.6f}, lon0={lon0:.6f}).")
+    return projected
+
+
 def _load_roads(shapefile: Path) -> List[Tuple[List[List[float]], str, str, str]]:
     """Load road segments with node connectivity information."""
     gdf = gpd.read_file(shapefile)
+    gdf = _project_to_local_utm(gdf)
     if "u" not in gdf.columns or "v" not in gdf.columns:
         raise ValueError("Shapefile must contain 'u' and 'v' columns for connectivity.")
 
@@ -184,8 +225,8 @@ def _is_positive_definite(matrix: np.ndarray, atol: float = 1e-12) -> bool:
 def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
     """Sample a positive-definite covariance description for one observation."""
     for _ in range(MAX_COVARIANCE_SAMPLING_ATTEMPTS):
-        sdn = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
-        sde = rng.uniform(MIN_SIGMA_DEG, MAX_SIGMA_DEG)
+        sdn = rng.uniform(MIN_SIGMA_M, MAX_SIGMA_M)
+        sde = rng.uniform(MIN_SIGMA_M, MAX_SIGMA_M)
         rho = rng.uniform(-0.6, 0.6)
         sdne = rho * sdn * sde
         sdu = rng.uniform(MIN_SIGMA_UP, MAX_SIGMA_UP)
@@ -230,13 +271,11 @@ def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
 
 
 def _segment_lengths_m(coords: np.ndarray) -> np.ndarray:
-    """Return geodesic segment lengths (metres) for a polyline."""
-    lon0 = coords[:-1, 0]
-    lat0 = coords[:-1, 1]
-    lon1 = coords[1:, 0]
-    lat1 = coords[1:, 1]
-    _, _, dist = GEOD.inv(lon0, lat0, lon1, lat1)
-    return np.asarray(dist, dtype=float)
+    """Return Euclidean segment lengths (metres) for a polyline in projected space."""
+    if coords.shape[0] < 2:
+        return np.empty(0, dtype=float)
+    diffs = np.diff(coords, axis=0)
+    return np.linalg.norm(diffs, axis=1)
 
 
 def _interpolate_along(coords: np.ndarray, target_dist_m: float,
@@ -273,7 +312,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
 
     rng = np.random.default_rng(config.seed)
 
-    min_span_deg = 0.1
+    min_span_m = MIN_TRAJECTORY_SPAN_M
     max_attempts = 200
     max_extension_steps = 500
     max_global_attempts = 50
@@ -347,7 +386,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             current_span = segment_span(base_coords)
 
             extension_counter = 0
-            while current_span < min_span_deg and extension_counter < max_extension_steps:
+            while current_span < min_span_m and extension_counter < max_extension_steps:
                 start_node, end_node, extended, new_edge_id, mode = try_extend_path(
                     path_coords, start_node, end_node, visited_edges
                 )
@@ -361,7 +400,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
                     elif mode == "prepend":
                         edge_sequence.insert(0, new_edge_id)
 
-            if current_span < min_span_deg:
+            if current_span < min_span_m:
                 continue
 
             candidate_arr = np.asarray(path_coords, dtype=float)
@@ -423,7 +462,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
         if arr_truth.shape[0] < 2:
             continue
         span_total = segment_span(arr_truth)
-        if span_total < min_span_deg:
+        if span_total < min_span_m:
             continue
 
         return TrajectoryResult(
@@ -434,7 +473,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             edge_ids=chosen_edges,
         )
 
-    raise RuntimeError("Unable to generate a trajectory with ≥0.1° combined longitude/latitude span.")
+    raise RuntimeError("Unable to generate a trajectory with ≥11 km combined span in projected space.")
 
 
 def _make_tasks(count: int, num_points: int, speed: float,
