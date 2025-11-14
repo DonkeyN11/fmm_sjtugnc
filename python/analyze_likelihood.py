@@ -3,7 +3,9 @@
 Plot frequency histograms for ep, tp, and trustworthi probability columns.
 
 Usage example:
-    python analyze_eptpcumu.py output/cmm_result_rearranged.csv output/fmm_positive_rearranged.csv
+    python analyze_likelihood.py \
+        --ground-truth monte_carlo_cps/input/ground_truth.csv \
+        output/cmm_result_rearranged.csv output/fmm_positive_rearranged.csv
 
 This script expects semicolon separated CSV files with at least ep, tp, and
 cumu (or cumu_prob) numeric columns. For each metric, the script opens a figure
@@ -17,7 +19,7 @@ import csv
 import math
 import sys
 from pathlib import Path
-from typing import Dict, Iterable, List, Sequence, Tuple
+from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 import matplotlib.pyplot as plt
 import numpy as np
@@ -33,7 +35,10 @@ COLUMN_ALIASES: Dict[str, Sequence[str]] = {
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Plot ep/tp/trustworthiness histograms from one or more rearranged CSV files.",
+        description=(
+            "Plot ep/tp/trustworthiness histograms from one or more rearranged CSV files "
+            "and optionally compare trajectory errors against ground truth."
+        ),
     )
     parser.add_argument(
         "inputs",
@@ -56,6 +61,12 @@ def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
         "--no-show",
         action="store_true",
         help="Skip showing the figures (useful for headless runs).",
+    )
+    parser.add_argument(
+        "--ground-truth",
+        type=Path,
+        default=None,
+        help="Optional ground truth CSV (containing LINESTRING geometries) to compute error histograms.",
     )
     return parser.parse_args(argv)
 
@@ -95,6 +106,30 @@ def parse_numeric_values(value: object) -> List[float]:
         return numbers
 
     return []
+
+
+def parse_linestring(text: Optional[str]) -> List[Tuple[float, float]]:
+    """Parse a simple LINESTRING WKT into a list of points."""
+    if not text:
+        return []
+    text = text.strip()
+    if not text or not text.upper().startswith("LINESTRING"):
+        return []
+    open_idx = text.find("(")
+    close_idx = text.rfind(")")
+    if open_idx == -1 or close_idx == -1 or close_idx <= open_idx:
+        return []
+    body = text[open_idx + 1 : close_idx]
+    coords: List[Tuple[float, float]] = []
+    for token in body.split(","):
+        parts = token.strip().split()
+        if len(parts) != 2:
+            continue
+        try:
+            coords.append((float(parts[0]), float(parts[1])))
+        except ValueError:
+            continue
+    return coords
 
 
 def read_numeric_series(df: pd.DataFrame, metric: str) -> Tuple[pd.Series, str]:
@@ -155,6 +190,117 @@ def prepare_metric_data(
     return data
 
 
+def load_ground_truth_geoms(path: Path) -> Dict[str, List[Tuple[float, float]]]:
+    """Load ground truth LINESTRING per trajectory ID."""
+    mapping: Dict[str, List[Tuple[float, float]]] = {}
+    if not path.exists():
+        raise FileNotFoundError(f"Ground truth file not found: {path}")
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id")
+            if not traj_id:
+                continue
+            coords = parse_linestring(row.get("geom"))
+            if not coords:
+                continue
+            mapping[str(traj_id).strip()] = coords
+    return mapping
+
+
+def compute_errors_for_dataset(
+    result_path: Path,
+    ground_truth: Dict[str, List[Tuple[float, float]]],
+) -> pd.Series:
+    """Compute Euclidean distances between result points and ground truth."""
+    errors: List[float] = []
+    if not result_path.exists():
+        return pd.Series(dtype=float)
+    with result_path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id")
+            if not traj_id:
+                continue
+            traj_id = traj_id.strip()
+            truth_coords = ground_truth.get(traj_id)
+            if not truth_coords:
+                continue
+            estimate_coords = parse_linestring(row.get("pgeom"))
+            if not estimate_coords:
+                continue
+            count = min(len(truth_coords), len(estimate_coords))
+            if count == 0:
+                continue
+            for idx in range(count):
+                est_x, est_y = estimate_coords[idx]
+                truth_x, truth_y = truth_coords[idx]
+                errors.append(math.hypot(est_x - truth_x, est_y - truth_y))
+    return pd.Series(errors, dtype=float).replace([np.inf, -np.inf], np.nan).dropna()
+
+
+def prepare_error_datasets(
+    input_paths: Iterable[Path],
+    ground_truth_path: Path,
+) -> List[Tuple[str, pd.Series]]:
+    """Compute error series for each dataset with respect to ground truth."""
+    ground_truth = load_ground_truth_geoms(ground_truth_path)
+    datasets: List[Tuple[str, pd.Series]] = []
+    for path in input_paths:
+        series = compute_errors_for_dataset(path, ground_truth)
+        if series.empty:
+            print(
+                f"[WARN] No error data computed for '{path}'. "
+                "Ensure pgeom coordinates align with ground truth.",
+                file=sys.stderr,
+            )
+            continue
+        datasets.append((path.stem, series))
+    return datasets
+
+
+def plot_error_histogram(
+    datasets: Sequence[Tuple[str, pd.Series]],
+    bins: int,
+) -> plt.Figure | None:
+    """Plot error distributions for multiple datasets in a single figure."""
+    if not datasets:
+        return None
+    fig, ax = plt.subplots(figsize=(8, 5))
+    color_cycle = plt.rcParams.get("axes.prop_cycler")
+    colors = color_cycle.by_key().get("color", []) if color_cycle else []
+    for idx, (label, series) in enumerate(datasets):
+        color = colors[idx % len(colors)] if colors else None
+        ax.hist(
+            series,
+            bins=bins,
+            alpha=0.5,
+            edgecolor="black",
+            label=label,
+            color=color,
+            density=True,
+        )
+        if not series.empty:
+            perc = np.percentile(series, 99.99)
+            ax.axvline(
+                perc,
+                color=color,
+                linestyle="--",
+                linewidth=1.5,
+                label=f"{label} 99.99% = {perc:.2f} m",
+            )
+    ax.set_xlabel("Position Error (metres)")
+    ax.set_ylabel("Density")
+    ax.set_title("Trajectory Error vs Ground Truth")
+    ax.legend()
+    fig.tight_layout()
+    try:
+        fig.canvas.manager.set_window_title("Trajectory error histogram")
+    except Exception:
+        pass
+    return fig
+
+
 def plot_metric_histograms(
     metric: str,
     datasets: Sequence[Tuple[str, pd.Series]],
@@ -171,10 +317,17 @@ def plot_metric_histograms(
     axes_flat = axes.flatten()
 
     for ax, (label, series) in zip(axes_flat, datasets):
-        ax.hist(series, bins=bins, color="#4C72B0", alpha=0.75, edgecolor="black")
+        ax.hist(
+            series,
+            bins=bins,
+            color="#4C72B0",
+            alpha=0.75,
+            edgecolor="black",
+            density=True,
+        )
         ax.set_title(label)
         ax.set_xlabel(metric.upper())
-        ax.set_ylabel("Frequency")
+        ax.set_ylabel("Density")
 
     # Remove unused axes if any.
     for ax in axes_flat[len(datasets) :]:
@@ -207,6 +360,17 @@ def main(argv: Sequence[str] | None = None) -> int:
         fig = plot_metric_histograms(metric, datasets, args.bins)
         if fig is not None:
             figures.append((metric, fig))
+
+    if args.ground_truth is not None:
+        try:
+            error_datasets = prepare_error_datasets(input_paths, args.ground_truth)
+        except FileNotFoundError as exc:
+            print(f"[ERROR] {exc}", file=sys.stderr)
+            error_datasets = []
+        if error_datasets:
+            fig_error = plot_error_histogram(error_datasets, args.bins)
+            if fig_error is not None:
+                figures.append(("error", fig_error))
 
     if args.save_dir is not None and figures:
         args.save_dir.mkdir(parents=True, exist_ok=True)
