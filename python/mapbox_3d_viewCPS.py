@@ -237,6 +237,72 @@ def to_float(value: Optional[str]) -> Optional[float]:
         return None
 
 
+CandidatePoint = Tuple[Coordinate, Optional[float]]
+CandidateGroup = List[CandidatePoint]
+
+
+def parse_candidate_groups(cell: Optional[str]) -> List[CandidateGroup]:
+    """Parse the CMM 'candidates' cell into grouped coordinate/probability triples."""
+    if not cell:
+        return []
+    groups: List[CandidateGroup] = []
+    for group_text in cell.split("|"):
+        group_text = group_text.strip()
+        if not group_text:
+            groups.append([])
+            continue
+        # Remove a single wrapping set of parentheses if present.
+        if group_text.startswith("(") and group_text.endswith(")"):
+            group_text = group_text[1:-1]
+        entries: CandidateGroup = []
+        for entry in group_text.split("),("):
+            token = entry.strip().strip("()")
+            if not token:
+                continue
+            parts = [part.strip() for part in token.split(",")]
+            if len(parts) < 2:
+                continue
+            try:
+                x = float(parts[0])
+                y = float(parts[1])
+            except ValueError:
+                continue
+            prob: Optional[float] = None
+            if len(parts) >= 3:
+                try:
+                    prob = float(parts[2])
+                except ValueError:
+                    prob = None
+            entries.append(((x, y), prob))
+        groups.append(entries)
+    return groups
+
+
+def convert_candidate_groups(
+    groups: List[CandidateGroup],
+    coord_transformer: Optional[CoordinateTransformer],
+) -> List[CandidateGroup]:
+    """Convert candidate coordinates to lon/lat if a transformer is available."""
+    if not groups:
+        return []
+    converted: List[CandidateGroup] = []
+    for group in groups:
+        if not group:
+            converted.append([])
+            continue
+        coords_only = [pt for pt, _ in group]
+        coords = (
+            coord_transformer.convert_coords(coords_only)
+            if coord_transformer
+            else coords_only
+        )
+        converted_group: CandidateGroup = []
+        for (orig_pt, prob), coord in zip(group, coords):
+            converted_group.append((coord, prob))
+        converted.append(converted_group)
+    return converted
+
+
 def initial_bounds() -> Bounds:
     return (math.inf, math.inf, -math.inf, -math.inf)
 
@@ -792,13 +858,15 @@ def collect_point_features(
     dataset_name: str,
     bounds: Bounds,
     coord_transformer: Optional[CoordinateTransformer],
-) -> Tuple[List[Dict], Bounds]:
+    include_candidates: bool = False,
+) -> Tuple[List[Dict], List[Dict], Bounds]:
     features: List[Dict] = []
+    candidate_features: List[Dict] = []
     updated_bounds = bounds
     id_set = {str(_id) for _id in selected_ids}
 
     if not path.exists():
-        return features, updated_bounds
+        return features, candidate_features, updated_bounds
 
     with path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
@@ -812,6 +880,11 @@ def collect_point_features(
                 coords = coord_transformer.convert_coords(coords)
             if not coords:
                 continue
+
+            candidate_groups: List[CandidateGroup] = []
+            if include_candidates:
+                raw_groups = parse_candidate_groups(row.get("candidates", ""))
+                candidate_groups = convert_candidate_groups(raw_groups, coord_transformer)
 
             trust_raw = row.get("trustworthiness")
             if not trust_raw:
@@ -856,7 +929,31 @@ def collect_point_features(
                     },
                 }
                 features.append(feature)
-    return features, updated_bounds
+                if include_candidates and idx < len(candidate_groups):
+                    group = candidate_groups[idx]
+                    total = len(group)
+                    for rank, (candidate_coord, probability) in enumerate(group):
+                        if not candidate_coord:
+                            continue
+                        updated_bounds = update_bounds(updated_bounds, [candidate_coord])
+                        candidate_features.append(
+                            {
+                                "type": "Feature",
+                                "properties": {
+                                    "id": traj_id.strip(),
+                                    "source": "cmm_candidates",
+                                    "kind": "cmm_candidate",
+                                    "seq": idx,
+                                    "rank": f"{rank + 1}/{total}" if total else None,
+                                    "probability": probability,
+                                },
+                                "geometry": {
+                                    "type": "Point",
+                                    "coordinates": [candidate_coord[0], candidate_coord[1]],
+                                },
+                            }
+                        )
+    return features, candidate_features, updated_bounds
 
 
 def requires_token(token: Optional[str]) -> str:
@@ -885,6 +982,7 @@ def render_html(
     observation_ellipses_geojson: Dict,
     pl_circles_geojson: Dict,
     cmm_geojson: Dict,
+    cmm_candidate_geojson: Dict,
     fmm_geojson: Dict,
     edge_sequences: Dict[str, List[str]],
 ) -> str:
@@ -975,6 +1073,9 @@ def render_html(
       FMM points
     </label>
   </div>
+  <div style="margin-top:6px;font-size:11px;color:#ddd;">
+    Click a CMM point to reveal its candidates.
+  </div>
   <div id="edge-info" style="margin-top:8px;">
     <strong>Edge IDs:</strong><br/>
     <span id="edge-list">$EDGE_INFO_HTML</span>
@@ -990,6 +1091,7 @@ def render_html(
   const observationEllipseGeojson = $OBS_ELLIPSE_GEOJSON;
   const plCircleGeojson = $PL_CIRCLE_GEOJSON;
   const cmmGeojson = $CMM_GEOJSON;
+  const cmmCandidatesGeojson = $CMM_CANDIDATES_GEOJSON;
   const fmmGeojson = $FMM_GEOJSON;
 
   const map = new mapboxgl.Map({
@@ -1051,6 +1153,7 @@ def render_html(
     const hasObservationEllipses = observationEllipseGeojson.features.length > 0;
     const hasPlCircles = plCircleGeojson.features.length > 0;
     const hasCmm = cmmGeojson.features.length > 0;
+    const hasCmmCandidates = cmmCandidatesGeojson.features.length > 0;
     const hasFmm = fmmGeojson.features.length > 0;
 
     if (hasGroundTruthEdges) {
@@ -1204,6 +1307,33 @@ def render_html(
       });
     }
 
+    if (hasCmmCandidates) {
+      map.addSource('cmm-candidates', {
+        type: 'geojson',
+        data: cmmCandidatesGeojson
+      });
+      map.addLayer({
+        id: 'cmm-candidates-layer',
+        type: 'circle',
+        source: 'cmm-candidates',
+        layout: {
+          'visibility': 'none'
+        },
+        paint: {
+          'circle-radius': [
+            'interpolate', ['linear'], ['zoom'],
+            10, 3,
+            16, 6
+          ],
+          'circle-color': '#ffe066',
+          'circle-opacity': 0.95,
+          'circle-stroke-color': '#d9480f',
+          'circle-stroke-width': 1.5
+        }
+      });
+      map.setFilter('cmm-candidates-layer', ['==', ['get', 'id'], '__none__']);
+    }
+
     if (hasFmm) {
       map.addSource('fmm-points', {
         type: 'geojson',
@@ -1286,6 +1416,13 @@ def render_html(
           'TP: ' + formatNumber(props.tp, 6) + '<br/>' +
           'TRUSTWORTHINESS: ' + formatNumber(props.trustworthiness, 6);
       }
+      if (kind === 'cmm_candidate') {
+        return '<strong>CMM Candidate</strong><br/>' +
+          'ID: ' + props.id + '<br/>' +
+          'Seq: ' + props.seq + '<br/>' +
+          'Rank: ' + (props.rank ?? 'N/A') + '<br/>' +
+          'Probability: ' + formatNumber(props.probability, 6);
+      }
       if (kind === 'ground_truth_point') {
         return '<strong>Ground Truth ID: ' + props.id + '</strong><br/>' +
           'Seq: ' + props.seq + '<br/>' +
@@ -1341,6 +1478,7 @@ def render_html(
     }
 
     attachHover('cmm-points-layer');
+    attachHover('cmm-candidates-layer');
     attachHover('fmm-points-layer');
     attachHover('ground-truth-points-layer');
     attachHover('ground-truth-edge-layer');
@@ -1361,6 +1499,7 @@ def render_html(
     }
 
     let highlightedKey = null;
+    let activeCandidateKey = null;
 
     function setSearchResultsHtml(html) {
       if (seqSearchResults) {
@@ -1538,12 +1677,59 @@ def render_html(
       }
     }
 
+    function hideCmmCandidates() {
+      if (!hasCmmCandidates || !map.getLayer('cmm-candidates-layer')) {
+        return;
+      }
+      activeCandidateKey = null;
+      map.setLayoutProperty('cmm-candidates-layer', 'visibility', 'none');
+      map.setFilter('cmm-candidates-layer', ['==', ['get', 'id'], '__none__']);
+    }
+
+    function showCmmCandidates(feature) {
+      if (!hasCmmCandidates || !feature || !map.getLayer('cmm-candidates-layer')) {
+        return;
+      }
+      const props = feature.properties || {};
+      const id = props.id;
+      const seq = props.seq;
+      if (id === undefined || seq === undefined) {
+        return;
+      }
+      const key = id + ':' + seq;
+      if (activeCandidateKey === key) {
+        return;
+      }
+      activeCandidateKey = key;
+      map.setFilter('cmm-candidates-layer', ['all',
+        ['==', ['get', 'id'], id],
+        ['==', ['get', 'seq'], seq]
+      ]);
+      map.setLayoutProperty('cmm-candidates-layer', 'visibility', 'visible');
+    }
+
+    if (hasCmm && hasCmmCandidates) {
+      map.on('click', 'cmm-points-layer', (event) => {
+        const features = event.features || [];
+        if (!features.length) {
+          return;
+        }
+        showCmmCandidates(features[0]);
+      });
+    }
+
     if (toggleCmm && hasCmm) {
       toggleCmm.addEventListener('change', (event) => {
         const visible = event.target.checked;
         setLayerVisibility('cmm-points-layer', visible);
+        if (!visible) {
+          hideCmmCandidates();
+        }
       });
       setLayerVisibility('cmm-points-layer', toggleCmm.checked);
+      if (!toggleCmm.checked) {
+        hideCmmCandidates();
+      }
     }
 
     if (toggleFmm && hasFmm) {
@@ -1637,6 +1823,7 @@ def render_html(
         OBS_ELLIPSE_GEOJSON=json.dumps(observation_ellipses_geojson),
         PL_CIRCLE_GEOJSON=json.dumps(pl_circles_geojson),
         CMM_GEOJSON=json.dumps(cmm_geojson),
+        CMM_CANDIDATES_GEOJSON=json.dumps(cmm_candidate_geojson),
         FMM_GEOJSON=json.dumps(fmm_geojson),
         IDS_LABEL=ids_label,
         EDGE_INFO_HTML=edge_info_html,
@@ -1744,10 +1931,10 @@ def main() -> None:
     observation_point_features, observation_ellipse_features, pl_circle_features, bounds = collect_observation_features_from_cmm(
         cmm_traj_path, selected_ids, bounds, highlight_map, coord_transformer
     )
-    cmm_features, bounds = collect_point_features(
-        cmm_path, selected_ids, "cmm", bounds, coord_transformer
+    cmm_features, cmm_candidate_features, bounds = collect_point_features(
+        cmm_path, selected_ids, "cmm", bounds, coord_transformer, include_candidates=True
     )
-    fmm_features, bounds = collect_point_features(
+    fmm_features, _, bounds = collect_point_features(
         fmm_path, selected_ids, "fmm", bounds, coord_transformer
     )
 
@@ -1758,6 +1945,7 @@ def main() -> None:
         or observation_ellipse_features
         or pl_circle_features
         or cmm_features
+        or cmm_candidate_features
         or fmm_features
     ):
         raise SystemExit("No features found for the requested IDs. Nothing to visualize.")
@@ -1768,6 +1956,7 @@ def main() -> None:
     observation_ellipses_geojson = {"type": "FeatureCollection", "features": observation_ellipse_features}
     pl_circles_geojson = {"type": "FeatureCollection", "features": pl_circle_features}
     cmm_geojson = {"type": "FeatureCollection", "features": cmm_features}
+    cmm_candidate_geojson = {"type": "FeatureCollection", "features": cmm_candidate_features}
     fmm_geojson = {"type": "FeatureCollection", "features": fmm_features}
 
     token = requires_token(args.token)
@@ -1781,6 +1970,7 @@ def main() -> None:
         observation_ellipses_geojson,
         pl_circles_geojson,
         cmm_geojson,
+        cmm_candidate_geojson,
         fmm_geojson,
         edge_sequences,
     )
