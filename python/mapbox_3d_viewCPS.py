@@ -636,8 +636,8 @@ def collect_observation_features_from_cmm(
 
                 if cov_entry is None or len(cov_entry) < 4:
                     continue
-                sdn = to_float(cov_entry[0])
-                sde = to_float(cov_entry[1])
+                sde = to_float(cov_entry[0])
+                sdn = to_float(cov_entry[1])
                 sdne = to_float(cov_entry[3])
                 if sdn is None or sde is None or sdne is None:
                     continue
@@ -657,8 +657,8 @@ def collect_observation_features_from_cmm(
                             "timestamp": timestamp_val,
                             "timestamp_raw": timestamps[seq] if seq < len(timestamps) else None,
                             "pl": to_float(pl),
-                            "sdn": sdn,
                             "sde": sde,
+                            "sdn": sdn,
                             "sdne": sdne,
                         },
                         "geometry": {"type": "Point", "coordinates": [lon, lat]},
@@ -698,8 +698,8 @@ def collect_observation_features_from_cmm(
                                     "timestamp": timestamp_val,
                                     "timestamp_raw": timestamps[seq] if seq < len(timestamps) else None,
                                     "pl": to_float(pl),
-                                    "sdn": sdn,
                                     "sde": sde,
+                                    "sdn": sdn,
                                     "sdne": sdne,
                                 },
                                 "geometry": {"type": "Polygon", "coordinates": [ellipse_coords]},

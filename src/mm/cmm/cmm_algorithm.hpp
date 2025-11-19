@@ -77,8 +77,8 @@ namespace MM {
  */
 struct CovarianceMatrix {
     // Units depending on the input data (usually lla)
-    double sdn;    // North standard deviation
     double sde;    // East standard deviation
+    double sdn;    // North standard deviation
     double sdu;    // Up standard deviation
     double sdne;   // North-East covariance
     double sdeu;   // East-Up covariance
@@ -86,7 +86,7 @@ struct CovarianceMatrix {
 
     // Convert to 2D covariance matrix (horizontal plane)
     Matrix2d to_2d_matrix() const {
-        return Matrix2d(sdn * sdn, sdne, sdne, sde * sde);
+        return Matrix2d(sde * sde, sdne, sdne, sdn * sdn);
     }
 
     // Calculate position uncertainty (2D)
