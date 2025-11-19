@@ -652,16 +652,18 @@ def collect_observation_features_from_cmm(
                             "id": traj_id_str,
                             "kind": "observation_point",
                             "seq": seq,
+                            "lon": lon,
+                            "lat": lat,
                             "timestamp": timestamp_val,
                             "timestamp_raw": timestamps[seq] if seq < len(timestamps) else None,
                             "pl": to_float(pl),
                             "sdn": sdn,
                             "sde": sde,
                             "sdne": sdne,
-                                },
-                                "geometry": {"type": "Point", "coordinates": [lon, lat]},
-                            }
-                        )
+                        },
+                        "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                    }
+                )
 
                 cov_matrix_m = np.array(
                     [[sde * sde, sdne], [sdne, sdn * sdn]], dtype=float
@@ -832,6 +834,8 @@ def collect_ground_truth_features(
                             "source": "ground_truth",
                             "kind": "ground_truth_point",
                             "seq": idx,
+                            "lon": lon,
+                            "lat": lat,
                             "timestamp": to_float(timestamp_raw),
                             "timestamp_raw": timestamp_raw,
                             "ep": None,
@@ -912,6 +916,8 @@ def collect_point_features(
                         "source": dataset_name,
                         "kind": f"{dataset_name}_point",
                         "seq": idx,
+                        "lon": lon,
+                        "lat": lat,
                         "timestamp": to_float(get_value("timestamp")),
                         "timestamp_raw": get_value("timestamp"),
                         "ep": to_float(get_value("ep")),
@@ -1410,6 +1416,8 @@ def render_html(
         const label = kind === 'cmm_point' ? 'CMM' : 'FMM';
         return '<strong>' + label + ' ID: ' + props.id + '</strong><br/>' +
           'Seq: ' + props.seq + '<br/>' +
+          'Lon: ' + formatNumber(props.lon, 6) + '<br/>' +
+          'Lat: ' + formatNumber(props.lat, 6) + '<br/>' +
           'Timestamp: ' + formatTimestamp(props.timestamp_raw) + '<br/>' +
           'Error: ' + formatNumber(props.error, 3) + '<br/>' +
           'EP: ' + formatNumber(props.ep, 6) + '<br/>' +
@@ -1426,6 +1434,8 @@ def render_html(
       if (kind === 'ground_truth_point') {
         return '<strong>Ground Truth ID: ' + props.id + '</strong><br/>' +
           'Seq: ' + props.seq + '<br/>' +
+          'Lon: ' + formatNumber(props.lon, 6) + '<br/>' +
+          'Lat: ' + formatNumber(props.lat, 6) + '<br/>' +
           'Timestamp: ' + formatTimestamp(props.timestamp_raw);
       }
       if (kind === 'ground_edge') {
@@ -1436,9 +1446,14 @@ def render_html(
       }
       if (kind === 'observation_point' || kind === 'observation_cov') {
         const label = kind === 'observation_point' ? 'Observation' : 'Observation Ellipse';
+        const coordHtml = kind === 'observation_point'
+          ? 'Lon: ' + formatNumber(props.lon, 6) + '<br/>' +
+            'Lat: ' + formatNumber(props.lat, 6) + '<br/>'
+          : '';
         return '<strong>' + label + ' ID: ' + props.id + '</strong><br/>' +
           'Seq: ' + props.seq + '<br/>' +
           'Timestamp: ' + formatTimestamp(props.timestamp_raw) + '<br/>' +
+          coordHtml +
           'PL: ' + formatNumber(props.pl, 3) + '<br/>' +
           'sdN: ' + formatNumber(props.sdn, 6) + '<br/>' +
           'sdE: ' + formatNumber(props.sde, 6) + '<br/>' +
