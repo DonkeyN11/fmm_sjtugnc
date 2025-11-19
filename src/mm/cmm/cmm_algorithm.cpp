@@ -36,6 +36,7 @@ using namespace FMM::MM;
 
 namespace {
 
+// Remove leading/trailing whitespace characters to sanitize tokens read from CSV files.
 std::string trim_copy(const std::string &input) {
     const auto begin = input.find_first_not_of(" \t\r\n");
     if (begin == std::string::npos) {
@@ -45,6 +46,8 @@ std::string trim_copy(const std::string &input) {
     return input.substr(begin, end - begin + 1);
 }
 
+// Lowercase helper that avoids repeated string creation when
+// normalizing column headers originating from user provided files.
 std::string to_lower_copy(const std::string &input) {
     std::string lowered = input;
     std::transform(lowered.begin(), lowered.end(), lowered.begin(),
@@ -52,6 +55,7 @@ std::string to_lower_copy(const std::string &input) {
     return lowered;
 }
 
+// Split a delimited line while preserving trailing empty fields to stay aligned with CSV semantics.
 std::vector<std::string> split_line(const std::string &line, char delimiter) {
     std::vector<std::string> tokens;
     std::stringstream ss(line);
@@ -65,6 +69,7 @@ std::vector<std::string> split_line(const std::string &line, char delimiter) {
     return tokens;
 }
 
+// Attempt to parse a floating point number while rejecting partially parsed strings.
 std::optional<double> parse_double(const std::string &value) {
     try {
         size_t parsed = 0;
@@ -78,6 +83,7 @@ std::optional<double> parse_double(const std::string &value) {
     }
 }
 
+// Attempt to parse a signed integer while ensuring the whole token is consumed.
 std::optional<long long> parse_integer(const std::string &value) {
     try {
         size_t parsed = 0;
@@ -92,6 +98,7 @@ std::optional<long long> parse_integer(const std::string &value) {
 }
 
 template <typename T>
+// Parse a JSON array (encoded inside a CSV field) into a numeric vector of type T.
 bool parse_numeric_array(const std::string &json_text, std::vector<T> *output) {
     output->clear();
     const std::string trimmed = trim_copy(json_text);
@@ -113,6 +120,7 @@ bool parse_numeric_array(const std::string &json_text, std::vector<T> *output) {
     return true;
 }
 
+// Parse and validate covariance matrices encoded as flattened JSON arrays.
 bool parse_covariance_array(const std::string &json_text,
                             std::vector<CovarianceMatrix> *output) {
     output->clear();
@@ -146,21 +154,26 @@ bool parse_covariance_array(const std::string &json_text,
     return true;
 }
 
+// Compute squared Mahalanobis distance given a 2x2 covariance inverse.
 double compute_mahalanobis_sq(const Matrix2d &cov_inv, double dx, double dy) {
     return cov_inv.m[0][0] * dx * dx +
            2 * cov_inv.m[0][1] * dx * dy +
            cov_inv.m[1][1] * dy * dy;
 }
 
+// Fallback Euclidean distance squared when covariance is not present.
 double compute_euclidean_sq(double dx, double dy) {
     return dx * dx + dy * dy;
 }
 
+// Helper holder bundling a candidate with its ranking metric so that callers
+// can keep additional bookkeeping alongside the Candidate instance.
 struct CandidateWithMetric {
     Candidate candidate;
     double metric;
 };
 
+// Normalize trustworthiness values of a layer so that they sum to one when positive.
 void normalize_layer_trust(TGLayer *layer) {
     if (layer == nullptr || layer->empty()) {
         return;
@@ -194,6 +207,8 @@ void normalize_layer_trust(TGLayer *layer) {
     }
 }
 
+// Project an observation onto every segment of an edge and return the best candidate
+// according to Mahalanobis (or Euclidean) distance along with the score used to rank it.
 std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
                                                          const CORE::Point &obs_point,
                                                          bool valid_covariance,
@@ -216,6 +231,7 @@ std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
     const int num_points = geom.get_num_points();
     double accumulated = 0.0;
 
+    // Walk along every segment of this edge geometry to locate the closest projection.
     for (int seg = 0; seg < num_points - 1; ++seg) {
         double sx = geom.get_x(seg);
         double sy = geom.get_y(seg);
@@ -232,6 +248,7 @@ std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
         double obs_minus_start_y = obs_y - sy;
         double t = 0.0;
         if (valid_covariance) {
+            // Prefer anisotropic projection when a covariance matrix is available.
             double numerator = dx * (cov_inv.m[0][0] * obs_minus_start_x + cov_inv.m[0][1] * obs_minus_start_y) +
                                dy * (cov_inv.m[1][0] * obs_minus_start_x + cov_inv.m[1][1] * obs_minus_start_y);
             double denominator = dx * (cov_inv.m[0][0] * dx + cov_inv.m[0][1] * dy) +
@@ -242,6 +259,7 @@ std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
                 t = numerator / denominator;
             }
         } else {
+            // Fall back to Euclidean projection if no covariance was provided.
             t = (obs_minus_start_x * dx + obs_minus_start_y * dy) / seg_len_sq;
         }
         if (t < 0.0) t = 0.0;
@@ -269,6 +287,7 @@ std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
         return std::nullopt;
     }
 
+    // Package the best projection and supporting metrics into a Candidate instance.
     Candidate candidate{};
     candidate.index = (*next_candidate_index)++;
     candidate.edge = edge;
@@ -280,6 +299,7 @@ std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
     return result;
 }
 
+// Small helper for 2x2 matrix multiplication used during covariance propagation.
 Matrix2d multiply_matrices(const Matrix2d &lhs, const Matrix2d &rhs) {
     return Matrix2d(
         lhs.m[0][0] * rhs.m[0][0] + lhs.m[0][1] * rhs.m[1][0],
@@ -288,10 +308,12 @@ Matrix2d multiply_matrices(const Matrix2d &lhs, const Matrix2d &rhs) {
         lhs.m[1][0] * rhs.m[0][1] + lhs.m[1][1] * rhs.m[1][1]);
 }
 
+// Convenience transpose for the light-weight Matrix2d structure.
 Matrix2d transpose_matrix(const Matrix2d &mat) {
     return Matrix2d(mat.m[0][0], mat.m[1][0], mat.m[0][1], mat.m[1][1]);
 }
 
+// Heuristic that checks if a geometry already lives in projected coordinates.
 bool geometry_is_projected(const CORE::LineString &geom) {
     const int num_points = geom.get_num_points();
     for (int i = 0; i < num_points; ++i) {
@@ -304,6 +326,7 @@ bool geometry_is_projected(const CORE::LineString &geom) {
     return false;
 }
 
+// Apply an in place GDAL transformation to every point in the linestring.
 bool transform_linestring(CORE::LineString *line,
                           OGRCoordinateTransformation *transform) {
     if (!line || transform == nullptr) {
@@ -322,6 +345,7 @@ bool transform_linestring(CORE::LineString *line,
     return true;
 }
 
+// Store intermediate results of projecting a single WGS84 coordinate to the network CRS.
 struct TransformInfo {
     Matrix2d jacobian;
     double proj_x;
@@ -330,6 +354,7 @@ struct TransformInfo {
     double scale_lat;
 };
 
+// Compute projected coordinates and numerical Jacobian for a lon/lat input.
 std::optional<TransformInfo> compute_transform_info(
     OGRCoordinateTransformation *transform,
     double lon_deg,
@@ -371,6 +396,8 @@ std::optional<TransformInfo> compute_transform_info(
     return info;
 }
 
+// Conditionally reproject GPS trajectories into the network CRS (when available) and
+// update their covariance/protection metadata accordingly.
 bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
                                   const NETWORK::Network &network,
                                   bool convert_to_projected) {
@@ -436,8 +463,8 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
                     Matrix2d cov2d = cov.to_2d_matrix();
                     Matrix2d temp = multiply_matrices(info.jacobian, cov2d);
                     Matrix2d cov_new = multiply_matrices(temp, transpose_matrix(info.jacobian));
-                    cov.sdn = std::sqrt(std::max(cov_new.m[0][0], 0.0));
-                    cov.sde = std::sqrt(std::max(cov_new.m[1][1], 0.0));
+                    cov.sde = std::sqrt(std::max(cov_new.m[0][0], 0.0));
+                    cov.sdn = std::sqrt(std::max(cov_new.m[1][1], 0.0));
                     cov.sdne = cov_new.m[0][1];
                 }
 
@@ -465,6 +492,7 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
 } // namespace
 
 // Implementation of CovarianceMapMatchConfig
+// Keep configuration construction centralized so both XML and CLI share defaults.
 CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates_arg,
                                                    double protection_level_multiplier_arg,
                                                    double reverse_tolerance,
@@ -477,12 +505,14 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg) {
 }
 
+// Dump runtime configuration for debugging or reproducibility.
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
     SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {}",
                 k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates);
 }
 
+// Parse configuration fields from XML, falling back to hard-coded defaults when needed.
 CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     const boost::property_tree::ptree &xml_data) {
     int k = xml_data.get("config.parameters.k", 8); 
@@ -494,6 +524,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates};
 }
 
+// Parse configuration flags from CLI arguments.
 CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     const cxxopts::ParseResult &arg_data) {
     int k = arg_data["candidates"].as<int>();
@@ -505,6 +536,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates};
 }
 
+// Register all tunable knobs so the CLI help stays in sync with the structure.
 void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
     options.add_options()
         ("k,candidates", "Number of candidates",
@@ -521,6 +553,7 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<bool>()->default_value("true"));
 }
 
+// Append a short textual description for the Python binding documentation.
 void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "-k/--candidates (optional) <int>: Number of candidates (8)\n";
     oss << "--min_candidates (optional) <int>: Minimum number of candidates to keep (3)\n";
@@ -530,6 +563,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
 }
 
+// Quick sanity checks to guard against invalid user supplied parameters.
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         protection_level_multiplier <= 0 || reverse_tolerance < 0 || reverse_tolerance > 1) {
@@ -542,7 +576,7 @@ bool CovarianceMapMatchConfig::validate() const {
 }
 
 // Implementation of CovarianceMapMatch
-
+// Evaluate emission probabilities by respecting each observation's covariance model.
 double CovarianceMapMatch::calculate_emission_probability(
     const CORE::Point &point_observed,
     const CORE::Point &point_candidate,
@@ -571,6 +605,8 @@ double CovarianceMapMatch::calculate_emission_probability(
     return normalization * std::exp(-0.5 * mahalanobis_dist_sq);
 }
 
+// Enumerate candidate projections per point by respecting both covariance ellipses
+// and the provided protection levels that limit how far points can deviate.
 CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_level(
     const CORE::LineString &geom,
     const std::vector<CovarianceMatrix> &covariances,
@@ -611,7 +647,8 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         Point_Candidates selected_candidates;
         std::vector<double> raw_probabilities;
 
-    if (config.use_mahalanobis_candidates) {
+        // Optionally refine the initial network search using Mahalanobis-aware projection.
+        if (config.use_mahalanobis_candidates) {
             bool radius_expanded = false;
 
             while (true) {
@@ -702,6 +739,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 radius_expanded = true;
             }
         } else {
+            // Basic candidate search that directly relies on network_kNN results.
             CORE::LineString single_point_geom;
             single_point_geom.add_point(point);
             Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
@@ -780,6 +818,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
     return result;
 }
 
+// Execute the full map-matching pipeline for a single trajectory using covariance-aware search.
 MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
                                           const CovarianceMapMatchConfig &config) {
     SPDLOG_DEBUG("Count of points in trajectory {}", traj.geom.get_num_points());
@@ -800,6 +839,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     SPDLOG_DEBUG("Trajectory candidate {}", tc);
     if (tc.empty()) return MatchResult{};
 
+    // Store lightweight emission info for optional debug output or Python bindings.
     std::vector<std::vector<CandidateEmission>> candidate_details(tc.size());
     for (size_t idx = 0; idx < tc.size(); ++idx) {
         const Point_Candidates &cand_list = tc[idx];
@@ -819,6 +859,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     SPDLOG_DEBUG("Generate transition graph");
     TransitionGraph tg(tc, emission_probabilities);
 
+    // Populate transition costs and trustworthiness using the covariance-aware routine.
     SPDLOG_DEBUG("Update cost in transition graph using CMM");
     update_tg_cmm(&tg, traj, config);
 
@@ -858,6 +899,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     return match_result;
 }
 
+// Compute the shortest-path distance between two candidates and allow limited reverse travel.
 double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
                                       double reverse_tolerance) {
     // Handle transitions along the same edge directly, consistent with FMM logic.
@@ -871,12 +913,14 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
         }
     }
 
+    // Otherwise rely on UBODT lookup for forward path between successive edges.
     NodeIndex s = ca->edge->target;
     NodeIndex e = cb->edge->source;
     auto *r = ubodt_->look_up(s, e);
     double sp_dist = r ? r->cost : -1;
     if (sp_dist < 0) {
         // No path exists, try reverse direction
+        // When forward lookup fails, try to see if reverse travel is short enough to allow.
         s = ca->edge->source;
         e = cb->edge->target;
         r = ubodt_->look_up(s, e);
@@ -897,6 +941,7 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
     }
 }
 
+// Recompute emission normalization, transition penalties, and layer trust for each point pair.
 void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
                                        const CMMTrajectory &traj,
                                        const CovarianceMapMatchConfig &config) {
@@ -908,6 +953,7 @@ void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
     tg->reset_layer(&layers[0]);
     normalize_layer_trust(&layers[0]);
 
+    // Sweep through each pair of consecutive layers to update transition likelihoods.
     for (int level = 0; level < N - 1; ++level) {
         TGLayer *la_ptr = &layers[level];
         TGLayer *lb_ptr = &layers[level + 1];
@@ -927,11 +973,13 @@ void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
     }
 }
 
+// Update all transitions between two consecutive layers based on path feasibility and
+// Mahalanobis-aware emission probabilities.
 void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *lb_ptr,
-                                         double eu_dist, double reverse_tolerance,
-                                         bool *connected,
-                                         const CMMTrajectory &traj,
-                                         const CovarianceMapMatchConfig &config) {
+                                          double eu_dist, double reverse_tolerance,
+                                          bool *connected,
+                                          const CMMTrajectory &traj,
+                                          const CovarianceMapMatchConfig &config) {
     bool layer_connected = false;
     const size_t prev_candidate_count = la_ptr->size();
     const size_t next_candidate_count = lb_ptr->size();
@@ -1005,6 +1053,8 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
     }
 }
 
+// Entry point used by CLI/Python binding: parse trajectories, optionally reproject them,
+// run the matcher, and write the outputs requested in result_config.
 std::string CovarianceMapMatch::match_gps_file(
     const FMM::CONFIG::GPSConfig &gps_config,
     const FMM::CONFIG::ResultConfig &result_config,
@@ -1015,6 +1065,7 @@ std::string CovarianceMapMatch::match_gps_file(
     std::string status;
     bool validate = true;
 
+    // Fail fast if any configuration block is malformed.
     if (!gps_config.validate()) {
         oss << "gps_config invalid\n";
         validate = false;
@@ -1063,6 +1114,8 @@ std::string CovarianceMapMatch::match_gps_file(
         header_index[to_lower_copy(trim_copy(headers[idx]))] = idx;
     }
 
+    // Resolve column positions in a case-insensitive manner so user supplied
+    // CSV files can use different header spelling without recompilation.
     auto find_index = [&](const std::vector<std::string> &candidates) -> int {
         for (const auto &candidate : candidates) {
             const std::string key = to_lower_copy(trim_copy(candidate));
@@ -1087,6 +1140,7 @@ std::string CovarianceMapMatch::match_gps_file(
     int covariance_idx = find_index({"covariances", "covariance", "covariance_json"});
     int protection_idx = find_index({"protection_levels", "protection_level", "pl"});
 
+    // The parser supports both aggregated trajectories per row and point-by-point formats.
     bool aggregated_format = geom_idx >= 0 &&
                              timestamp_idx >= 0 &&
                              covariance_idx >= 0 &&
@@ -1128,6 +1182,7 @@ std::string CovarianceMapMatch::match_gps_file(
     int line_number = 1;
 
     if (aggregated_format) {
+        // Aggregated format: each CSV row stores the full trajectory geometry and metadata.
         const int required_max_index = std::max(
             std::max(id_idx, geom_idx),
             std::max(timestamp_idx, std::max(covariance_idx, protection_idx)));
@@ -1227,6 +1282,7 @@ std::string CovarianceMapMatch::match_gps_file(
             trajectories.push_back(std::move(traj));
         }
     } else {
+        // Point-based format: accumulate samples per trajectory id to rebuild a LineString later.
         struct TrajectoryBuilder {
             CORE::LineString geom;
             std::vector<double> timestamps;
@@ -1234,10 +1290,12 @@ std::string CovarianceMapMatch::match_gps_file(
             std::vector<double> protection_levels;
         };
 
+        // Preserve insertion order so trajectories are emitted consistently with the input.
         std::unordered_map<long long, size_t> id_to_index;
         std::vector<long long> insertion_order;
         std::vector<TrajectoryBuilder> builders;
 
+        // Track the maximum column index referenced to reject malformed rows early.
         const int required_max_index = [&]() {
             int max_index = id_idx;
             max_index = std::max(max_index, timestamp_idx);
@@ -1282,6 +1340,7 @@ std::string CovarianceMapMatch::match_gps_file(
             }
             const long long id_value = *id_opt;
 
+            // Lazily create a builder per trajectory id as rows arrive.
             auto get_builder_index = [&]() -> size_t {
                 auto it = id_to_index.find(id_value);
                 if (it != id_to_index.end()) {
@@ -1372,6 +1431,8 @@ std::string CovarianceMapMatch::match_gps_file(
     ifs.close();
 
     bool trajectories_reprojected = false;
+    // Align GPS observations with the network CRS if requested so the matcher
+    // can operate in a consistent coordinate system.
     if (convert_to_projected) {
         try {
             trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, convert_to_projected);
@@ -1380,6 +1441,7 @@ std::string CovarianceMapMatch::match_gps_file(
         }
     }
 
+    // Prepare the CSV writer and the optional transformation back to geographic coordinates.
     FMM::IO::CSVMatchResultWriter writer(result_config.file, result_config.output_config);
     std::unique_ptr<OGRCoordinateTransformation, decltype(&OCTDestroyCoordinateTransformation)>
         output_transform(nullptr, OCTDestroyCoordinateTransformation);
@@ -1403,6 +1465,7 @@ std::string CovarianceMapMatch::match_gps_file(
     if (!trajectories_reprojected) {
         output_transform_ptr = nullptr;
     }
+    // Helper that restores the match results to the original CRS before writing them out.
     auto apply_output_transform = [&](CORE::Trajectory *traj, MM::MatchResult *match) {
         if (output_transform_ptr == nullptr || traj == nullptr || match == nullptr) {
             return;
@@ -1437,6 +1500,7 @@ std::string CovarianceMapMatch::match_gps_file(
             }
         }
     };
+    // Maintain counters for logging throughput and matching success rates.
     const int step_size = 1000;
     int progress = 0;
     int points_matched = 0;
@@ -1445,6 +1509,7 @@ std::string CovarianceMapMatch::match_gps_file(
     int total_trajs = 0;
     auto begin_time = UTIL::get_current_time();
 
+    // Parallel execution path guarded by OpenMP when multiple trajectories exist.
     if (use_omp && trajectories.size() > 1) {
 #ifdef _OPENMP
         const int trajectories_count = static_cast<int>(trajectories.size());
@@ -1482,6 +1547,7 @@ std::string CovarianceMapMatch::match_gps_file(
 #endif
     }
 
+    // Serial fallback when OpenMP is disabled or there is just a single trajectory.
     if (!use_omp || trajectories.size() <= 1) {
         for (const auto &trajectory : trajectories) {
             if (progress % step_size == 0) {
@@ -1508,6 +1574,7 @@ std::string CovarianceMapMatch::match_gps_file(
     double duration = UTIL::get_duration(begin_time, end_time);
     double speed = duration > 0 ? static_cast<double>(points_matched) / duration : 0.0;
 
+    // Report a concise summary so CLI users can inspect throughput and error counts.
     oss << "Status: success\n";
     oss << "Time takes " << duration << " seconds\n";
     oss << "Total points " << total_points << " matched " << points_matched << "\n";
