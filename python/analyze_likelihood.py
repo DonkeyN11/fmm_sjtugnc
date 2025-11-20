@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Plot frequency histograms for ep, tp, and trustworthi probability columns.
+Plot frequency histograms for ep, tp, trustworthiness probability columns, and an
+optional trajectory error CDF against ground truth.
 
 Usage example:
     python analyze_likelihood.py \
@@ -320,6 +321,44 @@ def plot_error_histogram(
     return fig
 
 
+def plot_error_cdf(datasets: Sequence[Tuple[str, pd.Series]]) -> plt.Figure | None:
+    """Plot cumulative distribution functions for trajectory errors."""
+    if not datasets:
+        return None
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    color_cycle = plt.rcParams.get("axes.prop_cycler")
+    colors = color_cycle.by_key().get("color", []) if color_cycle else []
+    plotted = False
+
+    for idx, (label, series) in enumerate(datasets):
+        if series.empty:
+            continue
+        sorted_vals = np.sort(series.to_numpy())
+        probs = np.arange(1, len(sorted_vals) + 1) / len(sorted_vals)
+        color = colors[idx % len(colors)] if colors else None
+        ax.step(sorted_vals, probs, where="post", label=label, color=color)
+        plotted = True
+
+    if not plotted:
+        plt.close(fig)
+        return None
+
+    ax.set_xlabel("Position Error (metres)")
+    ax.set_ylabel("Cumulative probability")
+    ax.set_ylim(0.0, 1.0)
+    ax.grid(True, linestyle="--", linewidth=0.7, alpha=0.6)
+    ax.set_title("Trajectory error cumulative distribution")
+    ax.legend()
+    fig.tight_layout()
+
+    try:
+        fig.canvas.manager.set_window_title("Trajectory error CDF")
+    except Exception:
+        pass
+    return fig
+
+
 def plot_metric_histograms(
     metric: str,
     datasets: Sequence[Tuple[str, pd.Series]],
@@ -427,6 +466,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             fig_error = plot_error_histogram(error_datasets, args.bins)
             if fig_error is not None:
                 figures.append(("error", fig_error))
+            fig_cdf = plot_error_cdf(error_datasets)
+            if fig_cdf is not None:
+                figures.append(("error_cdf", fig_cdf))
         if axis_error_datasets:
             fig_axis = plot_axis_error_stats(axis_error_datasets)
             if fig_axis is not None:
