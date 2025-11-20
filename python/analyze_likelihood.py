@@ -9,7 +9,9 @@ Usage example:
 
 This script expects semicolon separated CSV files with at least ep, tp, and
 cumu (or cumu_prob) numeric columns. For each metric, the script opens a figure
-window containing one subplot per input file.
+window containing one subplot per input file. When ground truth trajectories
+are supplied, the script additionally plots trajectory error histograms and
+per-dataset E/N direction error mean ± standard deviation bars.
 """
 
 from __future__ import annotations
@@ -208,14 +210,21 @@ def load_ground_truth_geoms(path: Path) -> Dict[str, List[Tuple[float, float]]]:
     return mapping
 
 
-def compute_errors_for_dataset(
+def compute_error_components_for_dataset(
     result_path: Path,
     ground_truth: Dict[str, List[Tuple[float, float]]],
-) -> pd.Series:
-    """Compute Euclidean distances between result points and ground truth."""
+) -> Tuple[pd.Series, pd.Series, pd.Series]:
+    """
+    Compute Euclidean errors and their E/N direction components.
+
+    Returns a tuple of (magnitude_series, e_component_series, n_component_series).
+    """
     errors: List[float] = []
+    delta_e_list: List[float] = []
+    delta_n_list: List[float] = []
     if not result_path.exists():
-        return pd.Series(dtype=float)
+        empty = pd.Series(dtype=float)
+        return empty, empty, empty
     with result_path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
@@ -235,28 +244,38 @@ def compute_errors_for_dataset(
             for idx in range(count):
                 est_x, est_y = estimate_coords[idx]
                 truth_x, truth_y = truth_coords[idx]
-                errors.append(math.hypot(est_x - truth_x, est_y - truth_y))
-    return pd.Series(errors, dtype=float).replace([np.inf, -np.inf], np.nan).dropna()
+                delta_e = est_x - truth_x
+                delta_n = est_y - truth_y
+                errors.append(math.hypot(delta_e, delta_n))
+                delta_e_list.append(delta_e)
+                delta_n_list.append(delta_n)
+
+    def clean_series(values: List[float]) -> pd.Series:
+        return pd.Series(values, dtype=float).replace([np.inf, -np.inf], np.nan).dropna()
+
+    return clean_series(errors), clean_series(delta_e_list), clean_series(delta_n_list)
 
 
 def prepare_error_datasets(
     input_paths: Iterable[Path],
     ground_truth_path: Path,
-) -> List[Tuple[str, pd.Series]]:
-    """Compute error series for each dataset with respect to ground truth."""
+) -> Tuple[List[Tuple[str, pd.Series]], List[Tuple[str, pd.Series, pd.Series]]]:
+    """Compute error and axis-specific series for each dataset."""
     ground_truth = load_ground_truth_geoms(ground_truth_path)
     datasets: List[Tuple[str, pd.Series]] = []
+    axis_datasets: List[Tuple[str, pd.Series, pd.Series]] = []
     for path in input_paths:
-        series = compute_errors_for_dataset(path, ground_truth)
-        if series.empty:
+        magnitude, delta_e, delta_n = compute_error_components_for_dataset(path, ground_truth)
+        if magnitude.empty:
             print(
                 f"[WARN] No error data computed for '{path}'. "
                 "Ensure pgeom coordinates align with ground truth.",
                 file=sys.stderr,
             )
             continue
-        datasets.append((path.stem, series))
-    return datasets
+        datasets.append((path.stem, magnitude))
+        axis_datasets.append((path.stem, delta_e, delta_n))
+    return datasets, axis_datasets
 
 
 def plot_error_histogram(
@@ -344,6 +363,42 @@ def plot_metric_histograms(
     return fig
 
 
+def plot_axis_error_stats(
+    axis_datasets: Sequence[Tuple[str, pd.Series, pd.Series]]
+) -> plt.Figure | None:
+    """Plot mean and standard deviation for E and N direction errors."""
+    if not axis_datasets:
+        return None
+
+    labels = [label for label, _, _ in axis_datasets]
+    e_means = [series.mean() if not series.empty else 0.0 for _, series, _ in axis_datasets]
+    e_stds = [series.std(ddof=1) if len(series) > 1 else 0.0 for _, series, _ in axis_datasets]
+    n_means = [series.mean() if not series.empty else 0.0 for _, _, series in axis_datasets]
+    n_stds = [series.std(ddof=1) if len(series) > 1 else 0.0 for _, _, series in axis_datasets]
+
+    fig_width = max(8, len(labels) * 2.5)
+    fig, axes = plt.subplots(1, 2, figsize=(fig_width, 4))
+
+    def plot_component(ax, means, stds, title, color):
+        positions = np.arange(len(labels))
+        ax.bar(positions, means, yerr=stds, capsize=6, color=color, alpha=0.8, edgecolor="black")
+        ax.axhline(0.0, color="gray", linewidth=1, linestyle="--")
+        ax.set_xticks(positions)
+        ax.set_xticklabels(labels, rotation=30, ha="right")
+        ax.set_ylabel("Error (meters)")
+        ax.set_title(title)
+
+    plot_component(axes[0], e_means, e_stds, "E-direction error mean ± std", "#1f77b4")
+    plot_component(axes[1], n_means, n_stds, "N-direction error mean ± std", "#ff7f0e")
+    fig.tight_layout()
+
+    try:
+        fig.canvas.manager.set_window_title("E/N direction error statistics")
+    except Exception:
+        pass
+    return fig
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     args = parse_args(argv)
     set_max_csv_field_size()
@@ -363,14 +418,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.ground_truth is not None:
         try:
-            error_datasets = prepare_error_datasets(input_paths, args.ground_truth)
+            error_datasets, axis_error_datasets = prepare_error_datasets(input_paths, args.ground_truth)
         except FileNotFoundError as exc:
             print(f"[ERROR] {exc}", file=sys.stderr)
             error_datasets = []
+            axis_error_datasets = []
         if error_datasets:
             fig_error = plot_error_histogram(error_datasets, args.bins)
             if fig_error is not None:
                 figures.append(("error", fig_error))
+        if axis_error_datasets:
+            fig_axis = plot_axis_error_stats(axis_error_datasets)
+            if fig_axis is not None:
+                figures.append(("axis_error", fig_axis))
 
     if args.save_dir is not None and figures:
         args.save_dir.mkdir(parents=True, exist_ok=True)
