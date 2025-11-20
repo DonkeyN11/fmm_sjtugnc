@@ -236,9 +236,9 @@ def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
 
         full_cov = np.array(
             [
-                [sdn * sdn, sdne, sdun],
-                [sdne, sde * sde, sdeu],
-                [sdun, sdeu, sdu * sdu],
+                [sde * sde, sdne, sdeu],
+                [sdne, sdn * sdn, sdun],
+                [sdeu, sdun, sdu * sdu],
             ],
             dtype=float,
         )
@@ -257,15 +257,15 @@ def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
 
         pl_matrix = np.array(
             [
-                [sdn * sdn, sdne],
-                [sdne, sde * sde],
+                [sde * sde, sdne],
+                [sdne, sdn * sdn],
             ],
             dtype=float,
         )
         if not _is_positive_definite(pl_matrix):
             continue
 
-        return CovarianceParams(sdn, sde, sdu, sdne, sdeu, sdun, noise_cov, pl_matrix)
+        return CovarianceParams(sde, sdn, sdu, sdne, sdeu, sdun, noise_cov, pl_matrix)
 
     raise RuntimeError("Failed to sample a positive-definite covariance matrix.")
 
@@ -557,10 +557,11 @@ def _write_cmm_trajectory_csv(results: List[TrajectoryResult], destination: Path
         writer.writerow(header)
         for traj in sorted(results, key=lambda item: item.traj_id):
             timestamps = [round(value, 6) for value in traj.timestamps]
+            # must follow the sequence of sde, sdn, sdu, sdne, sdeu, sdun
             covariances = [
                 [
-                    round(obs.sdn, 8),
                     round(obs.sde, 8),
+                    round(obs.sdn, 8),
                     round(obs.sdu, 8),
                     round(obs.sdne, 10),
                     round(obs.sdeu, 10),
