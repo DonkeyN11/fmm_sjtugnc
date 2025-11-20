@@ -54,10 +54,10 @@ except ImportError as exc:  # pragma: no cover - import guard
 # --------------------------------------------------------------------------- #
 WGS84_CRS = CRS.from_epsg(4326)
 CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
-MIN_SIGMA_M = 1.0            # metres (horizontal)
-MAX_SIGMA_M = 15.0           # metres (horizontal)
-MIN_SIGMA_UP = 1.0           # metres (vertical)
-MAX_SIGMA_UP = 10.0           # metres (vertical)
+MIN_SIGMA_M = 10.0            # metres (horizontal)
+MAX_SIGMA_M = 50.0           # metres (horizontal)
+MIN_SIGMA_UP = 10.0           # metres (vertical)
+MAX_SIGMA_UP = 50.0           # metres (vertical)
 MAX_COVARIANCE_SAMPLING_ATTEMPTS = 64
 MIN_TRAJECTORY_SPAN_M = 11_000.0  # ≈ 0.1 degrees at the equator
 
@@ -83,8 +83,8 @@ class Observation:
     timestamp: float
     x: float
     y: float
-    sdn: float
     sde: float
+    sdn: float
     sdu: float
     sdne: float
     sdeu: float
@@ -203,14 +203,14 @@ def _load_roads(shapefile: Path) -> List[Tuple[List[List[float]], str, str, str]
 
 @dataclass
 class CovarianceParams:
-    sdn: float
     sde: float
+    sdn: float
     sdu: float
     sdne: float
     sdeu: float
     sdun: float
     noise_cov: np.ndarray  # covariance matrix aligned with (x=east, y=north)
-    pl_matrix: np.ndarray  # covariance matrix aligned with (north, east)
+    pl_matrix: np.ndarray  # covariance matrix aligned with (east, north)
 
 
 def _is_positive_definite(matrix: np.ndarray, atol: float = 1e-12) -> bool:
@@ -428,11 +428,11 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             truth_coords.append((base_x, base_y))
 
             params = _random_covariance_params(rng)
-            signature = (params.sdn, params.sde, params.sdne)
+            signature = (params.sde, params.sdn, params.sdne)
             attempts = 0
             while prev_signature is not None and np.allclose(signature, prev_signature) and attempts < 5:
                 params = _random_covariance_params(rng)
-                signature = (params.sdn, params.sde, params.sdne)
+                signature = (params.sde, params.sdn, params.sdne)
                 attempts += 1
             prev_signature = signature
 
@@ -526,7 +526,7 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -> None:
     header = [
         "id", "seq", "timestamp", "x", "y",
-        "sdn", "sde", "sdne", "protection_level",
+        "sde", "sdn", "sdne", "protection_level",
     ]
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8", newline="") as fh:
@@ -541,8 +541,8 @@ def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -
                         f"{obs.timestamp:.6f}",
                         f"{obs.x:.8f}",
                         f"{obs.y:.8f}",
-                        f"{obs.sdn:.8f}",
                         f"{obs.sde:.8f}",
+                        f"{obs.sdn:.8f}",
                         f"{obs.sdne:.10f}",
                         f"{obs.protection_level:.8f}",
                     ]
