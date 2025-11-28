@@ -757,6 +757,103 @@ def plot_accuracy_vs_coverage(
     return fig
 
 
+def compute_roc_points(trust: np.ndarray, correct: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute ROC curve (FPR, TPR) for trustworthiness as a score."""
+    mask_valid = ~np.isnan(trust)
+    trust = trust[mask_valid]
+    correct = correct[mask_valid]
+    total_pos = np.count_nonzero(correct)
+    total_neg = len(correct) - total_pos
+    if len(trust) == 0 or total_pos == 0 or total_neg == 0:
+        return np.array([]), np.array([])
+
+    thresholds = np.unique(trust)
+    thresholds.sort()
+    thresholds = thresholds[::-1]  # descending
+
+    fpr_list: List[float] = [0.0]
+    tpr_list: List[float] = [0.0]
+    for tau in thresholds:
+        mask = trust >= tau
+        tp = float(np.count_nonzero(correct[mask]))
+        fp = float(np.count_nonzero(mask) - tp)
+        tpr_list.append(tp / total_pos)
+        fpr_list.append(fp / total_neg)
+    fpr_list.append(1.0)
+    tpr_list.append(1.0)
+    return np.array(fpr_list, dtype=float), np.array(tpr_list, dtype=float)
+
+
+def plot_roc_curves(datasets: Sequence[Tuple[str, np.ndarray, np.ndarray]]) -> plt.Figure | None:
+    """Plot ROC curves for trustworthiness scores distinguishing correct vs incorrect."""
+    if not datasets:
+        return None
+
+    fig, ax = plt.subplots(figsize=(7, 6))
+    color_cycle = plt.rcParams.get("axes.prop_cycler")
+    colors = color_cycle.by_key().get("color", []) if color_cycle else []
+
+    for idx, (label, trust, correct) in enumerate(datasets):
+        fpr, tpr = compute_roc_points(trust, correct)
+        if fpr.size == 0:
+            continue
+        color = colors[idx % len(colors)] if colors else None
+        auc = float(np.trapezoid(tpr, fpr))
+        ax.plot(fpr, tpr, label=f"{label} (AUC={auc:.3f}, n={len(trust)})", color=color, linewidth=2.0)
+
+    ax.plot([0, 1], [0, 1], linestyle="--", color="gray", linewidth=1.2, label="Chance")
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC curve (trustworthiness as score)")
+    ax.set_xlim(0.0, 1.0)
+    ax.set_ylim(0.0, 1.05)
+    ax.grid(True, linestyle="--", linewidth=0.7, alpha=0.6)
+    ax.legend(loc="lower right")
+    fig.tight_layout()
+
+    try:
+        fig.canvas.manager.set_window_title("ROC curves")
+    except Exception:
+        pass
+    return fig
+
+
+def plot_trust_distributions(
+    datasets: Sequence[Tuple[str, np.ndarray, np.ndarray]]
+) -> plt.Figure | None:
+    """Boxplots of trustworthiness for correct vs incorrect points per dataset."""
+    if not datasets:
+        return None
+
+    rows, cols = subplot_layout(len(datasets))
+    fig, axes = plt.subplots(rows, cols, figsize=(cols * 5, rows * 4), squeeze=False)
+    axes_flat = axes.flatten()
+
+    for ax, (label, trust, correct) in zip(axes_flat, datasets):
+        if trust.size == 0 or correct.size == 0:
+            ax.set_visible(False)
+            continue
+        correct_vals = trust[correct > 0.5]
+        incorrect_vals = trust[correct <= 0.5]
+        data = [correct_vals, incorrect_vals]
+        ax.boxplot(data, tick_labels=["correct", "incorrect"], showfliers=False)
+        ax.set_title(label)
+        ax.set_ylabel("Trustworthiness")
+        ax.grid(True, linestyle="--", linewidth=0.7, alpha=0.6)
+
+    for ax in axes_flat[len(datasets) :]:
+        fig.delaxes(ax)
+
+    fig.suptitle("Trustworthiness distributions by correctness")
+    fig.tight_layout(rect=[0, 0, 1, 0.95])
+
+    try:
+        fig.canvas.manager.set_window_title("Trustworthiness distributions")
+    except Exception:
+        pass
+    return fig
+
+
 def plot_metric_histograms(
     metric: str,
     datasets: Sequence[Tuple[str, pd.Series]],
@@ -887,6 +984,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             fig_pc = plot_accuracy_vs_coverage(correctness_datasets, thresholds)
             if fig_pc is not None:
                 figures.append(("accuracy_coverage", fig_pc))
+            fig_roc = plot_roc_curves(correctness_datasets)
+            if fig_roc is not None:
+                figures.append(("roc", fig_roc))
+            fig_trust_dist = plot_trust_distributions(correctness_datasets)
+            if fig_trust_dist is not None:
+                figures.append(("trust_distributions", fig_trust_dist))
 
     if args.save_dir is not None and figures:
         args.save_dir.mkdir(parents=True, exist_ok=True)
