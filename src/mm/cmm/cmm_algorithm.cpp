@@ -517,20 +517,22 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double reverse_tolerance,
                                                    bool normalized_arg,
                                                    bool use_mahalanobis_candidates_arg,
-                                                   int window_length_arg)
+                                                   int window_length_arg,
+                                                   bool margin_used_trustworthiness_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance),
       normalized(normalized_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
-      window_length(window_length_arg) {
+      window_length(window_length_arg),
+      margin_used_trustworthiness(margin_used_trustworthiness_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
-    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {}",
-                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length);
+    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {} margin_used_trustworthiness {}",
+                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -543,7 +545,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     bool normalized = xml_data.get("config.parameters.normalized", true);
     bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
     int window_length = xml_data.get("config.parameters.window_length", 10);
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length};
+    bool margin_used_trustworthiness = xml_data.get("config.other.margin_used_trustworthiness", true);
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -556,7 +559,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     bool normalized = arg_data["normalized"].as<bool>();
     bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
     int window_length = arg_data["window_length"].as<int>();
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length};
+    bool margin_used_trustworthiness = arg_data["margin_used_trustworthiness"].as<bool>();
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -575,7 +579,9 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("use_mahalanobis", "Use Mahalanobis-based candidate search",
          cxxopts::value<bool>()->default_value("true"))
         ("window_length", "Sliding window length for trustworthiness (points)",
-         cxxopts::value<int>()->default_value("10"));
+         cxxopts::value<int>()->default_value("10"))
+        ("margin_used_trustworthiness", "If true use margin (top1-top2) as trustworthiness, else use top1 score",
+         cxxopts::value<bool>()->default_value("true"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -587,6 +593,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--normalized (optional) <bool>: whether to normalize emission probabilities (true)\n";
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
     oss << "--window_length (optional) <int>: sliding window length for trustworthiness (10)\n";
+    oss << "--margin_used_trustworthiness (optional) <bool>: if true use margin (top1-top2), else use top1 score (true)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -903,7 +910,16 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     matched_candidate_path.reserve(tg_opath.size());
     for (size_t idx = 0; idx < tg_opath.size(); ++idx) {
         const TGNode *a = tg_opath[idx];
-        double trust_value = (idx < trust_margins.size()) ? trust_margins[idx] : a->trustworthiness;
+        double trust_value = a->trustworthiness;
+        if (config.margin_used_trustworthiness) {
+            if (idx < trust_margins.size()) {
+                trust_value = trust_margins[idx];
+            }
+        } else {
+            if (idx < n_best_trust.size() && !n_best_trust[idx].empty()) {
+                trust_value = n_best_trust[idx][0];
+            }
+        }
         matched_candidate_path.push_back(
             MatchedCandidate{*(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist, trust_value});
     }
