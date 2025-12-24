@@ -13,6 +13,7 @@
 #include "config/result_config.hpp"
 #include <omp.h>
 
+#include <boost/geometry.hpp>
 #include <sstream>
 
 namespace FMM {
@@ -31,6 +32,8 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_error) header += ";error";
   if (config_.write_offset) header += ";offset";
   if (config_.write_spdist) header += ";spdist";
+  if (config_.write_sp_dist) header += ";sp_dist";
+  if (config_.write_eu_dist) header += ";eu_dist";
   if (config_.write_pgeom) header += ";pgeom";
   if (config_.write_cpath) header += ";cpath";
   if (config_.write_tpath) header += ";tpath";
@@ -83,6 +86,42 @@ void CSVMatchResultWriter::write_result(
       for (int i = 1; i < N; ++i) {
         buf << result.opt_candidate_path[i].sp_dist
             << (i==N-1?"":",");
+      }
+    }
+  }
+  if (config_.write_sp_dist) {
+    buf << ";";
+    if (!result.opt_candidate_path.empty()) {
+      int N = result.opt_candidate_path.size();
+      for (int i = 0; i < N; ++i) {
+        double value = -1.0;
+        if (!result.sp_distances.empty() && i < static_cast<int>(result.sp_distances.size())) {
+          value = result.sp_distances[i];
+        } else if (i == 0) {
+          value = 0.0;
+        } else {
+          value = result.opt_candidate_path[i].sp_dist;
+        }
+        buf << value << (i==N-1?"":",");
+      }
+    }
+  }
+  if (config_.write_eu_dist) {
+    buf << ";";
+    if (!result.opt_candidate_path.empty()) {
+      int N = result.opt_candidate_path.size();
+      for (int i = 0; i < N; ++i) {
+        double value = -1.0;
+        if (!result.eu_distances.empty() && i < static_cast<int>(result.eu_distances.size())) {
+          value = result.eu_distances[i];
+        } else if (i == 0) {
+          value = 0.0;
+        } else if (i < traj.geom.get_num_points()) {
+          const auto &prev_point = traj.geom.get_point(i - 1);
+          const auto &cur_point = traj.geom.get_point(i);
+          value = boost::geometry::distance(prev_point, cur_point);
+        }
+        buf << value << (i==N-1?"":",");
       }
     }
   }
