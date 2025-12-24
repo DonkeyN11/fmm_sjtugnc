@@ -27,6 +27,8 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "tp ";
   if (output_config.write_trustworthiness)
     ss << "trustworthiness ";
+  if (output_config.write_n_best_trustworthiness)
+    ss << "n_best_trustworthiness ";
   if (output_config.write_cumu_prob)
     ss << "cumu_prob ";
   if (output_config.write_candidates)
@@ -70,6 +72,8 @@ std::string FMM::CONFIG::ResultConfig::to_string() const{
     oss << "tp ";
   if (output_config.write_trustworthiness)
     oss << "trustworthiness ";
+  if (output_config.write_n_best_trustworthiness)
+    oss << "n_best_trustworthiness ";
   if (output_config.write_cumu_prob)
     oss << "cumu_prob ";
   if (output_config.write_candidates)
@@ -127,6 +131,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
     if (xml_data.get_child_optional("config.output.fields.trustworthiness")) {
       config.output_config.write_trustworthiness = true;
     }
+    if (xml_data.get_child_optional("config.output.fields.n_best_trustworthiness")) {
+      config.output_config.write_n_best_trustworthiness = true;
+    }
     if (xml_data.get_child_optional("config.output.fields.cumu_prob")) {
       config.output_config.write_cumu_prob = true;
     }
@@ -157,6 +164,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
       config.output_config.write_ep = true;
       config.output_config.write_tp = true;
       config.output_config.write_trustworthiness = true;
+      config.output_config.write_n_best_trustworthiness = true;
       config.output_config.write_cumu_prob = true;
       config.output_config.write_candidates = true;
       config.output_config.write_length = true;
@@ -210,6 +218,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     if (dict.find("trustworthiness") != dict.end()) {
       config.output_config.write_trustworthiness = true;
     }
+    if (dict.find("n_best_trustworthiness") != dict.end()) {
+      config.output_config.write_n_best_trustworthiness = true;
+    }
     if (dict.find("cumu_prob") != dict.end()) {
       config.output_config.write_cumu_prob = true;
     }
@@ -240,6 +251,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
       config.output_config.write_ep = true;
       config.output_config.write_tp = true;
       config.output_config.write_trustworthiness = true;
+      config.output_config.write_n_best_trustworthiness = true;
       config.output_config.write_cumu_prob = true;
       config.output_config.write_candidates = true;
       config.output_config.write_length = true;
@@ -288,5 +300,5 @@ void FMM::CONFIG::ResultConfig::register_help(std::ostringstream &oss){
   oss<<"--output (required) <string>: Output file name\n";
   oss<<"--output_fields (optional) <string>: Output fields\n";
   oss<<"  opath,cpath,tpath,mgeom,pgeom,\n";
-  oss<<"  offset,error,spdist,tp,ep,trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,all\n";
+  oss<<"  offset,error,spdist,tp,ep,trustworthiness,n_best_trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,all\n";
 };

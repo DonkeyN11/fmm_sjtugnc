@@ -67,7 +67,7 @@ struct MatchedCandidate {
   double tp;  /**< transition probability to previous matched candidate */
   double cumu_prob; /**< cumulative probability of the point */
   double sp_dist; /**< shortest path distance to previous matched candidate */
-  double trustworthiness; /**< combined score ep*tp (ep for first layer) */
+  double trustworthiness; /**< trustworthiness metric (algorithm-specific; CMM uses sliding-window margin) */
 };
 
 /**
@@ -93,6 +93,7 @@ struct MatchResult {
   std::vector<int> indices; /**< index of opath edge in cpath */
   CORE::LineString mgeom; /**< the geometry of the matched path */
   std::vector<std::vector<CandidateEmission>> candidate_details; /**< optional per-observation candidate list */
+  std::vector<std::vector<double>> nbest_trustworthiness; /**< top-N (log) trustworthiness scores per point */
 };
 
 #ifndef SWIG

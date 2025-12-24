@@ -38,6 +38,7 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_ep) header += ";ep";
   if (config_.write_tp) header += ";tp";
   if (config_.write_trustworthiness) header += ";trustworthiness";
+  if (config_.write_n_best_trustworthiness) header += ";n_best_trustworthiness";
   if (config_.write_cumu_prob) header += ";cumu_prob";
   if (config_.write_candidates) header += ";candidates";
   if (config_.write_length) header += ";length";
@@ -153,6 +154,26 @@ void CSVMatchResultWriter::write_result(
         buf << matched.trustworthiness;
         if (i != N - 1) {
           buf << ",";
+        }
+      }
+    }
+  }
+  if (config_.write_n_best_trustworthiness) {
+    buf << ";";
+    const auto &nbest = result.nbest_trustworthiness;
+    if (!nbest.empty()) {
+      for (size_t i = 0; i < nbest.size(); ++i) {
+        buf << "(";
+        const auto &scores = nbest[i];
+        for (size_t j = 0; j < scores.size(); ++j) {
+          buf << scores[j];
+          if (j + 1 < scores.size()) {
+            buf << ",";
+          }
+        }
+        buf << ")";
+        if (i + 1 < nbest.size()) {
+          buf << "|";
         }
       }
     }

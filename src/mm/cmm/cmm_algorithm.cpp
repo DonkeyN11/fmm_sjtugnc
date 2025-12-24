@@ -23,6 +23,7 @@
 #include <optional>
 #include <limits>
 #include <memory>
+#include <utility>
 
 #include <ogrsf_frmts.h>
 
@@ -94,6 +95,24 @@ std::optional<long long> parse_integer(const std::string &value) {
         return result;
     } catch (const std::exception &) {
         return std::nullopt;
+    }
+}
+
+// Maintain a descending list of top-k scores.
+void push_top_k(std::vector<double> *scores, double value, size_t k) {
+    if (!std::isfinite(value)) {
+        return;
+    }
+    auto &vec = *scores;
+    auto it = vec.begin();
+    for (; it != vec.end(); ++it) {
+        if (value > *it) {
+            break;
+        }
+    }
+    vec.insert(it, value);
+    if (vec.size() > k) {
+        vec.pop_back();
     }
 }
 
@@ -497,19 +516,21 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double protection_level_multiplier_arg,
                                                    double reverse_tolerance,
                                                    bool normalized_arg,
-                                                   bool use_mahalanobis_candidates_arg)
+                                                   bool use_mahalanobis_candidates_arg,
+                                                   int window_length_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance),
       normalized(normalized_arg),
-      use_mahalanobis_candidates(use_mahalanobis_candidates_arg) {
+      use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
+      window_length(window_length_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
-    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {}",
-                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates);
+    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {}",
+                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -521,7 +542,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
     bool normalized = xml_data.get("config.parameters.normalized", true);
     bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates};
+    int window_length = xml_data.get("config.parameters.window_length", 10);
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -533,7 +555,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double reverse_tolerance = arg_data["reverse_tolerance"].as<double>();
     bool normalized = arg_data["normalized"].as<bool>();
     bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates};
+    int window_length = arg_data["window_length"].as<int>();
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -550,7 +573,9 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("normalized", "Normalize emission probabilities",
          cxxopts::value<bool>()->default_value("true"))
         ("use_mahalanobis", "Use Mahalanobis-based candidate search",
-         cxxopts::value<bool>()->default_value("true"));
+         cxxopts::value<bool>()->default_value("true"))
+        ("window_length", "Sliding window length for trustworthiness (points)",
+         cxxopts::value<int>()->default_value("10"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -561,15 +586,17 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--reverse_tolerance (optional) <double>: proportion of reverse movement allowed on an edge\n";
     oss << "--normalized (optional) <bool>: whether to normalize emission probabilities (true)\n";
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
+    oss << "--window_length (optional) <int>: sliding window length for trustworthiness (10)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
-        protection_level_multiplier <= 0 || reverse_tolerance < 0 || reverse_tolerance > 1) {
+        protection_level_multiplier <= 0 || reverse_tolerance < 0 || reverse_tolerance > 1 ||
+        window_length <= 0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
-                       "protection_level_multiplier {} reverse_tolerance {}",
-                       k, min_candidates, protection_level_multiplier, reverse_tolerance);
+                       "protection_level_multiplier {} reverse_tolerance {} window_length {}",
+                       k, min_candidates, protection_level_multiplier, reverse_tolerance, window_length);
         return false;
     }
     return true;
@@ -863,17 +890,23 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     SPDLOG_DEBUG("Update cost in transition graph using CMM");
     update_tg_cmm(&tg, traj, config);
 
+    auto trustworthiness_results = compute_window_trustworthiness(
+        tc, emission_probabilities, traj, config);
+    const std::vector<double> &trust_margins = trustworthiness_results.first;
+    std::vector<std::vector<double>> n_best_trust = std::move(trustworthiness_results.second);
+
     SPDLOG_DEBUG("Optimal path inference");
     TGOpath tg_opath = tg.backtrack();
     SPDLOG_DEBUG("Optimal path size {}", tg_opath.size());
 
-    MatchedCandidatePath matched_candidate_path(tg_opath.size());
-    std::transform(tg_opath.begin(), tg_opath.end(),
-                   matched_candidate_path.begin(),
-                   [](const TGNode *a) {
-        return MatchedCandidate{*(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist,
-                                a->trustworthiness};
-    });
+    MatchedCandidatePath matched_candidate_path;
+    matched_candidate_path.reserve(tg_opath.size());
+    for (size_t idx = 0; idx < tg_opath.size(); ++idx) {
+        const TGNode *a = tg_opath[idx];
+        double trust_value = (idx < trust_margins.size()) ? trust_margins[idx] : a->trustworthiness;
+        matched_candidate_path.push_back(
+            MatchedCandidate{*(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist, trust_value});
+    }
 
     O_Path opath(tg_opath.size());
     std::transform(tg_opath.begin(), tg_opath.end(),
@@ -895,6 +928,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     LineString mgeom = network_.complete_path_to_geometry(traj.geom, cpath);
     MatchResult match_result{
         traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
+    match_result.nbest_trustworthiness = std::move(n_best_trust);
     match_result.candidate_details = std::move(candidate_details);
     return match_result;
 }
@@ -1051,6 +1085,97 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
     if (connected != nullptr) {
         *connected = layer_connected;
     }
+}
+
+// Compute sliding-window trustworthiness using top-N (N=3) path scores.
+std::pair<std::vector<double>, std::vector<std::vector<double>>>
+CovarianceMapMatch::compute_window_trustworthiness(
+    const Traj_Candidates &tc,
+    const std::vector<std::vector<double>> &emission_probabilities,
+    const CMMTrajectory &traj,
+    const CovarianceMapMatchConfig &config) {
+
+    const size_t layer_count = tc.size();
+    std::vector<double> trust_margins(layer_count, std::numeric_limits<double>::quiet_NaN());
+    std::vector<std::vector<double>> n_best(layer_count);
+    if (layer_count == 0) {
+        return {trust_margins, n_best};
+    }
+
+    const size_t window_length = static_cast<size_t>(std::max(1, config.window_length));
+    std::vector<double> euclidean_distances;
+    euclidean_distances.reserve(layer_count > 0 ? layer_count - 1 : 0);
+    for (size_t i = 0; i + 1 < layer_count; ++i) {
+        euclidean_distances.push_back(
+            boost::geometry::distance(traj.geom.get_point(i), traj.geom.get_point(i + 1)));
+    }
+
+    const size_t k = 3;
+    for (size_t end_idx = 0; end_idx < layer_count; ++end_idx) {
+        size_t start_idx = (end_idx + 1 > window_length) ? end_idx + 1 - window_length : 0;
+
+        std::vector<std::vector<double>> prev_scores(tc[start_idx].size());
+        const auto *start_eps = (start_idx < emission_probabilities.size())
+                                    ? &emission_probabilities[start_idx]
+                                    : nullptr;
+        for (size_t j = 0; j < tc[start_idx].size(); ++j) {
+            double ep = (start_eps && j < start_eps->size()) ? (*start_eps)[j] : 0.0;
+            if (ep > 0) {
+                push_top_k(&prev_scores[j], std::log(ep), k);
+            }
+        }
+
+        for (size_t cursor = start_idx + 1; cursor <= end_idx; ++cursor) {
+            size_t prev_idx = cursor - 1;
+            std::vector<std::vector<double>> cur_scores(tc[cursor].size());
+            double eu_dist = (prev_idx < euclidean_distances.size()) ? euclidean_distances[prev_idx] : 0.0;
+            const auto *cur_eps = (cursor < emission_probabilities.size())
+                                      ? &emission_probabilities[cursor]
+                                      : nullptr;
+
+            for (size_t b = 0; b < tc[cursor].size(); ++b) {
+                double ep_b = (cur_eps && b < cur_eps->size()) ? (*cur_eps)[b] : 0.0;
+                if (ep_b <= 0) {
+                    continue;
+                }
+                double log_ep_b = std::log(ep_b);
+                for (size_t a = 0; a < tc[prev_idx].size(); ++a) {
+                    const auto &paths_to_a = prev_scores[a];
+                    if (paths_to_a.empty()) {
+                        continue;
+                    }
+                    double sp_dist = get_sp_dist(&tc[prev_idx][a], &tc[cursor][b], config.reverse_tolerance);
+                    if (sp_dist < 0) {
+                        continue;
+                    }
+                    double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
+                    if (tp <= 0) {
+                        continue;
+                    }
+                    double log_tp = std::log(tp);
+                    for (double prev_log : paths_to_a) {
+                        push_top_k(&cur_scores[b], prev_log + log_tp + log_ep_b, k);
+                    }
+                }
+            }
+            prev_scores.swap(cur_scores);
+        }
+
+        std::vector<double> combined;
+        for (const auto &scores : prev_scores) {
+            for (double val : scores) {
+                push_top_k(&combined, val, k);
+            }
+        }
+        n_best[end_idx] = combined;
+        if (combined.size() >= 2) {
+            trust_margins[end_idx] = combined[0] - combined[1];
+        } else if (combined.size() == 1) {
+            trust_margins[end_idx] = 0.0;
+        }
+    }
+
+    return {trust_margins, n_best};
 }
 
 // Entry point used by CLI/Python binding: parse trajectories, optionally reproject them,
