@@ -15,6 +15,10 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "error ";
   if (output_config.write_spdist)
     ss << "spdist ";
+  if (output_config.write_sp_dist)
+    ss << "sp_dist ";
+  if (output_config.write_eu_dist)
+    ss << "eu_dist ";
   if (output_config.write_cpath)
     ss << "cpath ";
   if (output_config.write_tpath)
@@ -60,6 +64,10 @@ std::string FMM::CONFIG::ResultConfig::to_string() const{
     oss << "error ";
   if (output_config.write_spdist)
     oss << "spdist ";
+  if (output_config.write_sp_dist)
+    oss << "sp_dist ";
+  if (output_config.write_eu_dist)
+    oss << "eu_dist ";
   if (output_config.write_cpath)
     oss << "cpath ";
   if (output_config.write_tpath)
@@ -122,6 +130,12 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
     if (xml_data.get_child_optional("config.output.fields.spdist")) {
       config.output_config.write_spdist = true;
     }
+    if (xml_data.get_child_optional("config.output.fields.sp_dist")) {
+      config.output_config.write_sp_dist = true;
+    }
+    if (xml_data.get_child_optional("config.output.fields.eu_dist")) {
+      config.output_config.write_eu_dist = true;
+    }
     if (xml_data.get_child_optional("config.output.fields.ep")) {
       config.output_config.write_ep = true;
     }
@@ -158,6 +172,8 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
       config.output_config.write_offset = true;
       config.output_config.write_error = true;
       config.output_config.write_spdist = true;
+      config.output_config.write_sp_dist = true;
+      config.output_config.write_eu_dist = true;
       config.output_config.write_cpath = true;
       config.output_config.write_mgeom = true;
       config.output_config.write_tpath = true;
@@ -209,6 +225,12 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     if (dict.find("spdist") != dict.end()) {
       config.output_config.write_spdist = true;
     }
+    if (dict.find("sp_dist") != dict.end()) {
+      config.output_config.write_sp_dist = true;
+    }
+    if (dict.find("eu_dist") != dict.end()) {
+      config.output_config.write_eu_dist = true;
+    }
     if (dict.find("ep") != dict.end()) {
       config.output_config.write_ep = true;
     }
@@ -245,6 +267,8 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
       config.output_config.write_offset = true;
       config.output_config.write_error = true;
       config.output_config.write_spdist = true;
+      config.output_config.write_sp_dist = true;
+      config.output_config.write_eu_dist = true;
       config.output_config.write_cpath = true;
       config.output_config.write_mgeom = true;
       config.output_config.write_tpath = true;
@@ -300,5 +324,5 @@ void FMM::CONFIG::ResultConfig::register_help(std::ostringstream &oss){
   oss<<"--output (required) <string>: Output file name\n";
   oss<<"--output_fields (optional) <string>: Output fields\n";
   oss<<"  opath,cpath,tpath,mgeom,pgeom,\n";
-  oss<<"  offset,error,spdist,tp,ep,trustworthiness,n_best_trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,all\n";
+  oss<<"  offset,error,spdist,sp_dist,eu_dist,tp,ep,trustworthiness,n_best_trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,all\n";
 };

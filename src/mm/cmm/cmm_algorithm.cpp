@@ -901,9 +901,30 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 
     MatchedCandidatePath matched_candidate_path;
     matched_candidate_path.reserve(tg_opath.size());
+    std::vector<double> sp_distances;
+    std::vector<double> eu_distances;
+    sp_distances.reserve(tg_opath.size());
+    eu_distances.reserve(tg_opath.size());
     for (size_t idx = 0; idx < tg_opath.size(); ++idx) {
         const TGNode *a = tg_opath[idx];
         double trust_value = (idx < trust_margins.size()) ? trust_margins[idx] : a->trustworthiness;
+        double sp_dist_value = -1.0;
+        double eu_dist_value = -1.0;
+        if (idx == 0) {
+            sp_dist_value = 0.0;
+            eu_dist_value = 0.0;
+        } else if (a->prev != nullptr) {
+            if (std::isfinite(a->sp_dist)) {
+                sp_dist_value = a->sp_dist;
+            }
+            if (idx < static_cast<size_t>(traj.geom.get_num_points())) {
+                CORE::Point point_prev = traj.geom.get_point(static_cast<int>(idx - 1));
+                CORE::Point point_cur = traj.geom.get_point(static_cast<int>(idx));
+                eu_dist_value = boost::geometry::distance(point_prev, point_cur);
+            }
+        }
+        sp_distances.push_back(sp_dist_value);
+        eu_distances.push_back(eu_dist_value);
         matched_candidate_path.push_back(
             MatchedCandidate{*(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist, trust_value});
     }
@@ -930,6 +951,8 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
         traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
     match_result.nbest_trustworthiness = std::move(n_best_trust);
     match_result.candidate_details = std::move(candidate_details);
+    match_result.sp_distances = std::move(sp_distances);
+    match_result.eu_distances = std::move(eu_distances);
     return match_result;
 }
 
