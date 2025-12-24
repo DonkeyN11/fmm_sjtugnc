@@ -47,6 +47,7 @@ struct OutputConfig {
                               exported */
   bool write_trustworthiness = false; /**< if true, trustworthiness (ep*tp per point)
                                           will be exported */
+  bool write_n_best_trustworthiness = false; /**< if true, emit top-N trustworthiness list per point */
   bool write_cumu_prob = false; /**< if true, cumu_prob (cumulative probability of each point)
                                     will be exported */
   bool write_length = false; /**< if true, length (length of each matched edge)

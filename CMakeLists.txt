@@ -59,6 +59,12 @@ else()
 endif (GDAL_FOUND)
 link_libraries(${GDAL_LIBRARIES})
 
+if(CONDA_PREFIX)
+  set(Boost_ROOT "${CONDA_PREFIX}")
+  set(BOOST_ROOT "${CONDA_PREFIX}")
+  set(Boost_NO_SYSTEM_PATHS ON)
+endif()
+
 if (WIN32)
   find_package(Boost 1.56.0 REQUIRED serialization exception)
 else ()
@@ -71,6 +77,9 @@ if (Boost_FOUND)
 else()
   message(FATAL_ERROR "Boost Not Found!")
 endif (Boost_FOUND)
+
+# Align ABI with conda-provided Boost (built with the old std::string ABI).
+add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
 
 # find_library(BOOST_SERIALIZATION_LIBRARY
 #   NAMES boost_serialization)
@@ -159,10 +168,18 @@ add_library(FMMLIB SHARED
   $<TARGET_OBJECTS:IO>
   $<TARGET_OBJECTS:H3_OBJ>)
 
+set(BOOST_SERIALIZATION_LINK)
 if(TARGET Boost::serialization)
-  target_link_libraries(FMMLIB PUBLIC Boost::serialization)
+  set(BOOST_SERIALIZATION_LINK Boost::serialization)
 elseif(Boost_SERIALIZATION_LIBRARY)
-  target_link_libraries(FMMLIB PUBLIC ${Boost_SERIALIZATION_LIBRARY})
+  set(BOOST_SERIALIZATION_LINK ${Boost_SERIALIZATION_LIBRARY})
+elseif(Boost_LIBRARIES)
+  # Fallback: link all Boost libs (serialization is among the requested components).
+  set(BOOST_SERIALIZATION_LINK ${Boost_LIBRARIES})
+endif()
+
+if(BOOST_SERIALIZATION_LINK)
+  target_link_libraries(FMMLIB PUBLIC ${BOOST_SERIALIZATION_LINK})
 else()
   message(FATAL_ERROR "Boost serialization target not available")
 endif()
@@ -187,7 +204,7 @@ add_executable(h3mm src/app/h3mm.cpp)
 target_link_libraries(h3mm FMMLIB)
 
 add_executable(cmm src/app/cmm.cpp)
-target_link_libraries(cmm FMMLIB)
+target_link_libraries(cmm FMMLIB ${BOOST_SERIALIZATION_LINK})
 
 add_executable(cmm_example example/cmm_example.cpp)
 target_link_libraries(cmm_example FMMLIB)

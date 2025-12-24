@@ -106,19 +106,22 @@ struct CovarianceMapMatchConfig {
      * @param min_candidates_arg minimum number of candidates to keep
      * @param protection_level_multiplier_arg multiplier for protection level
      * @param reverse_tolerance reverse movement tolerance
+     * @param window_length_arg sliding window length for trustworthiness
      */
     CovarianceMapMatchConfig(int k_arg = 8, int min_candidates_arg = 3,
-                           double protection_level_multiplier_arg = 1.0,
-                           double reverse_tolerance = 0.0,
-                           bool normalized_arg = true,
-                           bool use_mahalanobis_candidates_arg = true);
+                             double protection_level_multiplier_arg = 1.0,
+                             double reverse_tolerance = 0.0,
+                             bool normalized_arg = true,
+                             bool use_mahalanobis_candidates_arg = true,
+                             int window_length_arg = 10);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
     double protection_level_multiplier; /**< Multiplier for protection level */
-    double reverse_tolerance;       /**< Reverse movement tolerance */
-    bool normalized;                /**< Whether to normalize emission probabilities */
-    bool use_mahalanobis_candidates; /**< Whether to use Mahalanobis-based candidate search */
+    double reverse_tolerance;           /**< Reverse movement tolerance */
+    bool normalized;                    /**< Whether to normalize emission probabilities */
+    bool use_mahalanobis_candidates;    /**< Whether to use Mahalanobis-based candidate search */
+    int window_length;                  /**< Sliding window length for trustworthiness */
 
     /**
      * Check if the configuration is valid or not
@@ -154,7 +157,7 @@ struct CovarianceMapMatchConfig {
 
     /**
      * Register help information to a string stream
-     */
+                       */
     static void register_help(std::ostringstream &oss);
 };
 
@@ -294,6 +297,16 @@ protected:
                          bool *connected,
                          const CMMTrajectory &traj,
                          const CovarianceMapMatchConfig &config);
+
+    /**
+     * Compute sliding-window trustworthiness scores and top-N paths.
+     * @return pair of (trustworthiness margin per epoch, top-N log scores per epoch)
+     */
+    std::pair<std::vector<double>, std::vector<std::vector<double>>> compute_window_trustworthiness(
+        const Traj_Candidates &tc,
+        const std::vector<std::vector<double>> &emission_probabilities,
+        const CMMTrajectory &traj,
+        const CovarianceMapMatchConfig &config);
 
 private:
     const NETWORK::Network &network_;
