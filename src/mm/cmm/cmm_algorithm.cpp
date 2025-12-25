@@ -914,7 +914,6 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     eu_distances.reserve(tg_opath.size());
     for (size_t idx = 0; idx < tg_opath.size(); ++idx) {
         const TGNode *a = tg_opath[idx];
-        double trust_value = (idx < trust_margins.size()) ? trust_margins[idx] : a->trustworthiness;
         double sp_dist_value = -1.0;
         double eu_dist_value = -1.0;
         if (idx == 0) {

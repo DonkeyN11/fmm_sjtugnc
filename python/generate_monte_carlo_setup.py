@@ -13,16 +13,34 @@ Features:
 from __future__ import annotations
 
 import argparse
+import bisect
+import json
 import math
 import random
-import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
+
+try:
+    import geopandas as gpd
+    from shapely.geometry import LineString, MultiLineString
+except ImportError as exc:  # pragma: no cover - import guard
+    raise SystemExit(
+        "geopandas and shapely are required to use road-network trajectories. "
+        "Install them with `pip install geopandas shapely`."
+    ) from exc
+
+try:
+    from pyproj import CRS, Transformer
+except ImportError as exc:  # pragma: no cover - import guard
+    raise SystemExit(
+        "pyproj is required to project road networks. "
+        "Install it with `pip install pyproj`."
+    ) from exc
 
 
 # --------------------------- GNSS / DOP utilities --------------------------- #
@@ -68,6 +86,13 @@ class SatelliteGeometry:
     pdop: float
     azimuth_deg: List[float]
     elevation_deg: List[float]
+
+@dataclass(frozen=True)
+class RoadSegment:
+    coords: np.ndarray
+    u: str
+    v: str
+    length: float
 
 
 def generate_trajectory(num_points: int, step_std: float = 5.0) -> np.ndarray:
@@ -144,6 +169,190 @@ def az_el_from_vector(v: np.ndarray) -> Tuple[float, float]:
     return az, el
 
 
+# --------------------------- Road network helpers -------------------------- #
+
+WGS84_CRS = CRS.from_epsg(4326)
+
+
+def _determine_utm_epsg(lon_deg: float, lat_deg: float) -> Optional[int]:
+    if not (np.isfinite(lon_deg) and np.isfinite(lat_deg)):
+        return None
+    if lat_deg <= -80.0 or lat_deg >= 84.0:
+        return None
+    zone = int(math.floor((lon_deg + 180.0) / 6.0)) + 1
+    zone = max(1, min(zone, 60))
+    base = 32600 if lat_deg >= 0.0 else 32700
+    return base + zone
+
+
+def _project_to_local_utm(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
+    working = gdf
+    if working.crs is None:
+        working = working.set_crs(WGS84_CRS, allow_override=True)
+    lonlat_gdf = working.to_crs(WGS84_CRS) if working.crs != WGS84_CRS else working
+    min_lon, min_lat, max_lon, max_lat = lonlat_gdf.total_bounds
+    bounds = np.array([min_lon, min_lat, max_lon, max_lat], dtype=float)
+    if not np.all(np.isfinite(bounds)):
+        raise ValueError("Shapefile bounds contain invalid values, cannot derive UTM zone.")
+    lon0 = float((min_lon + max_lon) * 0.5)
+    lat0 = float((min_lat + max_lat) * 0.5)
+    epsg = _determine_utm_epsg(lon0, lat0)
+    if epsg is None:
+        raise ValueError(
+            f"Unable to determine UTM zone for map centre ({lon0:.6f}, {lat0:.6f})."
+        )
+    utm_crs = CRS.from_epsg(epsg)
+    projected = lonlat_gdf.to_crs(utm_crs)
+    print(f"Projected road network to UTM EPSG:{epsg} (lat0={lat0:.6f}, lon0={lon0:.6f}).")
+    return projected
+
+
+def _segment_length(coords: np.ndarray) -> float:
+    diffs = np.diff(coords, axis=0)
+    return float(np.sum(np.hypot(diffs[:, 0], diffs[:, 1])))
+
+
+def _segment_cumulative_lengths(coords: np.ndarray) -> List[float]:
+    lengths = [0.0]
+    for i in range(1, len(coords)):
+        dx = coords[i][0] - coords[i - 1][0]
+        dy = coords[i][1] - coords[i - 1][1]
+        lengths.append(lengths[-1] + math.hypot(dx, dy))
+    return lengths
+
+
+def _point_at_distance(coords: np.ndarray, lengths: List[float], s: float) -> np.ndarray:
+    if s <= 0.0:
+        return coords[0]
+    if s >= lengths[-1]:
+        return coords[-1]
+    idx = bisect.bisect_right(lengths, s)
+    i0 = max(0, idx - 1)
+    i1 = min(i0 + 1, len(coords) - 1)
+    seg_len = lengths[i1] - lengths[i0]
+    if seg_len <= 0.0:
+        return coords[i1]
+    t = (s - lengths[i0]) / seg_len
+    return coords[i0] + t * (coords[i1] - coords[i0])
+
+
+def _load_road_segments(shapefile: Path) -> Tuple[List[RoadSegment], Dict[str, List[int]], Dict[str, List[int]], CRS, CRS]:
+    gdf = gpd.read_file(shapefile)
+    original_crs = gdf.crs or WGS84_CRS
+    gdf = gdf.set_crs(original_crs, allow_override=True)
+    projected = _project_to_local_utm(gdf)
+    if "u" not in projected.columns or "v" not in projected.columns:
+        raise ValueError("Shapefile must contain 'u' and 'v' columns for connectivity.")
+
+    segments: List[RoadSegment] = []
+    outgoing: Dict[str, List[int]] = {}
+    incoming: Dict[str, List[int]] = {}
+    for idx, row in projected.iterrows():
+        geom = row.geometry
+        if geom is None or geom.is_empty:
+            continue
+        if isinstance(geom, LineString):
+            parts = [geom]
+        elif isinstance(geom, MultiLineString):
+            parts = list(geom.geoms)
+        else:
+            continue
+        u = str(row["u"])
+        v = str(row["v"])
+        for part in parts:
+            coords = np.asarray(part.coords, dtype=float)
+            if len(coords) < 2:
+                continue
+            length = _segment_length(coords)
+            if length <= 0.0:
+                continue
+            segments.append(RoadSegment(coords=coords, u=u, v=v, length=length))
+            seg_idx = len(segments) - 1
+            outgoing.setdefault(u, []).append(seg_idx)
+            incoming.setdefault(v, []).append(seg_idx)
+
+    if not segments:
+        raise ValueError(f"No valid road segments found in {shapefile}")
+    return segments, outgoing, incoming, projected.crs, original_crs
+
+
+def _choose_next_segment(
+    node: str,
+    forward: bool,
+    rng: random.Random,
+    outgoing: Dict[str, List[int]],
+    incoming: Dict[str, List[int]],
+) -> Tuple[Optional[int], bool]:
+    if forward:
+        candidates = outgoing.get(node, [])
+        if candidates:
+            return rng.choice(candidates), True
+        candidates = incoming.get(node, [])
+        if candidates:
+            return rng.choice(candidates), False
+    else:
+        candidates = incoming.get(node, [])
+        if candidates:
+            return rng.choice(candidates), False
+        candidates = outgoing.get(node, [])
+        if candidates:
+            return rng.choice(candidates), True
+    return None, forward
+
+
+def generate_trajectory_from_map(
+    num_points: int,
+    step_m: float,
+    rng: random.Random,
+    segments: List[RoadSegment],
+    outgoing: Dict[str, List[int]],
+    incoming: Dict[str, List[int]],
+    max_retries: int = 10,
+) -> np.ndarray:
+    if num_points <= 0:
+        raise ValueError("num_points must be positive")
+    candidates = [i for i, seg in enumerate(segments) if seg.length >= step_m]
+    if not candidates:
+        candidates = list(range(len(segments)))
+
+    for _ in range(max_retries):
+        seg_idx = rng.choice(candidates)
+        forward = rng.choice([True, False])
+        seg = segments[seg_idx]
+        coords = seg.coords if forward else seg.coords[::-1]
+        lengths = _segment_cumulative_lengths(coords)
+        seg_s = 0.0
+        end_node = seg.v if forward else seg.u
+        points = [coords[0]]
+        failed = False
+        for _ in range(1, num_points):
+            remaining = step_m
+            while remaining > 0.0:
+                available = lengths[-1] - seg_s
+                if available >= remaining:
+                    seg_s += remaining
+                    remaining = 0.0
+                else:
+                    remaining -= available
+                    next_idx, next_forward = _choose_next_segment(
+                        end_node, forward, rng, outgoing, incoming
+                    )
+                    if next_idx is None:
+                        failed = True
+                        break
+                    seg = segments[next_idx]
+                    forward = next_forward
+                    coords = seg.coords if forward else seg.coords[::-1]
+                    lengths = _segment_cumulative_lengths(coords)
+                    seg_s = 0.0
+                    end_node = seg.v if forward else seg.u
+            if failed:
+                break
+            points.append(_point_at_distance(coords, lengths, seg_s))
+        if not failed:
+            return np.asarray(points, dtype=float)
+    raise RuntimeError("Unable to generate a connected trajectory from the map.")
+
 # ------------------------------ Main routine ------------------------------- #
 
 def main():
@@ -153,6 +362,12 @@ def main():
     parser.add_argument("--num_sats", type=int, default=8, help="Satellites used for DOP simulation")
     parser.add_argument("--calib_ratio", type=float, default=0.2, help="Calibration split ratio")
     parser.add_argument("--seed", type=int, default=42, help="Random seed for reproducibility")
+    parser.add_argument(
+        "--map_shp",
+        default="input/map/haikou/edges.shp",
+        help="Road network shapefile for connected trajectories",
+    )
+    parser.add_argument("--step_m", type=float, default=10.0, help="Step size in meters along the road network")
     parser.add_argument("--plot_sky", action="store_true", help="Save a sky plot for the first trajectory's satellites")
     parser.add_argument("--plot_prefix", default="sky_plot", help="Filename prefix for sky plot (PNG)")
     args = parser.parse_args()
@@ -162,6 +377,15 @@ def main():
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    map_segments = None
+    map_outgoing: Dict[str, List[int]] = {}
+    map_incoming: Dict[str, List[int]] = {}
+    transformer: Optional[Transformer] = None
+    if args.map_shp:
+        shp_path = Path(args.map_shp)
+        map_segments, map_outgoing, map_incoming, projected_crs, original_crs = _load_road_segments(shp_path)
+        transformer = Transformer.from_crs(projected_crs, original_crs, always_xy=True)
 
     # Prepare sigma ladder: 10 trajectories per sigma 1..10
     specs: List[TrajectorySpec] = []
@@ -176,14 +400,35 @@ def main():
     sat_rows: List[SatelliteGeometry] = []
     trace_values = []
     for spec in specs:
-        coords = generate_trajectory(args.num_points)
+        if map_segments is None:
+            coords = generate_trajectory(args.num_points)
+            coords_proj = coords
+        else:
+            coords_proj = generate_trajectory_from_map(
+                args.num_points,
+                args.step_m,
+                random,
+                map_segments,
+                map_outgoing,
+                map_incoming,
+            )
+            if transformer is None:
+                raise RuntimeError("Transformer was not initialized for map-based generation.")
+            xs, ys = transformer.transform(coords_proj[:, 0], coords_proj[:, 1])
+            coords = np.column_stack([xs, ys])
         hdop, pdop, sats_unit = compute_dop(args.num_sats)
         orbit_radius = 20200000.0  # meters
         sat_positions = sats_unit * orbit_radius
         trace_val = None
-        for idx, (x, y) in enumerate(coords):
+        for idx, (x, y) in enumerate(coords_proj):
             truth_pos = np.array([x, y, 0.0])
             est_pos, clock_bias, cov_xyz = wls_position(truth_pos, sat_positions, spec.sigma)
+            if transformer is not None:
+                est_x, est_y = transformer.transform(est_pos[0], est_pos[1])
+                truth_x, truth_y = coords[idx][0], coords[idx][1]
+            else:
+                est_x, est_y = est_pos[0], est_pos[1]
+                truth_x, truth_y = x, y
             cov_h = cov_xyz[:2, :2]
             trace_val = float(np.trace(cov_h))
             pl = protection_level_from_cov(cov_h)
@@ -191,8 +436,8 @@ def main():
                 {
                     "traj_id": spec.traj_id,
                     "point_idx": idx,
-                    "x_m": est_pos[0],
-                    "y_m": est_pos[1],
+                    "x_m": est_x,
+                    "y_m": est_y,
                     "z_m": est_pos[2],
                     "clock_bias_m": clock_bias,
                     "sigma_m": spec.sigma,
@@ -205,7 +450,9 @@ def main():
                     "protection_level_m": pl,
                 }
             )
-            truth_rows.append({"traj_id": spec.traj_id, "point_idx": idx, "x_m": x, "y_m": y, "z_m": 0.0})
+            truth_rows.append(
+                {"traj_id": spec.traj_id, "point_idx": idx, "x_m": truth_x, "y_m": truth_y, "z_m": 0.0}
+            )
         az_list, el_list = zip(*[az_el_from_vector(v) for v in sats_unit])
         sat_rows.append(
             SatelliteGeometry(
