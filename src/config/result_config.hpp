@@ -39,10 +39,8 @@ struct OutputConfig {
   bool write_spdist = false; /**< if true, spdist (the distance traversed
                                   between each two consecutive points)
                                   will be exported */
-  bool write_sp_dist = false; /**< if true, sp_dist (shortest path distance per observation)
-                                  will be exported */
-  bool write_eu_dist = false; /**< if true, eu_dist (Euclidean distance per observation)
-                                  will be exported */
+  bool write_sp_dist = false; /**< if true, sp_dist (CMM per-point shortest path) will be exported */
+  bool write_eu_dist = false; /**< if true, eu_dist (CMM per-point Euclidean distance) will be exported */
   bool write_pgeom = false; /**< if true, pgeom (a linestring connecting
                                  the matched point) will be exported */
   bool write_ep = false; /**< if true, ep (emission proability of each point)
