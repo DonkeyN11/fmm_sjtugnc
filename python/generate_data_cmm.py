@@ -54,12 +54,15 @@ except ImportError as exc:  # pragma: no cover - import guard
 # --------------------------------------------------------------------------- #
 WGS84_CRS = CRS.from_epsg(4326)
 CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
-MIN_SIGMA_M = 10.0            # metres (horizontal)
-MAX_SIGMA_M = 50.0           # metres (horizontal)
-MIN_SIGMA_UP = 10.0           # metres (vertical)
-MAX_SIGMA_UP = 50.0           # metres (vertical)
+# MIN_SIGMA_M = 10.0            # metres (horizontal)
+# MAX_SIGMA_M = 50.0           # metres (horizontal)
+# MIN_SIGMA_UP = 10.0           # metres (vertical)
+# MAX_SIGMA_UP = 50.0           # metres (vertical)
+MIN_SIGMA_PR = 1.0
+MAX_SIGMA_PR = 10.0
 MAX_COVARIANCE_SAMPLING_ATTEMPTS = 64
 MIN_TRAJECTORY_SPAN_M = 11_000.0  # ≈ 0.1 degrees at the equator
+ORBIT_RADIUS_M = 20_200_000.0
 
 
 # Shared between worker processes after initialisation.
@@ -73,8 +76,11 @@ class TrajectoryConfig:
     traj_id: int
     num_points: int
     speed_mps: float
+    sample_rate_hz: float
     base_epoch: float
     seed: int
+    sigma_pr: float
+    num_sats: int
 
 
 @dataclass
@@ -95,6 +101,7 @@ class Observation:
 @dataclass
 class TrajectoryResult:
     traj_id: int
+    sigma_pr: float
     timestamps: List[float]
     truth_coords: List[Tuple[float, float]]
     observations: List[Observation]
@@ -222,7 +229,7 @@ def _is_positive_definite(matrix: np.ndarray, atol: float = 1e-12) -> bool:
     return bool(np.all(eigenvalues > atol))
 
 
-def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
+# def _random_covariance_params(rng: np.random.Generator) -> CovarianceParams:
     """Sample a positive-definite covariance description for one observation."""
     for _ in range(MAX_COVARIANCE_SAMPLING_ATTEMPTS):
         sdn = rng.uniform(MIN_SIGMA_M, MAX_SIGMA_M)
@@ -298,10 +305,73 @@ def _interpolate_along(coords: np.ndarray, target_dist_m: float,
     return float(x), float(y)
 
 
-def _compute_protection_level(params: CovarianceParams) -> float:
+# def _compute_protection_level(params: CovarianceParams) -> float:
     eigenvalues = np.linalg.eigvalsh(params.pl_matrix)
     max_eig = float(np.max(eigenvalues))
     return math.sqrt(max_eig * CHI_SQUARE_QUANTILE_9999_DF2)
+
+
+def _compute_protection_level_from_cov(cov_h: np.ndarray) -> float:
+    eigenvalues = np.linalg.eigvalsh(cov_h)
+    max_eig = float(np.max(eigenvalues))
+    return math.sqrt(max_eig * CHI_SQUARE_QUANTILE_9999_DF2)
+
+
+def _random_satellite_unit_vector(
+    rng: np.random.Generator, min_el_deg: float = 45.0
+) -> np.ndarray:
+    az = rng.uniform(0.0, 2.0 * math.pi)
+    el = rng.uniform(math.radians(min_el_deg), math.radians(80.0))
+    x = math.cos(el) * math.cos(az)
+    y = math.cos(el) * math.sin(az)
+    z = math.sin(el)
+    return np.array([x, y, z], dtype=float)
+
+
+def _generate_satellite_geometry(num_sats: int, rng: np.random.Generator) -> np.ndarray:
+    return np.stack(
+        [_random_satellite_unit_vector(rng) for _ in range(num_sats)],
+        axis=0,
+    )
+
+
+def _wls_position(
+    truth_pos: np.ndarray,
+    sat_positions: np.ndarray,
+    sigma_pr: float,
+    rng: np.random.Generator,
+    max_iter: int = 8,
+) -> Tuple[np.ndarray, float, np.ndarray]:
+    num_sats = sat_positions.shape[0]
+    if num_sats < 4:
+        raise ValueError("Need at least 4 satellites for WLS")
+
+    true_ranges = np.linalg.norm(sat_positions - truth_pos, axis=1)
+    noise = rng.normal(scale=sigma_pr, size=num_sats)
+    rho = true_ranges + noise
+
+    x = truth_pos.copy()
+    b = 0.0
+    Q = None
+    for _ in range(max_iter):
+        ranges = np.linalg.norm(sat_positions - x, axis=1)
+        los = (sat_positions - x) / ranges[:, None]
+        H = np.hstack((-los, np.ones((num_sats, 1))))
+        r = rho - ranges - b
+
+        try:
+            Q = np.linalg.inv(H.T @ H)
+        except np.linalg.LinAlgError:
+            break
+        dx = Q @ H.T @ r
+        x += dx[:3]
+        b += dx[3]
+        if np.linalg.norm(dx[:3]) < 1e-4:
+            break
+
+    cov_full = (sigma_pr ** 2) * Q if Q is not None else np.full((4, 4), np.nan)
+    cov_xyz = cov_full[:3, :3]
+    return x, b, cov_xyz
 
 
 def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
@@ -311,6 +381,11 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
         raise RuntimeError("Road segment adjacency has not been initialised")
 
     rng = np.random.default_rng(config.seed)
+    sats_unit = _generate_satellite_geometry(config.num_sats, rng)
+    sat_positions = sats_unit * ORBIT_RADIUS_M
+    sample_rate = max(config.sample_rate_hz, 1e-6)
+    step_m = config.speed_mps / sample_rate
+    required_length = step_m * max(config.num_points - 1, 1)
 
     min_span_m = MIN_TRAJECTORY_SPAN_M
     max_attempts = 200
@@ -407,39 +482,43 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             seg_lengths_candidate = _segment_lengths_m(candidate_arr)
             if seg_lengths_candidate.size == 0:
                 continue
+            cumulative_candidate = np.concatenate(([0.0], np.cumsum(seg_lengths_candidate)))
+            if cumulative_candidate[-1] < required_length:
+                continue
             chosen_coords = candidate_arr
             chosen_edges = edge_sequence
             seg_lengths = seg_lengths_candidate
-            cumulative = np.concatenate(([0.0], np.cumsum(seg_lengths_candidate)))
+            cumulative = cumulative_candidate
             break
 
         if chosen_coords is None or chosen_edges is None or seg_lengths is None or cumulative is None:
             continue
 
-        sample_distances = np.linspace(0.0, cumulative[-1], num=config.num_points, dtype=float)
+        sample_distances = np.linspace(0.0, required_length, num=config.num_points, dtype=float)
 
         truth_coords: List[Tuple[float, float]] = []
         timestamps: List[float] = []
         observations: List[Observation] = []
-        prev_signature: Tuple[float, float, float] | None = None
 
         for seq, dist_m in enumerate(sample_distances):
             base_x, base_y = _interpolate_along(chosen_coords, float(dist_m), cumulative, seg_lengths)
             truth_coords.append((base_x, base_y))
-
-            params = _random_covariance_params(rng)
-            signature = (params.sde, params.sdn, params.sdne)
-            attempts = 0
-            while prev_signature is not None and np.allclose(signature, prev_signature) and attempts < 5:
-                params = _random_covariance_params(rng)
-                signature = (params.sde, params.sdn, params.sdne)
-                attempts += 1
-            prev_signature = signature
-
-            noise = rng.multivariate_normal(mean=np.zeros(2, dtype=float), cov=params.noise_cov)
-            obs_x = float(base_x + noise[0])
-            obs_y = float(base_y + noise[1])
-            timestamp = float(config.base_epoch + dist_m / max(config.speed_mps, 1e-3))
+            truth_pos = np.array([base_x, base_y, 0.0], dtype=float)
+            est_pos, clock_bias, cov_xyz = _wls_position(
+                truth_pos, sat_positions, config.sigma_pr, rng
+            )
+            if not np.all(np.isfinite(cov_xyz)):
+                cov_xyz = np.eye(3, dtype=float) * (config.sigma_pr ** 2)
+            cov_h = cov_xyz[:2, :2]
+            sde = math.sqrt(max(cov_h[0, 0], 0.0))
+            sdn = math.sqrt(max(cov_h[1, 1], 0.0))
+            sdu = math.sqrt(max(cov_xyz[2, 2], 0.0))
+            sdne = float(cov_h[0, 1])
+            sdeu = float(cov_xyz[0, 2])
+            sdun = float(cov_xyz[1, 2])
+            obs_x = float(est_pos[0])
+            obs_y = float(est_pos[1])
+            timestamp = float(config.base_epoch + seq / sample_rate)
 
             observations.append(
                 Observation(
@@ -447,13 +526,13 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
                     timestamp=timestamp,
                     x=obs_x,
                     y=obs_y,
-                    sdn=params.sdn,
-                    sde=params.sde,
-                    sdu=params.sdu,
-                    sdne=params.sdne,
-                    sdeu=params.sdeu,
-                    sdun=params.sdun,
-                    protection_level=_compute_protection_level(params),
+                    sdn=sdn,
+                    sde=sde,
+                    sdu=sdu,
+                    sdne=sdne,
+                    sdeu=sdeu,
+                    sdun=sdun,
+                    protection_level=_compute_protection_level_from_cov(cov_h),
                 )
             )
             timestamps.append(timestamp)
@@ -467,6 +546,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
 
         return TrajectoryResult(
             traj_id=config.traj_id,
+            sigma_pr=config.sigma_pr,
             timestamps=timestamps,
             truth_coords=truth_coords,
             observations=observations,
@@ -476,19 +556,35 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
     raise RuntimeError("Unable to generate a trajectory with ≥11 km combined span in projected space.")
 
 
-def _make_tasks(count: int, num_points: int, speed: float,
-                base_epoch: float, seed: int | None, start_id: int) -> List[TrajectoryConfig]:
+def _make_tasks(
+    count: int,
+    num_points: int,
+    speed: float,
+    sample_rate_hz: float,
+    base_epoch: float,
+    seed: int | None,
+    start_id: int,
+    sigma_min: float,
+    sigma_max: float,
+    num_sats: int,
+) -> List[TrajectoryConfig]:
     master_rng = np.random.default_rng(seed)
     tasks: List[TrajectoryConfig] = []
+    group_count = max(1, int(math.ceil(count / 10)))
+    sigma_values = np.linspace(sigma_min, sigma_max, num=group_count)
     for offset in range(count):
         task_seed = int(master_rng.integers(0, np.iinfo(np.uint32).max))
+        sigma_idx = min(offset // 10, group_count - 1)
         tasks.append(
             TrajectoryConfig(
                 traj_id=start_id + offset,
                 num_points=num_points,
                 speed_mps=speed,
+                sample_rate_hz=sample_rate_hz,
                 base_epoch=base_epoch,
                 seed=task_seed,
+                sigma_pr=float(sigma_values[sigma_idx]),
+                num_sats=num_sats,
             )
         )
     return tasks
@@ -499,9 +595,14 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         description="Generate synthetic observation files for the CMM CLI.",
         formatter_class=argparse.ArgumentDefaultsHelpFormatter,
     )
-    parser.add_argument("--count", type=int, default=10, help="Number of trajectories to generate.")
-    parser.add_argument("--points", type=int, default=60, help="Number of points per trajectory.")
+    parser.add_argument("--count", type=int, default=100, help="Number of trajectories to generate.")
+    parser.add_argument("--points", type=int, default=1000, help="Number of points per trajectory.")
     parser.add_argument("--speed", type=float, default=12.0, help="Vehicle speed (m/s).")
+    parser.add_argument("--sample-rate", type=float, default=1.0, help="Sampling rate (Hz).")
+    parser.add_argument("--num-sats", type=int, default=8, help="Satellites per trajectory.")
+    parser.add_argument("--calib-ratio", type=float, default=0.2, help="Calibration split ratio.")
+    parser.add_argument("--min-sigma-pr", type=float, default=MIN_SIGMA_PR, help="Min PR sigma (m).")
+    parser.add_argument("--max-sigma-pr", type=float, default=MAX_SIGMA_PR, help="Max PR sigma (m).")
     parser.add_argument("--output-dir", type=Path, default=Path("python/cmm_data"),
                         help="Directory where generated files will be stored.")
     parser.add_argument("--shapefile", type=Path, default=Path("input/map/haikou/edges.shp"),
@@ -627,6 +728,11 @@ def _write_metadata(results: List[TrajectoryResult], args: argparse.Namespace, d
             "count": args.count,
             "points": args.points,
             "speed": args.speed,
+            "sample_rate": args.sample_rate,
+            "num_sats": args.num_sats,
+            "min_sigma_pr": args.min_sigma_pr,
+            "max_sigma_pr": args.max_sigma_pr,
+            "calib_ratio": args.calib_ratio,
             "shapefile": str(Path(args.shapefile).resolve()),
             "seed": args.seed,
             "start_id": args.start_id,
@@ -635,6 +741,7 @@ def _write_metadata(results: List[TrajectoryResult], args: argparse.Namespace, d
         "trajectories": [
             {
                 "id": traj.traj_id,
+                "sigma_pr": traj.sigma_pr,
                 "num_points": len(traj.truth_coords),
                 "duration": traj.timestamps[-1] - traj.timestamps[0] if len(traj.timestamps) > 1 else 0.0,
                 "edge_ids": traj.edge_ids,
@@ -644,6 +751,22 @@ def _write_metadata(results: List[TrajectoryResult], args: argparse.Namespace, d
     }
     with destination.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
+
+
+def _write_split_csvs(calib_ids: List[int], test_ids: List[int], output_dir: Path) -> None:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    calib_path = output_dir / "calibration_trajs.csv"
+    test_path = output_dir / "test_trajs.csv"
+    with calib_path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["traj_id"])
+        for traj_id in calib_ids:
+            writer.writerow([traj_id])
+    with test_path.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh)
+        writer.writerow(["traj_id"])
+        for traj_id in test_ids:
+            writer.writerow([traj_id])
 
 
 # --------------------------------------------------------------------------- #
@@ -658,7 +781,18 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     road_geoms = _load_roads(shapefile)
     base_epoch = float(args.base_epoch) if args.base_epoch is not None else time.time()
-    tasks = _make_tasks(args.count, args.points, args.speed, base_epoch, args.seed, args.start_id)
+    tasks = _make_tasks(
+        args.count,
+        args.points,
+        args.speed,
+        args.sample_rate,
+        base_epoch,
+        args.seed,
+        args.start_id,
+        args.min_sigma_pr,
+        args.max_sigma_pr,
+        args.num_sats,
+    )
 
     output_dir = args.output_dir.resolve()
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -674,12 +808,28 @@ def main(argv: Sequence[str] | None = None) -> int:
         ) as executor:
             results = list(executor.map(_generate_single, tasks))
 
+    sigma_to_trajs: Dict[float, List[int]] = {}
+    for traj in results:
+        sigma_to_trajs.setdefault(traj.sigma_pr, []).append(traj.traj_id)
+    calib_ids: List[int] = []
+    test_ids: List[int] = []
+    split_rng = np.random.default_rng(args.seed)
+    for sigma, trajs in sorted(sigma_to_trajs.items(), key=lambda item: item[0]):
+        shuffled = list(trajs)
+        split_rng.shuffle(shuffled)
+        split_idx = max(1, int(len(shuffled) * args.calib_ratio))
+        calib_ids.extend(shuffled[:split_idx])
+        test_ids.extend(shuffled[split_idx:])
+    calib_ids = sorted(set(calib_ids))
+    test_ids = sorted(set(test_ids))
+
     _write_observation_csv(results, output_dir / "observations.csv")
     _write_ground_truth_csv(results, output_dir / "ground_truth.csv")
     if args.export_points:
         _write_ground_truth_points(results, output_dir / "ground_truth_points.csv")
     _write_metadata(results, args, output_dir / "metadata.json")
     _write_cmm_trajectory_csv(results, output_dir / "cmm_trajectory.csv")
+    _write_split_csvs(calib_ids, test_ids, output_dir)
 
     print(f"Generated {len(results)} trajectories in {output_dir}")
     print("  - observations.csv       (input for `cmm` with --gps_point)")
