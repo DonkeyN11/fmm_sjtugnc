@@ -28,6 +28,7 @@ import time
 from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
+from statistics import NormalDist
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
@@ -64,6 +65,7 @@ MAX_SIGMA_PR = 10.0
 MAX_COVARIANCE_SAMPLING_ATTEMPTS = 64
 MIN_TRAJECTORY_SPAN_M = 11_000.0  # ≈ 0.1 degrees at the equator
 ORBIT_RADIUS_M = 20_200_000.0
+PL_FALSE_ALARM_RATE = 1e-3
 
 
 # Shared between worker processes after initialisation.
@@ -307,16 +309,50 @@ def _interpolate_along(coords: np.ndarray, target_dist_m: float,
     return float(x), float(y)
 
 
-# def _compute_protection_level(params: CovarianceParams) -> float:
-    eigenvalues = np.linalg.eigvalsh(params.pl_matrix)
-    max_eig = float(np.max(eigenvalues))
-    return math.sqrt(max_eig * CHI_SQUARE_QUANTILE_9999_DF2)
-
-
 def _compute_protection_level_from_cov(cov_h: np.ndarray) -> float:
     eigenvalues = np.linalg.eigvalsh(cov_h)
     max_eig = float(np.max(eigenvalues))
     return math.sqrt(max_eig * CHI_SQUARE_QUANTILE_9999_DF2)
+
+
+def _chi2_inv_approx(prob: float, dof: int) -> float:
+    if dof <= 0:
+        raise ValueError("chi-square dof must be positive")
+    if not (0.0 < prob < 1.0):
+        raise ValueError("chi-square probability must be in (0, 1)")
+    z = NormalDist().inv_cdf(prob)
+    k = float(dof)
+    return k * (1.0 - 2.0 / (9.0 * k) + z * math.sqrt(2.0 / (9.0 * k))) ** 3
+
+
+def _compute_protection_level_slope(
+    H: np.ndarray, sigma_pr: float, false_alarm: float = PL_FALSE_ALARM_RATE
+) -> float:
+    num_sats = H.shape[0]
+    dof = num_sats - 4
+    if dof < 1:
+        return float("nan")
+    try:
+        Q = np.linalg.inv(H.T @ H)
+    except np.linalg.LinAlgError:
+        return float("nan")
+    S = Q @ H.T
+    P = np.eye(num_sats) - H @ S
+    p_diag = np.diag(P)
+    slopes: List[float] = []
+    for idx in range(num_sats):
+        denom = p_diag[idx]
+        if not np.isfinite(denom) or denom <= 0:
+            continue
+        sxe = float(S[0, idx])
+        sye = float(S[1, idx])
+        slope = math.hypot(sxe, sye) / math.sqrt(denom)
+        if np.isfinite(slope):
+            slopes.append(slope)
+    if not slopes:
+        return float("nan")
+    threshold = math.sqrt(_chi2_inv_approx(1.0 - false_alarm, dof))
+    return float(sigma_pr * threshold * max(slopes))
 
 
 def _random_satellite_unit_vector(
@@ -343,7 +379,7 @@ def _wls_position(
     sigma_pr: float,
     rng: np.random.Generator,
     max_iter: int = 8,
-) -> Tuple[np.ndarray, float, np.ndarray]:
+) -> Tuple[np.ndarray, float, np.ndarray, np.ndarray | None]:
     num_sats = sat_positions.shape[0]
     if num_sats < 4:
         raise ValueError("Need at least 4 satellites for WLS")
@@ -355,6 +391,7 @@ def _wls_position(
     x = truth_pos.copy()
     b = 0.0
     Q = None
+    last_H: np.ndarray | None = None
     for _ in range(max_iter):
         ranges = np.linalg.norm(sat_positions - x, axis=1)
         los = (sat_positions - x) / ranges[:, None]
@@ -365,6 +402,7 @@ def _wls_position(
             Q = np.linalg.inv(H.T @ H)
         except np.linalg.LinAlgError:
             break
+        last_H = H
         dx = Q @ H.T @ r
         x += dx[:3]
         b += dx[3]
@@ -373,7 +411,7 @@ def _wls_position(
 
     cov_full = (sigma_pr ** 2) * Q if Q is not None else np.full((4, 4), np.nan)
     cov_xyz = cov_full[:3, :3]
-    return x, b, cov_xyz
+    return x, b, cov_xyz, last_H
 
 
 def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
@@ -506,7 +544,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             base_x, base_y = _interpolate_along(chosen_coords, float(dist_m), cumulative, seg_lengths)
             truth_coords.append((base_x, base_y))
             truth_pos = np.array([base_x, base_y, 0.0], dtype=float)
-            est_pos, clock_bias, cov_xyz = _wls_position(
+            est_pos, clock_bias, cov_xyz, H = _wls_position(
                 truth_pos, sat_positions, config.sigma_pr, rng
             )
             if not np.all(np.isfinite(cov_xyz)):
@@ -521,6 +559,13 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             obs_x = float(est_pos[0])
             obs_y = float(est_pos[1])
             timestamp = float(config.base_epoch + seq / sample_rate)
+            protection_level = float("nan")
+            if H is not None:
+                protection_level = _compute_protection_level_slope(
+                    H, config.sigma_pr, false_alarm=PL_FALSE_ALARM_RATE
+                )
+            if not np.isfinite(protection_level):
+                protection_level = _compute_protection_level_from_cov(cov_h)
 
             observations.append(
                 Observation(
@@ -534,7 +579,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
                     sdne=sdne,
                     sdeu=sdeu,
                     sdun=sdun,
-                    protection_level=_compute_protection_level_from_cov(cov_h),
+                    protection_level=protection_level,
                 )
             )
             timestamps.append(timestamp)
