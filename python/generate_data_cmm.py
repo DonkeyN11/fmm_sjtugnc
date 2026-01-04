@@ -12,6 +12,7 @@ Generated artefacts (placed in the output directory):
   - `observations.csv`    : per-point observations with covariance/protection level
   - `ground_truth.csv`    : trajectories in WKT form with timestamp lists
   - `ground_truth_points.csv` (optional, for inspection)
+  - `constellation.csv`   (optional, per-trajectory virtual satellite geometry)
   - `metadata.json`       : parameters used for the run
 """
 
@@ -106,6 +107,7 @@ class TrajectoryResult:
     truth_coords: List[Tuple[float, float]]
     observations: List[Observation]
     edge_ids: List[str]
+    sat_unit_vectors: List[Tuple[float, float, float]]
 
     @property
     def truth_wkt(self) -> str:
@@ -551,6 +553,7 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             truth_coords=truth_coords,
             observations=observations,
             edge_ids=chosen_edges,
+            sat_unit_vectors=[tuple(vec.tolist()) for vec in sats_unit],
         )
 
     raise RuntimeError("Unable to generate a trajectory with ≥11 km combined span in projected space.")
@@ -617,6 +620,8 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                         help="Starting UNIX epoch (seconds). Defaults to current time.")
     parser.add_argument("--export-points", action="store_true",
                         help="Emit ground truth sample points alongside trajectories.")
+    parser.add_argument("--export-constellation", action="store_true",
+                        help="Emit virtual satellite constellation data per trajectory.")
     return parser.parse_args(argv)
 
 
@@ -720,8 +725,54 @@ def _write_ground_truth_points(results: List[TrajectoryResult], destination: Pat
                 )
 
 
+def _write_constellation_csv(results: List[TrajectoryResult], destination: Path) -> None:
+    header = ["id", "azimuth_deg", "elevation_deg"]
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with destination.open("w", encoding="utf-8", newline="") as fh:
+        writer = csv.writer(fh, delimiter=";")
+        writer.writerow(header)
+        for traj in sorted(results, key=lambda item: item.traj_id):
+            az_list, el_list = _constellation_angles(traj.sat_unit_vectors)
+            writer.writerow(
+                [
+                    traj.traj_id,
+                    json.dumps(az_list, separators=(",", ":"), ensure_ascii=False),
+                    json.dumps(el_list, separators=(",", ":"), ensure_ascii=False),
+                ]
+            )
+
+
+def _constellation_angles(
+    sat_unit_vectors: Sequence[Tuple[float, float, float]],
+) -> Tuple[List[float], List[float]]:
+    az_list: List[float] = []
+    el_list: List[float] = []
+    for x, y, z in sat_unit_vectors:
+        az = math.degrees(math.atan2(y, x)) % 360.0
+        el = math.degrees(math.asin(max(-1.0, min(1.0, z))))
+        az_list.append(round(az, 4))
+        el_list.append(round(el, 4))
+    return az_list, el_list
+
+
 def _write_metadata(results: List[TrajectoryResult], args: argparse.Namespace, destination: Path) -> None:
     destination.parent.mkdir(parents=True, exist_ok=True)
+    trajectories = []
+    for traj in sorted(results, key=lambda item: item.traj_id):
+        az_list, el_list = _constellation_angles(traj.sat_unit_vectors)
+        trajectories.append(
+            {
+                "id": traj.traj_id,
+                "sigma_pr": traj.sigma_pr,
+                "num_points": len(traj.truth_coords),
+                "duration": traj.timestamps[-1] - traj.timestamps[0] if len(traj.timestamps) > 1 else 0.0,
+                "edge_ids": traj.edge_ids,
+                "constellation": {
+                    "azimuth_deg": az_list,
+                    "elevation_deg": el_list,
+                },
+            }
+        )
     payload = {
         "generated_at": time.time(),
         "arguments": {
@@ -738,16 +789,7 @@ def _write_metadata(results: List[TrajectoryResult], args: argparse.Namespace, d
             "start_id": args.start_id,
             "base_epoch": args.base_epoch,
         },
-        "trajectories": [
-            {
-                "id": traj.traj_id,
-                "sigma_pr": traj.sigma_pr,
-                "num_points": len(traj.truth_coords),
-                "duration": traj.timestamps[-1] - traj.timestamps[0] if len(traj.timestamps) > 1 else 0.0,
-                "edge_ids": traj.edge_ids,
-            }
-            for traj in sorted(results, key=lambda item: item.traj_id)
-        ],
+        "trajectories": trajectories,
     }
     with destination.open("w", encoding="utf-8") as fh:
         json.dump(payload, fh, indent=2)
@@ -829,6 +871,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         _write_ground_truth_points(results, output_dir / "ground_truth_points.csv")
     _write_metadata(results, args, output_dir / "metadata.json")
     _write_cmm_trajectory_csv(results, output_dir / "cmm_trajectory.csv")
+    if args.export_constellation:
+        _write_constellation_csv(results, output_dir / "constellation.csv")
     _write_split_csvs(calib_ids, test_ids, output_dir)
 
     print(f"Generated {len(results)} trajectories in {output_dir}")
@@ -836,6 +880,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     print("  - ground_truth.csv       (WKT trajectories for reference)")
     if args.export_points:
         print("  - ground_truth_points.csv (sampled ground-truth points)")
+    if args.export_constellation:
+        print("  - constellation.csv      (virtual satellite geometry)")
     print("  - metadata.json          (generation summary)")
     print("  - cmm_trajectory.csv     (per-trajectory data for CMMTrajectory)")
     return 0

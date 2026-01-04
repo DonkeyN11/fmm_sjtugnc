@@ -141,6 +141,12 @@ def main() -> None:
         help="Relative height ratio for the map subplot (main plot is fixed).",
     )
     parser.add_argument(
+        "--map-start-index",
+        type=int,
+        default=0,
+        help="Start index of the trajectory segment for the map subplot.",
+    )
+    parser.add_argument(
         "--map-pad-y",
         type=float,
         default=0.4,
@@ -221,8 +227,14 @@ def main() -> None:
         lambda geom: shapely.affinity.rotate(geom, angle_deg, origin=pivot, use_radians=False)
     )
     coords_rot = np.array(traj_geom_rot.coords)
+    start_idx = max(0, min(args.map_start_index, coords_rot.shape[0] - 1))
+    coords_view = coords_rot[start_idx:]
 
-    bounds = traj_geom_rot.bounds
+    if coords_view.size == 0:
+        raise SystemExit("No trajectory points available for the map subplot.")
+    min_x, min_y = coords_view.min(axis=0)
+    max_x, max_y = coords_view.max(axis=0)
+    bounds = (min_x, min_y, max_x, max_y)
     pad_x = (bounds[2] - bounds[0]) * 0.1 or 1e-5
     pad_y = (bounds[3] - bounds[1]) * args.map_pad_y or 1e-5
     roi = shapely.geometry.box(
@@ -250,7 +262,7 @@ def main() -> None:
             )
         except Exception:
             pass
-    ax_map.plot(coords_rot[:, 0], coords_rot[:, 1], color="#1f2a44", linewidth=2.0, zorder=2)
+    ax_map.plot(coords_view[:, 0], coords_view[:, 1], color="#1f2a44", linewidth=2.0, zorder=2)
     ax_map.set_xlabel("")
     ax_map.set_ylabel("")
     ax_map.set_xticks([])
@@ -262,7 +274,7 @@ def main() -> None:
     ax_map.set_ylim(bounds[1] - pad_y, bounds[3] + pad_y)
 
     if points.size:
-        points = points[points < coords_rot.shape[0]]
+        points = points[(points >= start_idx) & (points < coords_rot.shape[0])]
         ax_map.scatter(
             coords_rot[points, 0],
             coords_rot[points, 1],

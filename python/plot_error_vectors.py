@@ -17,6 +17,7 @@ cov_xy) to visualize plausible errors.
 from __future__ import annotations
 
 import argparse
+import json
 import math
 from pathlib import Path
 
@@ -142,6 +143,7 @@ def plot_2d(
     corr_emp: float,
     cov_corr: float,
     lims: tuple[float, float],
+    constellation: tuple[np.ndarray, np.ndarray] | None,
 ):
     # 2D 视图：主散点 + 2 个边缘 KDE + 右上角统计信息。
     fig = plt.figure(figsize=(8, 8))
@@ -156,7 +158,15 @@ def plot_2d(
     ax_scatter = fig.add_axes([left, bottom, size, size])
     ax_histx = fig.add_axes([left, bottom + size + gap, size, hist_thickness], sharex=ax_scatter)
     ax_histy = fig.add_axes([left + size + gap, bottom, hist_thickness, size], sharey=ax_scatter)
-    ax_stats = fig.add_axes([left + size + gap, bottom + size + gap, stats_size, stats_size])
+    ax_stats = None
+    ax_sky = None
+    if constellation is None:
+        ax_stats = fig.add_axes([left + size + gap, bottom + size + gap, stats_size, stats_size])
+    else:
+        ax_sky = fig.add_axes(
+            [left + size + gap, bottom + size + gap, stats_size, stats_size],
+            projection="polar",
+        )
 
     mu = errors.mean(axis=0)
     errors_c = errors - mu
@@ -225,8 +235,33 @@ def plot_2d(
         f"rho_emp={corr_emp:.3f}\n"
         f"rho_cov={cov_corr:.3f}"
     )
-    ax_stats.axis("off")
-    ax_stats.text(0.0, 1.0, stats, va="top", ha="left", fontsize=9)
+    if ax_stats is not None:
+        ax_stats.axis("off")
+        ax_stats.text(0.0, 1.0, stats, va="top", ha="left", fontsize=9)
+    else:
+        ax_scatter.text(
+            0.02,
+            0.98,
+            stats,
+            transform=ax_scatter.transAxes,
+            va="top",
+            ha="left",
+            fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85),
+        )
+    if ax_sky is not None and constellation is not None:
+        az_deg, el_deg = constellation
+        theta = np.deg2rad(az_deg)
+        r = 90.0 - el_deg
+        ax_sky.scatter(theta, r, c="tab:purple", s=14, alpha=0.8)
+        ax_sky.set_theta_zero_location("N")
+        ax_sky.set_theta_direction(-1)
+        ax_sky.set_rlim(90, 0)
+        ax_sky.set_yticks([0, 30, 60, 90])
+        ax_sky.set_yticklabels(["90°", "60°", "30°", "0°"])
+        ax_sky.set_xticks(np.deg2rad([0, 90, 180, 270]))
+        ax_sky.set_xticklabels(["N", "E", "S", "W"])
+        ax_sky.set_title("Skyplot", fontsize=9, pad=6)
 
     ax_scatter.set_xlabel("Error X (m)")
     ax_scatter.set_ylabel("Error Y (m)")
@@ -297,6 +332,12 @@ def main():
     parser.add_argument("--output", required=True, help="Output PNG path")
     parser.add_argument("--style", choices=["3d", "2d"], default="2d", help="Plot style (3d is debug-only)")
     parser.add_argument(
+        "--constellation",
+        type=Path,
+        default=None,
+        help="Optional constellation CSV (from generate_data_cmm.py --export-constellation).",
+    )
+    parser.add_argument(
         "--global_limits",
         action="store_true",
         help="Use percentile limits computed across all trajectories for consistent scales",
@@ -363,7 +404,16 @@ def main():
         lims = _limits_from_errors(errors_centered, args.limit_percentile)
 
     if args.style == "2d":
-        plot_2d(errors, mean_cov, args.traj_id, Path(args.output), corr_emp, cov_corr, lims)
+        constellation = None
+        if args.constellation is not None:
+            df_const = _read_csv_auto(args.constellation)
+            if {"id", "azimuth_deg", "elevation_deg"}.issubset(df_const.columns):
+                row = df_const[df_const["id"] == args.traj_id]
+                if not row.empty:
+                    az = np.array(json.loads(row.iloc[0]["azimuth_deg"]), dtype=float)
+                    el = np.array(json.loads(row.iloc[0]["elevation_deg"]), dtype=float)
+                    constellation = (az, el)
+        plot_2d(errors, mean_cov, args.traj_id, Path(args.output), corr_emp, cov_corr, lims, constellation)
     else:
         plot_3d(errors, mean_cov, args.traj_id, Path(args.output), corr_emp, cov_corr)
     print(f"Saved plot to {args.output}")
