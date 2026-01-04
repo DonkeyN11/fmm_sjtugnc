@@ -10,6 +10,7 @@ Usage example:
     --output simulation/statistic/error_plot_traj0.png \
     --style 2d
 
+
 If points and truth coincide (zero error), an optional --sample_noise flag will
 draw one noise sample per point from the provided covariance (cov_xx, cov_yy,
 cov_xy) to visualize plausible errors.
@@ -101,6 +102,151 @@ def compute_errors(p: pd.DataFrame, t: pd.DataFrame, sample_noise: bool):
             axis=0,
         )
     return errors
+
+
+def _compute_errors_for_trajs(points: pd.DataFrame, truth: pd.DataFrame, traj_ids: list[int]) -> np.ndarray:
+    if not traj_ids:
+        return np.zeros((0, 2))
+    id_col_p, seq_col_p = _pick_id_seq_columns(points)
+    id_col_t, seq_col_t = _pick_id_seq_columns(truth)
+    x_p, y_p = _pick_xy_columns(points)
+    x_t, y_t = _pick_xy_columns(truth)
+    p = points[points[id_col_p].isin(traj_ids)].set_index([id_col_p, seq_col_p])
+    t = truth[truth[id_col_t].isin(traj_ids)].set_index([id_col_t, seq_col_t])
+    aligned = p.join(t[[x_t, y_t]], rsuffix="_truth")
+    x_truth = f"{x_t}_truth" if x_t in p.columns else x_t
+    y_truth = f"{y_t}_truth" if y_t in p.columns else y_t
+    err_x = aligned[x_p] - aligned[x_truth]
+    err_y = aligned[y_p] - aligned[y_truth]
+    mask = np.isfinite(err_x.values) & np.isfinite(err_y.values)
+    return np.stack([err_x.values[mask], err_y.values[mask]], axis=1)
+
+
+def _mean_cov_from_points(points: pd.DataFrame, errors: np.ndarray) -> np.ndarray:
+    if {"cov_xx", "cov_yy", "cov_xy"}.issubset(points.columns):
+        return np.array(
+            [
+                [points["cov_xx"].mean(), points["cov_xy"].mean()],
+                [points["cov_xy"].mean(), points["cov_yy"].mean()],
+            ]
+        )
+    if {"sde", "sdn"}.issubset(points.columns):
+        cov_xy = points["sdne"].mean() if "sdne" in points.columns else 0.0
+        return np.array(
+            [
+                [(points["sde"] ** 2).mean(), cov_xy],
+                [cov_xy, (points["sdn"] ** 2).mean()],
+            ]
+        )
+    return np.cov(errors.T) if errors.shape[0] > 1 else np.zeros((2, 2))
+
+
+def _load_sigma_map(metadata_path: Path) -> dict[int, float]:
+    with metadata_path.open("r", encoding="utf-8") as f:
+        meta = json.load(f)
+    sigma_map: dict[int, float] = {}
+    for traj in meta.get("trajectories", []):
+        traj_id = traj.get("id")
+        if traj_id is None:
+            continue
+        sigma_val = (
+            traj.get("sigma_pr")
+            if "sigma_pr" in traj
+            else traj.get("sigma_m", traj.get("sigma"))
+        )
+        if sigma_val is None:
+            continue
+        sigma_map[int(traj_id)] = float(sigma_val)
+    return sigma_map
+
+
+def _plot_sigma_group_grid(
+    groups: list[tuple[float, np.ndarray, np.ndarray]],
+    output: Path,
+    title: str,
+    limit_percentile: float,
+    lims: tuple[float, float] | None,
+) -> None:
+    count = len(groups)
+    if count == 0:
+        raise ValueError("No sigma groups to plot")
+    ncols = min(4, max(2, math.ceil(math.sqrt(count))))
+    nrows = math.ceil(count / ncols)
+    fig, axes = plt.subplots(nrows, ncols, figsize=(ncols * 3.4, nrows * 3.4), squeeze=False)
+
+    for ax, (sigma, errors, mean_cov) in zip(axes.flat, groups):
+        if errors.size == 0:
+            ax.axis("off")
+            ax.set_title(f"sigma_pr={sigma:g} m", fontsize=9)
+            ax.text(0.5, 0.5, "No data", ha="center", va="center", fontsize=8)
+            continue
+        mu = errors.mean(axis=0)
+        errors_c = errors - mu
+        if errors_c.shape[0] >= 2000:
+            ax.hexbin(errors_c[:, 0], errors_c[:, 1], gridsize=35, cmap="Blues", mincnt=1)
+        else:
+            ax.scatter(
+                errors_c[:, 0],
+                errors_c[:, 1],
+                s=4,
+                alpha=0.2,
+                color="tab:blue",
+                edgecolors="none",
+            )
+        ax.axhline(0, color="0.7", lw=0.6)
+        ax.axvline(0, color="0.7", lw=0.6)
+        w, h, ang = covariance_ellipse(mean_cov, n_std=2.0)
+        ax.add_patch(
+            Ellipse(
+                (0, 0),
+                width=w,
+                height=h,
+                angle=ang,
+                fill=False,
+                lw=1.5,
+                color="black",
+                linestyle="--",
+            )
+        )
+        if lims is None:
+            lim_x, lim_y = _limits_from_errors(errors_c, limit_percentile)
+        else:
+            lim_x, lim_y = lims
+        lim = max(lim_x, lim_y)
+        ax.set_xlim(-lim * 1.2, lim * 1.2)
+        ax.set_ylim(-lim * 1.2, lim * 1.2)
+        ax.set_aspect("equal", adjustable="box")
+        if hasattr(ax, "set_box_aspect"):
+            ax.set_box_aspect(1)
+
+        stats = (
+            f"N={errors.shape[0]}\n"
+            f"mu=({mu[0]:.2f},{mu[1]:.2f})\n"
+            f"std=({errors[:,0].std():.2f},{errors[:,1].std():.2f})"
+        )
+        ax.text(
+            0.02,
+            0.98,
+            stats,
+            transform=ax.transAxes,
+            va="top",
+            ha="left",
+            fontsize=7,
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.85),
+        )
+        ax.set_title(f"sigma_pr={sigma:g} m", fontsize=9)
+        ax.set_xlabel("X (m)", fontsize=8)
+        ax.set_ylabel("Y (m)", fontsize=8)
+        ax.tick_params(labelsize=7)
+
+    for ax in axes.flat[len(groups) :]:
+        ax.axis("off")
+
+    fig.suptitle(title, y=0.98, fontsize=11)
+    fig.tight_layout(rect=[0, 0, 1, 0.96])
+    output.parent.mkdir(parents=True, exist_ok=True)
+    fig.savefig(output, dpi=150)
+    plt.close(fig)
 
 
 def covariance_ellipse(cov: np.ndarray, n_std: float = 2.0):
