@@ -224,6 +224,13 @@ public:
      */
     MatchResult match_traj(const CMMTrajectory &traj,
                          const CovarianceMapMatchConfig &config);
+    /**
+     * Match a trajectory while optionally returning the filtered trajectory
+     * after dropping epochs with no feasible candidates/transitions.
+     */
+    MatchResult match_traj(const CMMTrajectory &traj,
+                         const CovarianceMapMatchConfig &config,
+                         CMMTrajectory *filtered_traj);
 
     /**
      * Match GPS data stored in a file with covariance and protection level data
