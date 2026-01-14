@@ -12,6 +12,8 @@ build_debug/
 plots/
 output_backup251104/
 input_cmm_backup251104/
+dataset_hainan/
+dataset_hainan_06/
 # Doc files
 
 docs/html
