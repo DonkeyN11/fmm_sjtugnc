@@ -69,6 +69,8 @@ class FMMAppConfig
                           3-warn,4-err,5-critical,6-off */
   int step = 100; /**< progress report step */
   bool convert_to_projected = false; /**< Convert inputs to projected CRS when needed */
+  bool network_bbox_from_gps = false; /**< Auto-crop network by GPS bounds */
+  double network_bbox_padding = 0.0; /**< Padding for GPS-derived bbox */
 }; // FMMAppConfig
 }
 }
