@@ -5,11 +5,13 @@
 #include "mm/fmm/fmm_app_config.hpp"
 #include "util/debug.hpp"
 #include "util/util.hpp"
+#include "io/gps_reader.hpp"
 
 using namespace FMM::CORE;
 using namespace FMM::NETWORK;
 using namespace FMM::CONFIG;
 using namespace FMM::MM;
+using namespace FMM::IO;
 
 FMMAppConfig::FMMAppConfig(int argc, char **argv){
   spdlog::set_pattern("[%^%l%$][%s:%-3#] %v");
@@ -43,6 +45,23 @@ void FMMAppConfig::load_xml(const std::string &file){
   step =  tree.get("config.other.step",100);
   use_omp = !(!tree.get_child_optional("config.other.use_omp"));
   convert_to_projected = tree.get("config.other.convert_to_projected", false);
+  network_bbox_from_gps = tree.get("config.other.network_bbox_from_gps", false);
+  network_bbox_padding = tree.get("config.other.network_bbox_padding", 0.0);
+  if (network_bbox_from_gps && !network_config.has_bbox) {
+    auto bounds = IO::compute_gps_bounds_in_network_crs(
+        gps_config, network_config.file, convert_to_projected);
+    if (bounds.valid) {
+      network_config.has_bbox = true;
+      network_config.bbox_minx = bounds.minx - network_bbox_padding;
+      network_config.bbox_miny = bounds.miny - network_bbox_padding;
+      network_config.bbox_maxx = bounds.maxx + network_bbox_padding;
+      network_config.bbox_maxy = bounds.maxy + network_bbox_padding;
+      network_config.bbox_valid = true;
+      SPDLOG_INFO("Network bbox set from GPS with padding {}", network_bbox_padding);
+    } else {
+      SPDLOG_WARN("Failed to derive GPS bbox; network bbox disabled");
+    }
+  }
   SPDLOG_INFO("Finish with reading FMM xml configuration");
 };
 
@@ -61,7 +80,11 @@ void FMMAppConfig::load_arg(int argc, char **argv){
     ("h,help","Help information")
     ("use_omp","Use parallel computing if specified")
     ("convert_to_projected", "Convert inputs to a projected CRS when necessary",
-     cxxopts::value<bool>()->default_value("false")->implicit_value("true"));
+     cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+    ("network_bbox_from_gps", "Auto-crop network by GPS bounds",
+     cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+    ("network_bbox_padding", "Padding for GPS-derived bbox",
+     cxxopts::value<double>()->default_value("0.0"));
   if (argc==1) {
     help_specified = true;
     return;
@@ -76,8 +99,25 @@ void FMMAppConfig::load_arg(int argc, char **argv){
   step = result["step"].as<int>();
   use_omp = result.count("use_omp")>0;
   convert_to_projected = result["convert_to_projected"].as<bool>();
+  network_bbox_from_gps = result["network_bbox_from_gps"].as<bool>();
+  network_bbox_padding = result["network_bbox_padding"].as<double>();
   if (result.count("help")>0) {
     help_specified = true;
+  }
+  if (network_bbox_from_gps && !network_config.has_bbox) {
+    auto bounds = IO::compute_gps_bounds_in_network_crs(
+        gps_config, network_config.file, convert_to_projected);
+    if (bounds.valid) {
+      network_config.has_bbox = true;
+      network_config.bbox_minx = bounds.minx - network_bbox_padding;
+      network_config.bbox_miny = bounds.miny - network_bbox_padding;
+      network_config.bbox_maxx = bounds.maxx + network_bbox_padding;
+      network_config.bbox_maxy = bounds.maxy + network_bbox_padding;
+      network_config.bbox_valid = true;
+      SPDLOG_INFO("Network bbox set from GPS with padding {}", network_bbox_padding);
+    } else {
+      SPDLOG_WARN("Failed to derive GPS bbox; network bbox disabled");
+    }
   }
   SPDLOG_INFO("Finish with reading FMM arg configuration");
 };
@@ -94,6 +134,8 @@ void FMMAppConfig::print_help(){
   oss<<"-s/--step (optional) <int>: progress report step (100)\n";
   oss<<"--use_omp: use OpenMP for multithreaded map matching\n";
   oss<<"--convert_to_projected (optional): Convert inputs to a projected CRS when necessary (false)\n";
+  oss<<"--network_bbox_from_gps (optional): Auto-crop network by GPS bounds (false)\n";
+  oss<<"--network_bbox_padding (optional): Padding for GPS-derived bbox (0.0)\n";
   oss<<"-h/--help:print help information\n";
   oss<<"For xml configuration, check example folder\n";
   std::cout<<oss.str();
@@ -109,6 +151,8 @@ void FMMAppConfig::print() const {
   SPDLOG_INFO("Step {}",step);
   SPDLOG_INFO("Use omp {}",(use_omp ? "true" : "false"));
   SPDLOG_INFO("Convert to projected {}", (convert_to_projected ? "true" : "false"));
+  SPDLOG_INFO("Network bbox from GPS {}", (network_bbox_from_gps ? "true" : "false"));
+  SPDLOG_INFO("Network bbox padding {}", network_bbox_padding);
   SPDLOG_INFO("---- Print configuration done ----");
 };
 

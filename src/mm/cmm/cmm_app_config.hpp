@@ -39,6 +39,8 @@ struct CMMAppConfig {
     int step;
     bool convert_to_projected;
     bool help_specified;
+    bool network_bbox_from_gps = false;
+    double network_bbox_padding = 0.0;
 
     /**
      * Constructor
