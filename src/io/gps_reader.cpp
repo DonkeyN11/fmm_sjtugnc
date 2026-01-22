@@ -512,6 +512,9 @@ GPSReader::GPSReader(const FMM::CONFIG::GPSConfig &config) {
   }
 };
 
+namespace FMM {
+namespace IO {
+
 GPSBounds compute_gps_bounds(const FMM::CONFIG::GPSConfig &config) {
   GPSBounds bounds;
   GPSReader reader(config);
@@ -545,11 +548,14 @@ GPSBounds compute_gps_bounds(const FMM::CONFIG::GPSConfig &config) {
   return bounds;
 }
 
-GPSBounds compute_gps_bounds_in_network_crs(
+} // namespace IO
+} // namespace FMM
+
+GPSBounds FMM::IO::compute_gps_bounds_in_network_crs(
     const FMM::CONFIG::GPSConfig &gps_config,
     const std::string &network_file,
     bool convert_to_projected) {
-  GPSBounds bounds = compute_gps_bounds(gps_config);
+  GPSBounds bounds = FMM::IO::compute_gps_bounds(gps_config);
   if (!bounds.valid) {
     return bounds;
   }
