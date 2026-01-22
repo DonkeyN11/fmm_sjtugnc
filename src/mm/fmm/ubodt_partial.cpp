@@ -24,7 +24,12 @@ boost::geometry::model::box<Point> PartialUBODT::calculate_trajectories_bbox(
 
     if (trajectories.empty()) {
         SPDLOG_WARN("No trajectories provided for bbox calculation");
-        return boost::geometry::make_inverse<Point>();
+        // Return an empty/infinite box
+        Point max_pt(std::numeric_limits<double>::lowest(),
+                     std::numeric_limits<double>::lowest());
+        Point min_pt(std::numeric_limits<double>::max(),
+                     std::numeric_limits<double>::max());
+        return boost::geometry::model::box<Point>(min_pt, max_pt);
     }
 
     double min_x = std::numeric_limits<double>::max();
@@ -33,7 +38,10 @@ boost::geometry::model::box<Point> PartialUBODT::calculate_trajectories_bbox(
     double max_y = std::numeric_limits<double>::lowest();
 
     for (const auto &traj : trajectories) {
-        for (const auto &point : traj.geom.line) {
+        // Use public method to iterate through points
+        int num_points = traj.geom.get_num_points();
+        for (int i = 0; i < num_points; ++i) {
+            const Point &point = traj.geom.at(i);
             double x = boost::geometry::get<0>(point);
             double y = boost::geometry::get<1>(point);
 
@@ -48,7 +56,7 @@ boost::geometry::model::box<Point> PartialUBODT::calculate_trajectories_bbox(
 
     Point min_pt(min_x, min_y);
     Point max_pt(max_x, max_y);
-    return boost::geometry::make<boost::geometry::model::box<Point>>(min_pt, max_pt);
+    return boost::geometry::model::box<Point>(min_pt, max_pt);
 }
 
 // Extract nodes within a bounding box
@@ -85,9 +93,28 @@ std::unordered_set<NodeIndex> PartialUBODT::extract_nodes_in_bbox(
 
     // Iterate through all edges and check if they intersect with the bounding box
     for (const auto &edge : edges) {
-        // Get the envelope (bounding box) of the edge geometry
-        boost::geometry::model::box<Point> edge_bbox;
-        boost::geometry::envelope(edge.geom.line, edge_bbox);
+        // Manually calculate the edge's bounding box using public methods
+        int num_points = edge.geom.get_num_points();
+        if (num_points == 0) continue;
+
+        double edge_min_x = std::numeric_limits<double>::max();
+        double edge_min_y = std::numeric_limits<double>::max();
+        double edge_max_x = std::numeric_limits<double>::lowest();
+        double edge_max_y = std::numeric_limits<double>::lowest();
+
+        for (int i = 0; i < num_points; ++i) {
+            const Point &pt = edge.geom.at(i);
+            double x = boost::geometry::get<0>(pt);
+            double y = boost::geometry::get<1>(pt);
+            edge_min_x = std::min(edge_min_x, x);
+            edge_min_y = std::min(edge_min_y, y);
+            edge_max_x = std::max(edge_max_x, x);
+            edge_max_y = std::max(edge_max_y, y);
+        }
+
+        Point edge_min_pt(edge_min_x, edge_min_y);
+        Point edge_max_pt(edge_max_x, edge_max_y);
+        boost::geometry::model::box<Point> edge_bbox(edge_min_pt, edge_max_pt);
 
         // Check if edge's bounding box intersects with our query box
         if (boost::geometry::intersects(edge_bbox, expanded_bbox)) {

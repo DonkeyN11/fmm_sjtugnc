@@ -9,6 +9,12 @@ The script renders three datasets for the requested trajectory IDs:
 
 Hovering over CMM/FMM points displays detailed attributes such as timestamp,
 error, ep, tp, and trustworthiness, cumulative probability.
+
+Coordinate Reference System (CRS) Support:
+  - Default: EPSG:4326 (WGS84 geographic coordinates in degrees)
+  - Projected CRS: Use --input-crs to specify a projected coordinate system
+    (e.g., EPSG:3857 for Web Mercator, EPSG:326xx for UTM zones)
+    where coordinates are in metres.
 """
 
 from __future__ import annotations
@@ -50,10 +56,17 @@ GEOD = Geod(ellps="WGS84") if Geod is not None else None
 
 Coordinate = Tuple[float, float]
 Bounds = Tuple[float, float, float, float]
+# Global flag indicating if input coordinates are in a projected CRS (units: metres)
+USE_PROJECTED_CRS = False
 
 
 def parse_linestring(wkt: str) -> List[Coordinate]:
-    """Parse a WKT LINESTRING into a list of [lon, lat] coordinate pairs."""
+    """Parse a WKT LINESTRING into a list of coordinate pairs.
+
+    Returns coordinates in [x, y] format which can be:
+    - [longitude, latitude] for geographic CRS (EPSG:4326)
+    - [easting, northing] for projected CRS (e.g., EPSG:3857)
+    """
     text = (wkt or "").strip()
     if not text or not text.upper().startswith("LINESTRING"):
         return []
@@ -159,15 +172,22 @@ def covariance_ellipse(
         if distance == 0:
             coords.append(center)
             continue
-        azimuth = math.degrees(math.atan2(dx, dy))
-        if GEOD is not None:
-            lon, lat, _ = GEOD.fwd(lon0, lat0, azimuth, distance)
+
+        # If using a projected CRS (units in metres), apply offset directly
+        if USE_PROJECTED_CRS:
+            lon = lon0 + dx
+            lat = lat0 + dy
         else:
-            deg_lat = dy / 111_320.0
-            cos_lat = max(math.cos(math.radians(lat0)), 1e-6)
-            deg_lon = dx / (cos_lat * 111_320.0)
-            lon = lon0 + deg_lon
-            lat = lat0 + deg_lat
+            # Geographic CRS: convert metres to degrees using geodetic calculations
+            azimuth = math.degrees(math.atan2(dx, dy))
+            if GEOD is not None:
+                lon, lat, _ = GEOD.fwd(lon0, lat0, azimuth, distance)
+            else:
+                deg_lat = dy / 111_320.0
+                cos_lat = max(math.cos(math.radians(lat0)), 1e-6)
+                deg_lon = dx / (cos_lat * 111_320.0)
+                lon = lon0 + deg_lon
+                lat = lat0 + deg_lat
         coords.append((lon, lat))
     if coords:
         coords.append(coords[0])
@@ -184,8 +204,16 @@ def protection_level_circle(
         return []
     lon0, lat0 = center
     coords: List[Coordinate] = []
-    if GEOD is None:
-        # Fallback: convert metres to degrees with simple approximation.
+
+    # If using a projected CRS (units in metres), apply radius directly
+    if USE_PROJECTED_CRS:
+        for idx in range(segments):
+            angle = 2 * math.pi * idx / segments
+            dx = math.cos(angle) * radius_m
+            dy = math.sin(angle) * radius_m
+            coords.append((lon0 + dx, lat0 + dy))
+    elif GEOD is None:
+        # Fallback for geographic CRS: convert metres to degrees with simple approximation.
         deg_lat = radius_m / 111_320.0
         deg_lon = radius_m / max(math.cos(math.radians(lat0)) * 111_320.0, 1e-6)
         for idx in range(segments):
@@ -194,6 +222,7 @@ def protection_level_circle(
             dy = math.sin(angle) * deg_lat
             coords.append((lon0 + dx, lat0 + dy))
     else:
+        # Geographic CRS: use geodetic calculations
         for idx in range(segments):
             azimuth = 360.0 * idx / segments
             lon, lat, _ = GEOD.fwd(lon0, lat0, azimuth, radius_m)
@@ -274,13 +303,13 @@ def collect_observation_features_from_cmm(
                     continue
 
                 center = (lon, lat)
-                is_lon_lat = (-180.0 <= lon <= 180.0) and (-90.0 <= lat <= 90.0)
-                if is_lon_lat:
-                    metres_per_lat = 111_320.0
-                    metres_per_lon = max(math.cos(math.radians(lat)) * 111_320.0, 1e-6)
-                else:
+                # Use global CRS flag instead of heuristic coordinate range check
+                if USE_PROJECTED_CRS:
                     metres_per_lat = 1.0
                     metres_per_lon = 1.0
+                else:
+                    metres_per_lat = 111_320.0
+                    metres_per_lon = max(math.cos(math.radians(lat)) * 111_320.0, 1e-6)
                 updated_bounds = update_bounds(updated_bounds, [center])
 
                 point_features.append(
@@ -336,7 +365,7 @@ def collect_observation_features_from_cmm(
 
                     pl_val = to_float(pl)
                     if pl_val is not None and pl_val > 0:
-                        radius_m = pl_val * metres_per_lat if is_lon_lat else pl_val
+                        radius_m = pl_val * metres_per_lat if not USE_PROJECTED_CRS else pl_val
                         circle_coords = protection_level_circle(center, radius_m)
                         if circle_coords:
                             updated_bounds = update_bounds(updated_bounds, circle_coords)
@@ -1188,8 +1217,22 @@ def main() -> None:
         default=MAPBOX_DEFAULT_TOKEN,
         help="Mapbox access token (defaults to built-in token; can be overridden).",
     )
+    parser.add_argument(
+        "--input-crs",
+        default="EPSG:4326",
+        help="Input coordinate reference system (default: EPSG:4326 for WGS84 lon/lat). "
+             "Use a projected CRS code (e.g., EPSG:3857, EPSG:32650) if coordinates are in metres.",
+    )
 
     args = parser.parse_args()
+
+    # Set global CRS flag based on input
+    global USE_PROJECTED_CRS
+    # Check if the input CRS is a projected coordinate system
+    # Geographic CRSs typically have 2D geographic coordinate systems (EPSG:4326, 4269, etc.)
+    # We'll use a heuristic: if it's not EPSG:4326 (WGS84), assume projected
+    # Users can override with --input-crs
+    USE_PROJECTED_CRS = args.input_crs.upper() != "EPSG:4326"
 
     cmm_path = Path(args.cmm)
     selected_ids = collect_ids(args.ids, cmm_path)

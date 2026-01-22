@@ -206,6 +206,9 @@ target_link_libraries(h3mm FMMLIB)
 add_executable(cmm src/app/cmm.cpp)
 target_link_libraries(cmm FMMLIB ${BOOST_SERIALIZATION_LINK})
 
+add_executable(interactive_match src/app/interactive_match.cpp)
+target_link_libraries(interactive_match FMMLIB)
+
 add_executable(cmm_example example/cmm_example.cpp)
 target_link_libraries(cmm_example FMMLIB)
 
