@@ -40,6 +40,11 @@ void UBODTGenAlgorithm::precompute_ubodt_single_thead(
   int num_vertices = ng_.get_num_vertices();
   int step_size = num_vertices / 10;
   if (step_size < 10) step_size = 10;
+
+  // Use network center as heuristic target for A* algorithm
+  NodeIndex heuristic_target = num_vertices / 2;
+  SPDLOG_INFO("Using A* algorithm with heuristic target node {}", heuristic_target);
+
   std::ofstream myfile(filename);
   SPDLOG_INFO("Start to generate UBODT with delta {}", delta);
   SPDLOG_INFO("Output format {}", (binary ? "binary" : "csv"));
@@ -50,7 +55,7 @@ void UBODTGenAlgorithm::precompute_ubodt_single_thead(
         SPDLOG_INFO("Progress {} / {}", source, num_vertices);
       PredecessorMap pmap;
       DistanceMap dmap;
-      ng_.single_source_upperbound_dijkstra(source, delta, &pmap, &dmap);
+      ng_.single_source_upperbound_astar(source, delta, &pmap, &dmap, heuristic_target);
       write_result_binary(oa, source, pmap, dmap);
     }
   } else {
@@ -60,7 +65,7 @@ void UBODTGenAlgorithm::precompute_ubodt_single_thead(
         SPDLOG_INFO("Progress {} / {}", source, num_vertices);
       PredecessorMap pmap;
       DistanceMap dmap;
-      ng_.single_source_upperbound_dijkstra(source, delta, &pmap, &dmap);
+      ng_.single_source_upperbound_astar(source, delta, &pmap, &dmap, heuristic_target);
       write_result_csv(myfile, source, pmap, dmap);
     }
   }
@@ -74,6 +79,10 @@ void UBODTGenAlgorithm::precompute_ubodt_omp(
   int num_vertices = ng_.get_num_vertices();
   int step_size = num_vertices / 20;
   if (step_size < 10) step_size = 10;
+
+  // Use network center as heuristic target for A* algorithm
+  NodeIndex heuristic_target = num_vertices / 2;
+  SPDLOG_INFO("Using A* algorithm with heuristic target node {}", heuristic_target);
 
   // Set OpenMP to use all available cores
   omp_set_num_threads(omp_get_num_procs());
@@ -98,7 +107,7 @@ void UBODTGenAlgorithm::precompute_ubodt_omp(
         const NodeIndex source_idx = static_cast<NodeIndex>(source);
         PredecessorMap pmap;
         DistanceMap dmap;
-        ng_.single_source_upperbound_dijkstra(source_idx, delta, &pmap, &dmap);
+        ng_.single_source_upperbound_astar(source_idx, delta, &pmap, &dmap, heuristic_target);
 
         // Collect records in thread-local storage
         for (auto iter = pmap.begin(); iter != pmap.end(); ++iter) {
@@ -165,7 +174,7 @@ void UBODTGenAlgorithm::precompute_ubodt_omp(
         const NodeIndex source_idx = static_cast<NodeIndex>(source);
         PredecessorMap pmap;
         DistanceMap dmap;
-        ng_.single_source_upperbound_dijkstra(source_idx, delta, &pmap, &dmap);
+        ng_.single_source_upperbound_astar(source_idx, delta, &pmap, &dmap, heuristic_target);
 
         // Write to thread-local buffer
         write_result_csv_buffer(thread_buffers[thread_id], source_idx, pmap, dmap);
