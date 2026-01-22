@@ -30,9 +30,8 @@ CachedUBODT::CachedUBODT(std::shared_ptr<UBODT> ubodt, size_t cache_size)
 
     SPDLOG_INFO("Created CachedUBODT with cache size {}", cache_size);
 
-    // Reserve space for cache
+    // Reserve space for cache (list doesn't need reserve, only map does)
     cache_.reserve(cache_size);
-    lru_list_.reserve(cache_size);
 }
 
 const Record *CachedUBODT::look_up(NodeIndex source, NodeIndex target) {
