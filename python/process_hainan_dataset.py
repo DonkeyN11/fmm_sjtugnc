@@ -25,6 +25,25 @@ from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional, Tuple
 
+# Increase CSV field size limit to handle large trajectories
+max_int = sys.maxsize
+while True:
+    # Decrease the value until it fits in a C long
+    try:
+        csv.field_size_limit(max_int)
+        break
+    except OverflowError:
+        max_int = int(max_int / 10)
+
+# Add build path for Python module
+sys.path.insert(0, '/home/dell/fmm_sjtugnc/build/python')
+
+try:
+    from fmm import *
+except ImportError:
+    print("Error: fmm Python module not found. Please build the project first.")
+    sys.exit(1)
+
 # Optional dependencies
 try:
     from pyproj import CRS, Transformer, Geod
@@ -388,93 +407,208 @@ def parse_spp_solution(
     print(f"  Wrote {len(coords)} points to: {output_path}")
 
 
-def run_fmm_matching(
-    network_file: str,
-    ubodt_file: str,
+def read_cmm_trajectory_csv(file_path: str) -> List[Tuple[int, LineString, List[float], List[List[float]], List[float]]]:
+    """
+    Read cmm_trajectory.csv file and return list of trajectories.
+
+    Returns:
+        List of (id, geometry, timestamps, covariances, protection_levels)
+    """
+    trajectories = []
+    with open(file_path, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f, delimiter=';')
+        for row in reader:
+            traj_id = int(row['id'])
+            geom = wkt2linestring(row['geom'])
+            timestamps = json.loads(row['timestamps'])
+            covariances = json.loads(row['covariances'])
+            protection_levels = json.loads(row['protection_levels'])
+            trajectories.append((traj_id, geom, timestamps, covariances, protection_levels))
+    return trajectories
+
+
+def run_fmm_matching_python(
+    fmm: FastMapMatch,
+    fmm_config: FastMapMatchConfig,
     trajectory_file: str,
     output_file: str,
-    radius: float = 300.0,
 ) -> bool:
-    """Run FMM map matching."""
+    """Run FMM map matching using Python API."""
     print(f"\n{'='*60}")
-    print("Running FMM Map Matching")
+    print("Running FMM Map Matching (Python API)")
     print('='*60)
 
-    fmm_exe = "build/fmm"
-    if not Path(fmm_exe).exists():
-        print(f"Error: {fmm_exe} not found. Please build the project first.")
-        return False
-
-    cmd = [
-        fmm_exe,
-        "--network", network_file,
-        "--ubodt", ubodt_file,
-        "--input", trajectory_file,
-        "--output", output_file,
-        "--radius", str(radius),
-        "--output-matched", "matched.csv"
-    ]
-
-    print(f"Command: {' '.join(cmd)}")
-
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print(result.stdout)
-        if result.stderr:
-            print(result.stderr)
+        # Read trajectories
+        trajectories = read_cmm_trajectory_csv(trajectory_file)
+
+        # Open output file
+        with open(output_file, 'w', encoding='utf-8', newline='') as f_out:
+            writer = csv.writer(f_out, delimiter=';')
+            # Output fields matching fmm_config_omp.xml: cpath, pgeom, ep, tp, trustworthiness, timestamp
+            # (eu_dist and sp_dist can be added if needed by uncommenting in config)
+            writer.writerow([
+                'id', 'cpath', 'pgeom', 'ep', 'tp', 'trustworthiness', 'timestamp'
+            ])
+
+            # Match each trajectory
+            for traj_id, geom, timestamps, covariances, protection_levels in trajectories:
+                # Create Trajectory and use match_traj to get MatchResult (has trustworthiness)
+                traj = Trajectory(traj_id, geom, timestamps)
+                result = fmm.match_traj(traj, fmm_config)
+
+                # Extract ep, tp, trustworthiness from opt_candidate_path
+                # (these are per-observation values stored in each MatchedCandidate)
+                ep_list = []
+                tp_list = []
+                tw_list = []
+
+                # Build pgeom from opt_candidate_path (projected point geometry)
+                # pgeom contains the projected position of each GPS observation on the road
+                pgeom_line = LineString()
+                for i in range(len(result.opt_candidate_path)):
+                    mc = result.opt_candidate_path[i]
+                    ep_list.append(mc.ep)
+                    tp_list.append(mc.tp)
+                    tw_list.append(mc.trustworthiness)
+                    # mc.c.point contains the projected point
+                    x = mc.c.point.get_x(0)
+                    y = mc.c.point.get_y(0)
+                    pgeom_line.add_point(x, y)
+
+                # Format distances (available if needed in future)
+                # sp_dist_str = ",".join(f"{d:.2f}" for d in result.sp_distances)
+                # eu_dist_str = ",".join(f"{d:.2f}" for d in result.eu_distances)
+
+                # Write result
+                writer.writerow([
+                    traj_id,
+                    json.dumps(list(result.cpath)),
+                    pgeom_line.export_wkt(),  # pgeom: projected point geometry
+                    json.dumps([f"{ep:.6e}" for ep in ep_list]),
+                    json.dumps([f"{tp:.6e}" for tp in tp_list]),
+                    json.dumps([f"{tw:.6f}" for tw in tw_list]),
+                    json.dumps(timestamps)
+                ])
+
+                print(f"  Matched trajectory {traj_id}: {len(result.cpath)} edges matched")
+
         print(f"FMM matching completed successfully")
         return True
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Error running FMM: {e}")
-        if e.stdout:
-            print(f"STDOUT:\n{e.stdout}")
-        if e.stderr:
-            print(f"STDERR:\n{e.stderr}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
-def run_cmm_matching(
-    network_file: str,
-    ubodt_file: str,
+def run_cmm_matching_python(
+    cmm: CovarianceMapMatch,
+    cmm_config: CovarianceMapMatchConfig,
     trajectory_file: str,
     output_file: str,
-    radius: float = 300.0,
 ) -> bool:
-    """Run CMM map matching."""
+    """Run CMM map matching using Python API."""
     print(f"\n{'='*60}")
-    print("Running CMM Map Matching")
+    print("Running CMM Map Matching (Python API)")
     print('='*60)
 
-    cmm_exe = "build/cmm"
-    if not Path(cmm_exe).exists():
-        print(f"Error: {cmm_exe} not found. Please build the project first.")
-        return False
-
-    cmd = [
-        cmm_exe,
-        "--network", network_file,
-        "--ubodt", ubodt_file,
-        "--input", trajectory_file,
-        "--output", output_file,
-        "--search-radius", str(radius),
-        "--output-matched", "matched.csv"
-    ]
-
-    print(f"Command: {' '.join(cmd)}")
-
     try:
-        result = subprocess.run(cmd, check=True, capture_output=True, text=True)
-        print(result.stdout)
-        if result.stderr:
-            print(result.stderr)
+        # Read trajectories
+        trajectories = read_cmm_trajectory_csv(trajectory_file)
+
+        # Open output file
+        with open(output_file, 'w', encoding='utf-8', newline='') as f_out:
+            writer = csv.writer(f_out, delimiter=';')
+            # Output fields matching cmm_config_omp.xml: pgeom, eu_dist, sp_dist, ep, tp, trustworthiness, timestamp
+            writer.writerow([
+                'id', 'pgeom', 'eu_dist', 'sp_dist',
+                'ep', 'tp', 'trustworthiness', 'timestamp'
+            ])
+
+            # Match each trajectory
+            for traj_id, geom, timestamps, covariances, protection_levels in trajectories:
+                # Create CMMTrajectory
+                traj = CMMTrajectory()
+                traj.id = traj_id
+                traj.geom = geom
+
+                # Convert timestamps to DoubleVector
+                ts_vec = DoubleVector()
+                for ts in timestamps:
+                    ts_vec.append(ts)
+                traj.timestamps = ts_vec
+
+                # Convert covariances to CovarianceMatrixVector
+                cov_vec = CovarianceMatrixVector()
+                for cov_data in covariances:
+                    cov = CovarianceMatrix()
+                    cov.sde = cov_data[0]
+                    cov.sdn = cov_data[1]
+                    cov.sdu = cov_data[2]
+                    cov.sdne = cov_data[3]
+                    cov.sdeu = cov_data[4]
+                    cov.sdun = cov_data[5]
+                    cov_vec.append(cov)
+                traj.covariances = cov_vec
+
+                # Convert protection_levels to DoubleVector
+                pl_vec = DoubleVector()
+                for pl in protection_levels:
+                    pl_vec.append(pl)
+                traj.protection_levels = pl_vec
+
+                # Match trajectory
+                result = cmm.match_traj(traj, cmm_config)
+
+                # Extract ep, tp, trustworthiness from opt_candidate_path
+                # (these are per-observation values stored in each MatchedCandidate)
+                ep_list = []
+                tp_list = []
+                tw_list = []
+
+                # Build pgeom from opt_candidate_path (projected point geometry)
+                # pgeom contains the projected position of each GPS observation on the road
+                pgeom_line = LineString()
+                for i in range(len(result.opt_candidate_path)):
+                    mc = result.opt_candidate_path[i]
+                    ep_list.append(mc.ep)
+                    tp_list.append(mc.tp)
+                    tw_list.append(mc.trustworthiness)
+                    # mc.c.point contains the projected point (Candidate's point attribute)
+                    # Extract coordinates using get_x/get_y methods
+                    x = mc.c.point.get_x(0)
+                    y = mc.c.point.get_y(0)
+                    pgeom_line.add_point(x, y)
+
+                # Format sp_distances and eu_distances as comma-separated strings
+                # (matching the C++ output format in mm_writer.cpp)
+                sp_dist_str = ",".join(f"{d:.2f}" for d in result.sp_distances)
+                eu_dist_str = ",".join(f"{d:.2f}" for d in result.eu_distances)
+
+                # Write result
+                writer.writerow([
+                    traj_id,
+                    pgeom_line.export_wkt(),  # pgeom: projected point geometry
+                    eu_dist_str,  # comma-separated euclidean distances
+                    sp_dist_str,  # comma-separated shortest path distances
+                    json.dumps([f"{ep:.6e}" for ep in ep_list]),
+                    json.dumps([f"{tp:.6e}" for tp in tp_list]),
+                    json.dumps([f"{tw:.6f}" for tw in tw_list]),
+                    json.dumps(timestamps)
+                ])
+
+                # Calculate total distances for summary
+                total_eu_dist = sum(result.eu_distances) if result.eu_distances else 0.0
+                total_sp_dist = sum(result.sp_distances) if result.sp_distances else 0.0
+                print(f"  Matched trajectory {traj_id}: total eu_dist={total_eu_dist:.2f}m, total sp_dist={total_sp_dist:.2f}m")
+
         print(f"CMM matching completed successfully")
         return True
-    except subprocess.CalledProcessError as e:
+    except Exception as e:
         print(f"Error running CMM: {e}")
-        if e.stdout:
-            print(f"STDOUT:\n{e.stdout}")
-        if e.stderr:
-            print(f"STDERR:\n{e.stderr}")
+        import traceback
+        traceback.print_exc()
         return False
 
 
@@ -535,50 +669,127 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Process all directories (1.3, 1.4, 1.5, 1.6)
+  # Process specific subdirectories
   python process_hainan_dataset.py \\
+      --subdirs 1.1 1.2 2.1 \\
       --dataset-dir dataset_hainan_06 \\
-      --network dataset_hainan_06/hainan.shp \\
-      --ubodt dataset_hainan_06/hainan.ubodt \\
-      --radius 300
+      --network input/map/hainan/edges.shp \\
+      --ubodt input/map/hainan/hainan_ubodt_indexed.bin
 
-  # Process single directory
+  # Use parameters from config files
   python process_hainan_dataset.py \\
-      --dataset-dir dataset_hainan_06/1.3 \\
-      --network dataset_hainan_06/hainan.shp \\
-      --ubodt dataset_hainan_06/hainan.ubodt
-
-  # Skip matching, only convert trajectories
-  python process_hainan_dataset.py --no-matching --dataset-dir dataset_hainan_06/1.3
+      --subdirs 1.1 1.2 \\
+      --dataset-dir dataset_hainan_06 \\
+      --cmm-k 16 \\
+      --fmm-radius 100
         """
+    )
+
+    parser.add_argument(
+        "--subdirs",
+        nargs='+',
+        default=["1.3", "1.4", "1.5", "1.6"],
+        help="Subdirectories to process (e.g., 1.1 1.2 2.1)"
     )
 
     parser.add_argument(
         "--dataset-dir",
         type=str,
         default="dataset_hainan_06",
-        help="Root directory containing 1.3, 1.4, 1.5, 1.6 folders"
+        help="Root directory containing subdirectories"
     )
 
     parser.add_argument(
         "--network",
         type=str,
-        default="dataset_hainan_06/hainan.shp",
+        default="input/map/hainan/edges.shp",
         help="Path to road network shapefile"
+    )
+
+    parser.add_argument(
+        "--network-id",
+        type=str,
+        default="key",
+        help="Network edge ID field"
+    )
+
+    parser.add_argument(
+        "--network-source",
+        type=str,
+        default="u",
+        help="Network source field"
+    )
+
+    parser.add_argument(
+        "--network-target",
+        type=str,
+        default="v",
+        help="Network target field"
     )
 
     parser.add_argument(
         "--ubodt",
         type=str,
-        default="dataset_hainan_06/hainan.ubodt",
+        default="input/map/hainan/hainan_ubodt_indexed.bin",
         help="Path to UBODT file"
     )
 
+    # CMM parameters
     parser.add_argument(
-        "--radius",
+        "--cmm-k",
+        type=int,
+        default=16,
+        help="CMM: number of candidates"
+    )
+
+    parser.add_argument(
+        "--cmm-min-candidates",
+        type=int,
+        default=1,
+        help="CMM: minimum candidates to keep"
+    )
+
+    parser.add_argument(
+        "--cmm-protection-level-multiplier",
         type=float,
-        default=300.0,
-        help="Search radius for map matching (default: 300m)"
+        default=10.0,
+        help="CMM: protection level multiplier"
+    )
+
+    parser.add_argument(
+        "--cmm-reverse-tolerance",
+        type=float,
+        default=1.0,
+        help="CMM: reverse tolerance (meters)"
+    )
+
+    parser.add_argument(
+        "--cmm-window-length",
+        type=int,
+        default=100,
+        help="CMM: window length for trustworthiness"
+    )
+
+    # FMM parameters
+    parser.add_argument(
+        "--fmm-k",
+        type=int,
+        default=16,
+        help="FMM: number of candidates"
+    )
+
+    parser.add_argument(
+        "--fmm-radius",
+        type=float,
+        default=100.0,
+        help="FMM: search radius (meters)"
+    )
+
+    parser.add_argument(
+        "--fmm-gps-error",
+        type=float,
+        default=10.0,
+        help="FMM: GPS error (meters)"
     )
 
     parser.add_argument(
@@ -590,31 +801,45 @@ Examples:
     parser.add_argument(
         "--no-visualization",
         action="store_true",
-        help="Skip map matching, only convert trajectories"
+        help="Skip visualization generation"
     )
 
     parser.add_argument(
         "--mapbox-token",
         type=str,
         default=None,
-        help="Mapbox access token (default: use built-in token)"
+        help="Mapbox access token"
     )
 
     args = parser.parse_args()
 
-    # Directories to process
-    subdirs = ["1.3", "1.4", "1.5", "1.6"]
     base_dir = Path(args.dataset_dir)
+    subdirs = args.subdirs
 
     print("="*70)
-    print("Hainan Dataset Processing Pipeline")
+    print("Hainan Dataset Processing Pipeline (Python API)")
     print("="*70)
     print(f"Dataset directory: {base_dir}")
+    print(f"Subdirectories: {', '.join(subdirs)}")
     print(f"Network: {args.network}")
     print(f"UBODT: {args.ubodt}")
-    print(f"Search radius: {args.radius}m")
-    print(f"Subdirectories: {', subdirs}")
     print("="*70)
+
+    # Coordinate system conversion
+    # The network is in WGS84 (lat/lon), so if input is also in lat/lon,
+    # we need to convert meter-based parameters to degrees.
+    # Approximate conversion: 1 degree ≈ 111320 meters (at equator)
+    print("\nCoordinate System: WGS84 (lat/lon)")
+    print("Converting meter-based parameters to degrees...")
+    METERS_PER_DEGREE = 111320.0
+
+    fmm_radius_deg = args.fmm_radius / METERS_PER_DEGREE
+    fmm_gps_error_deg = args.fmm_gps_error / METERS_PER_DEGREE
+    cmm_reverse_tolerance_deg = args.cmm_reverse_tolerance / METERS_PER_DEGREE
+
+    print(f"  FMM radius: {args.fmm_radius}m → {fmm_radius_deg:.6f}°")
+    print(f"  FMM GPS error: {args.fmm_gps_error}m → {fmm_gps_error_deg:.6f}°")
+    print(f"  CMM reverse tolerance: {args.cmm_reverse_tolerance}m → {cmm_reverse_tolerance_deg:.6f}°")
 
     # Check required files exist
     if not Path(args.network).exists():
@@ -625,117 +850,185 @@ Examples:
         print(f"\nError: UBODT file not found: {args.ubodt}")
         return 1
 
-    # Process each subdirectory
-    for subdir in subdirs:
-        subdir_path = base_dir / subdir
-        if not subdir_path.exists():
-            print(f"\nWarning: Directory not found: {subdir_path}, skipping...")
-            continue
-
-        print(f"\n{'='*70}")
-        print(f"Processing: {subdir}")
-        print('='*70)
-
-        # Input and output paths
-        spp_file = subdir_path / "实时定位结果" / "spp_solution.txt"
-        mr_dir = subdir_path / "mr"
-        mr_dir.mkdir(parents=True, exist_ok=True)
-
-        cmm_traj_file = mr_dir / "cmm_trajectory.csv"
-        cmm_results_file = mr_dir / "cmm_results.csv"
-        fmm_results_file = mr_dir / "fmm_results.csv"
-        output_html = mr_dir / "mapbox_view.html"
-
-        if not spp_file.exists():
-            print(f"Warning: spp_solution.txt not found in {subdir_path}, skipping...")
-            continue
-
-        # Step 1: Convert to cmm_trajectory.csv
-        print("\nStep 1/4: Converting to cmm_trajectory.csv")
-        print("-" * 50)
-        try:
-            parse_spp_solution(
-                input_path=spp_file,
-                output_path=cmm_traj_file,
-                traj_id=int(subdir.replace(".", "")),  # Use subdir number as ID
-                project_utm=True,
-                utm_epsg=None,  # Auto-detect
-                protection_level_scale=2.0,
-                default_sigma=1.0
-            )
-        except Exception as e:
-            print(f"Error converting {spp_file}: {e}")
-            continue
-
-        # Step 2: Run FMM matching
-        if not args.no_matching:
-            print("\nStep 2/4: Running FMM map matching")
-            print("-" * 50)
-            fmm_success = run_fmm_matching(
-                network_file=args.network,
-                ubodt_file=args.ubodt,
-                trajectory_file=str(cmm_traj_file),
-                output_file=str(fmm_results_file),
-                radius=args.radius
-            )
-            if not fmm_success:
-                print("FMM matching failed, continuing...")
-
-        # Step 3: Run CMM matching
-        if not args.no_matching:
-            print("\nStep 3/4: Running CMM map matching")
-            print("-" * 50)
-            cmm_success = run_cmm_matching(
-                network_file=args.network,
-                ubodt_file=args.ubodt,
-                trajectory_file=str(cmm_traj_file),
-                output_file=str(cmm_results_file),
-                radius=args.radius
-            )
-            if not cmm_success:
-                print("CMM matching failed, continuing...")
-
-        # Step 4: Generate visualization
-        if not args.no_visualization and not args.no_matching:
-            print("\nStep 4/4: Generating Mapbox visualization")
-            print("-" * 50)
-
-            # Check if result files exist
-            if not Path(cmm_results_file).exists():
-                print(f"Warning: CMM results not found: {cmm_results_file}, skipping visualization...")
-            elif not Path(fmm_results_file).exists():
-                print(f"Warning: FMM results not found: {fmm_results_file}, skipping visualization...")
-            else:
-                generate_mapbox_visualization(
-                    cmm_traj_file=str(cmm_traj_file),
-                    cmm_results_file=str(cmm_results_file),
-                    fmm_results_file=str(fmm_results_file),
-                    output_html=str(output_html),
-                    token=args.mapbox_token
-                )
-
+    # Load network, graph, and UBODT ONCE (shared across all trajectories)
     print("\n" + "="*70)
-    print("Processing Complete!")
+    print("Loading Network and UBODT (shared for all matching)")
     print("="*70)
 
-    print("\nSummary:")
-    print("--------")
-    print(f"Processed directories: {', subdirs}")
-    print(f"Output location: Each subdir/mr/ directory contains:")
-    print("  - cmm_trajectory.csv   (converted trajectory)")
+    print(f"Loading network from: {args.network}")
+    network = Network(args.network, args.network_id, args.network_source, args.network_target)
+    print(f"  Nodes: {network.get_node_count()}")
+    print(f"  Edges: {network.get_edge_count()}")
 
+    print("Creating network graph...")
+    graph = NetworkGraph(network)
+    print(f"  Vertices: {graph.get_num_vertices()}")
+
+    print(f"Loading UBODT from: {args.ubodt}")
+    ubodt = UBODT.read_ubodt_file(args.ubodt)
+    print(f"  Rows: {ubodt.get_num_rows()}")
+    print("Network and UBODT loaded successfully!\n")
+
+    # Create FMM and CMM instances (shared across all trajectories)
+    fmm = None
+    cmm = None
     if not args.no_matching:
-        print("  - cmm_results.csv      (CMM matching results)")
-        print("  - fmm_results.csv      (FMM matching results)")
+        print("Creating map matching instances...")
+        fmm_config = FastMapMatchConfig(
+            k_arg=args.fmm_k,
+            r_arg=fmm_radius_deg,  # Use degrees for lat/lon coordinates
+            gps_error=fmm_gps_error_deg  # Use degrees for lat/lon coordinates
+        )
+        fmm = FastMapMatch(network, graph, ubodt)
+        print("  FMM instance created")
 
-    if not args.no_visualization and not args.no_matching:
-        print("  - mapbox_view.html      (interactive map visualization)")
+        cmm_config = CovarianceMapMatchConfig(
+            k_arg=args.cmm_k,
+            min_candidates_arg=args.cmm_min_candidates,
+            protection_level_multiplier_arg=args.cmm_protection_level_multiplier,
+            reverse_tolerance=cmm_reverse_tolerance_deg,  # Use degrees for lat/lon
+            normalized_arg=True,
+            use_mahalanobis_candidates_arg=True,
+            window_length_arg=args.cmm_window_length,
+            margin_used_trustworthiness_arg=False
+        )
+        cmm = CovarianceMapMatch(network, graph, ubodt)
+        print("  CMM instance created\n")
 
-    print("\nNext steps:")
-    print("  1. Open the generated HTML files in a web browser")
-    print("  2. Use the checkboxes to toggle CMM/FMM observation layers")
-    print("  3. Hover over points to see detailed information")
-    print("  4. Use the search box to find specific sequence numbers")
+    # Use try-finally to ensure resources are released even if an error occurs
+    try:
+        # Process each subdirectory
+        for subdir in subdirs:
+            subdir_path = base_dir / subdir
+            if not subdir_path.exists():
+                print(f"\nWarning: Directory not found: {subdir_path}, skipping...")
+                continue
+
+            print(f"\n{'='*70}")
+            print(f"Processing: {subdir}")
+            print('='*70)
+
+            # Input and output paths
+            spp_file = subdir_path / "实时定位结果" / "spp_solution.txt"
+            mr_dir = subdir_path / "mr"
+            mr_dir.mkdir(parents=True, exist_ok=True)
+
+            cmm_traj_file = mr_dir / "cmm_trajectory.csv"
+            cmm_results_file = mr_dir / "cmm_results.csv"
+            fmm_results_file = mr_dir / "fmm_results.csv"
+            output_html = mr_dir / "mapbox_view.html"
+
+            if not spp_file.exists():
+                print(f"Warning: spp_solution.txt not found in {subdir_path}, skipping...")
+                continue
+
+            # Step 1: Convert to cmm_trajectory.csv
+            print("\nStep 1/4: Converting to cmm_trajectory.csv")
+            print("-" * 50)
+            try:
+                parse_spp_solution(
+                    input_path=spp_file,
+                    output_path=cmm_traj_file,
+                    traj_id=int(subdir.replace(".", "")),  # Use subdir number as ID
+                    project_utm=False,  # Keep in WGS84 (lat/lon) to match network CRS
+                    utm_epsg=None,  # Not used when project_utm=False
+                    protection_level_scale=2.0,
+                    default_sigma=1.0
+                )
+            except Exception as e:
+                print(f"Error converting {spp_file}: {e}")
+                continue
+
+            # Step 2: Run FMM matching (using shared instances)
+            if not args.no_matching:
+                print("\nStep 2/4: Running FMM map matching")
+                print("-" * 50)
+                fmm_success = run_fmm_matching_python(
+                    fmm=fmm,
+                    fmm_config=fmm_config,
+                    trajectory_file=str(cmm_traj_file),
+                    output_file=str(fmm_results_file),
+                )
+                if not fmm_success:
+                    print("FMM matching failed, continuing...")
+
+            # Step 3: Run CMM matching (using shared instances)
+            if not args.no_matching:
+                print("\nStep 3/4: Running CMM map matching")
+                print("-" * 50)
+                cmm_success = run_cmm_matching_python(
+                    cmm=cmm,
+                    cmm_config=cmm_config,
+                    trajectory_file=str(cmm_traj_file),
+                    output_file=str(cmm_results_file),
+                )
+                if not cmm_success:
+                    print("CMM matching failed, continuing...")
+
+            # Step 4: Generate visualization
+            if not args.no_visualization and not args.no_matching:
+                print("\nStep 4/4: Generating Mapbox visualization")
+                print("-" * 50)
+
+                # Check if result files exist
+                if not Path(cmm_results_file).exists():
+                    print(f"Warning: CMM results not found: {cmm_results_file}, skipping visualization...")
+                elif not Path(fmm_results_file).exists():
+                    print(f"Warning: FMM results not found: {fmm_results_file}, skipping visualization...")
+                else:
+                    generate_mapbox_visualization(
+                        cmm_traj_file=str(cmm_traj_file),
+                        cmm_results_file=str(cmm_results_file),
+                        fmm_results_file=str(fmm_results_file),
+                        output_html=str(output_html),
+                        token=args.mapbox_token
+                    )
+
+    finally:
+        # This block always executes, even if an error occurred
+        print("\n" + "="*70)
+        print("Processing Complete!")
+        print("="*70)
+
+        print("\nSummary:")
+        print("--------")
+        print(f"Processed directories: {', '.join(subdirs)}")
+        print(f"Output location: Each subdir/mr/ directory contains:")
+        print("  - cmm_trajectory.csv   (converted trajectory)")
+
+        if not args.no_matching:
+            print("  - cmm_results.csv      (CMM matching results)")
+            print("  - fmm_results.csv      (FMM matching results)")
+
+        if not args.no_visualization and not args.no_matching:
+            print("  - mapbox_view.html      (interactive map visualization)")
+
+        print("\nNote: Network, Graph, and UBODT were loaded ONCE and reused for all matching.")
+        print("This significantly improves performance when processing multiple trajectories.")
+
+        # Explicitly clean up resources to free memory
+        # (Important for large UBODT files ~97GB)
+        if not args.no_matching:
+            print("\nReleasing resources...")
+            import gc
+
+            # Delete map matching instances first (they hold references to UBODT)
+            del fmm
+            del cmm
+            print("  Released FMM and CMM instances")
+
+            # Delete UBODT (largest memory consumer)
+            del ubodt
+            print("  Released UBODT")
+
+            # Delete graph and network
+            del graph
+            del network
+            print("  Released Network and Graph")
+
+            # Force garbage collection
+            gc.collect()
+            print("  Memory cleanup complete")
 
     return 0
 

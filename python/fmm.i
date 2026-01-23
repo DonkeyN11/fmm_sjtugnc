@@ -14,6 +14,11 @@
 %ignore FMM::MM::H3MatchResultConfig::print() const;
 %ignore FMM::CONFIG::GPSConfig::print() const;
 %ignore FMM::CONFIG::ResultConfig::print() const;
+%ignore FMM::MM::CovarianceMapMatchConfig::print() const;
+%ignore FMM::MM::CovarianceMapMatchConfig::load_from_xml;
+%ignore FMM::MM::CovarianceMapMatchConfig::load_from_arg;
+%ignore FMM::MM::CovarianceMapMatchConfig::register_arg;
+%ignore FMM::MM::CovarianceMapMatchConfig::register_help;
 
 %exception {
     try {
@@ -44,6 +49,7 @@
 #include "mm/h3mm/h3_util.hpp"
 #include "mm/h3mm/h3mm.hpp"
 #include "mm/fmm/ubodt.hpp"
+#include "mm/cmm/cmm_algorithm.hpp"
 using namespace FMM;
 using namespace FMM::CORE;
 using namespace FMM::NETWORK;
@@ -56,7 +62,11 @@ using namespace FMM::CONFIG;
 %template(HexVector) std::vector<unsigned long long>;
 %template(UnsignedIntVector) std::vector<unsigned int>;
 %template(DoubleVector) std::vector<double>;
+%template(DoubleVectorVector) std::vector<std::vector<double>>;
 %template(PyCandidateVector) std::vector<FMM::PYTHON::PyCandidate>;
+%template(CovarianceMatrixVector) std::vector<FMM::MM::CovarianceMatrix>;
+%template(IntVectorVector) std::vector<std::vector<int>>;
+%template(MatchedCandidatePath) std::vector<FMM::MM::MatchedCandidate>;
 // %template(DoubleVVector) vector<vector<double> >;
 // %template(DoubleVVVector) vector<vector<vector<double> > >;
 // %template(IntSet) set<int>;
@@ -77,3 +87,4 @@ using namespace FMM::CONFIG;
 %include "mm/h3mm/h3_type.hpp"
 %include "mm/h3mm/h3_util.hpp"
 %include "mm/h3mm/h3mm.hpp"
+%include "mm/cmm/cmm_algorithm.hpp"

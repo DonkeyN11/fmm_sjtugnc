@@ -13,8 +13,20 @@ error, ep, tp, and trustworthiness, cumulative probability.
 Coordinate Reference System (CRS) Support:
   - Default: EPSG:4326 (WGS84 geographic coordinates in degrees)
   - Projected CRS: Use --input-crs to specify a projected coordinate system
-    (e.g., EPSG:3857 for Web Mercator, EPSG:326xx for UTM zones)
+    (e.g., EPSG:3857 for Web Mercator, EPSG:326xx for UTM zones, 49 for hainan)
     where coordinates are in metres.
+
+Coordinate Transformation:
+  When --input-crs is set to a projected CRS (not EPSG:4326), the script
+  automatically transforms all coordinates to WGS84 (EPSG:4326) for Mapbox
+  rendering. This includes:
+    - Point features (CMM/FMM match results)
+    - Observation points (from trajectory CSV)
+    - Covariance ellipses and protection level circles
+
+  The transformation preserves the accuracy of offset calculations (metres)
+  by working in the original projected CRS and only converting to WGS84
+  for the final GeoJSON output.
 """
 
 from __future__ import annotations
@@ -35,9 +47,10 @@ from typing import Dict, Iterable, List, Optional, Sequence, Tuple, Set
 import numpy as np
 
 try:
-    from pyproj import Geod
+    from pyproj import Geod, Transformer
 except ImportError:  # pragma: no cover - optional dependency
     Geod = None
+    Transformer = None
 
 try:
     import fiona
@@ -58,14 +71,24 @@ Coordinate = Tuple[float, float]
 Bounds = Tuple[float, float, float, float]
 # Global flag indicating if input coordinates are in a projected CRS (units: metres)
 USE_PROJECTED_CRS = False
+# Global transformer for converting from input CRS to WGS84 (EPSG:4326)
+COORD_TRANSFORMER = None
+INPUT_CRS = "EPSG:4326"  # Default input CRS
 
 
-def parse_linestring(wkt: str) -> List[Coordinate]:
+def parse_linestring(wkt: str, transform: bool = False) -> List[Coordinate]:
     """Parse a WKT LINESTRING into a list of coordinate pairs.
+
+    Args:
+        wkt: Well-Known Text LINESTRING string
+        transform: If True, transform coordinates from input CRS to WGS84
 
     Returns coordinates in [x, y] format which can be:
     - [longitude, latitude] for geographic CRS (EPSG:4326)
     - [easting, northing] for projected CRS (e.g., EPSG:3857)
+
+    If transform=True and USE_PROJECTED_CRS is True, coordinates are
+    automatically transformed from the input CRS to WGS84 (EPSG:4326).
     """
     text = (wkt or "").strip()
     if not text or not text.upper().startswith("LINESTRING"):
@@ -81,12 +104,53 @@ def parse_linestring(wkt: str) -> List[Coordinate]:
         if len(parts) != 2:
             continue
         try:
-            lon = float(parts[0])
-            lat = float(parts[1])
+            x = float(parts[0])
+            y = float(parts[1])
         except ValueError:
             continue
-        coords.append((lon, lat))
+        # Transform to WGS84 if requested and input is in a projected CRS
+        if transform and USE_PROJECTED_CRS and COORD_TRANSFORMER is not None:
+            lon, lat = COORD_TRANSFORMER.transform(x, y)
+            coords.append((lon, lat))
+        else:
+            # Return coordinates as-is (in input CRS)
+            coords.append((x, y))
     return coords
+
+
+def transform_coordinate(x: float, y: float) -> Coordinate:
+    """Transform a coordinate from input CRS to WGS84 (EPSG:4326).
+
+    Args:
+        x: Easting (projected) or longitude (geographic)
+        y: Northing (projected) or latitude (geographic)
+
+    Returns:
+        (longitude, latitude) in WGS84
+    """
+    if USE_PROJECTED_CRS and COORD_TRANSFORMER is not None:
+        return COORD_TRANSFORMER.transform(x, y)
+    else:
+        return (x, y)
+
+
+def transform_coords(coords: List[Coordinate]) -> List[Coordinate]:
+    """Transform a list of coordinates from input CRS to WGS84 (EPSG:4326).
+
+    Args:
+        coords: List of (x, y) coordinates in input CRS
+
+    Returns:
+        List of (longitude, latitude) coordinates in WGS84
+    """
+    if USE_PROJECTED_CRS and COORD_TRANSFORMER is not None:
+        result = []
+        for x, y in coords:
+            lon, lat = COORD_TRANSFORMER.transform(x, y)
+            result.append((lon, lat))
+        return result
+    else:
+        return coords
 
 
 def parse_value_list(cell: Optional[str]) -> List[str]:
@@ -146,7 +210,11 @@ def covariance_ellipse(
     scale: float = ELLIPSE_SCALE,
     segments: int = ELLIPSE_SEGMENTS,
 ) -> List[Coordinate]:
-    """Return polygon coordinates representing a covariance ellipse in metres."""
+    """Return polygon coordinates representing a covariance ellipse in metres.
+
+    The returned coordinates are always in WGS84 (EPSG:4326) for Mapbox rendering,
+    even if the input coordinates are in a projected CRS.
+    """
     if covariance_m.shape != (2, 2):
         return []
     try:
@@ -157,7 +225,7 @@ def covariance_ellipse(
     radii = np.sqrt(eigenvalues) * float(scale)
     transform = eigenvectors @ np.diag(radii)
 
-    lon0, lat0 = center
+    x0, y0 = center
     coords: List[Coordinate] = []
     for idx in range(segments):
         angle = 2.0 * math.pi * idx / segments
@@ -175,23 +243,25 @@ def covariance_ellipse(
 
         # If using a projected CRS (units in metres), apply offset directly
         if USE_PROJECTED_CRS:
-            lon = lon0 + dx
-            lat = lat0 + dy
+            x = x0 + dx
+            y = y0 + dy
         else:
             # Geographic CRS: convert metres to degrees using geodetic calculations
             azimuth = math.degrees(math.atan2(dx, dy))
             if GEOD is not None:
-                lon, lat, _ = GEOD.fwd(lon0, lat0, azimuth, distance)
+                x, y, _ = GEOD.fwd(x0, y0, azimuth, distance)
             else:
                 deg_lat = dy / 111_320.0
-                cos_lat = max(math.cos(math.radians(lat0)), 1e-6)
+                cos_lat = max(math.cos(math.radians(y0)), 1e-6)
                 deg_lon = dx / (cos_lat * 111_320.0)
-                lon = lon0 + deg_lon
-                lat = lat0 + deg_lat
-        coords.append((lon, lat))
+                x = x0 + deg_lon
+                y = y0 + deg_lat
+        coords.append((x, y))
     if coords:
         coords.append(coords[0])
-    return coords
+
+    # Transform to WGS84 if using a projected CRS
+    return transform_coords(coords)
 
 
 def protection_level_circle(
@@ -199,10 +269,14 @@ def protection_level_circle(
     radius_m: float,
     segments: int = CIRCLE_SEGMENTS,
 ) -> List[Coordinate]:
-    """Approximate a circle from a protection level radius in metres."""
+    """Approximate a circle from a protection level radius in metres.
+
+    The returned coordinates are always in WGS84 (EPSG:4326) for Mapbox rendering,
+    even if the input coordinates are in a projected CRS.
+    """
     if radius_m is None or radius_m <= 0:
         return []
-    lon0, lat0 = center
+    x0, y0 = center
     coords: List[Coordinate] = []
 
     # If using a projected CRS (units in metres), apply radius directly
@@ -211,25 +285,27 @@ def protection_level_circle(
             angle = 2 * math.pi * idx / segments
             dx = math.cos(angle) * radius_m
             dy = math.sin(angle) * radius_m
-            coords.append((lon0 + dx, lat0 + dy))
+            coords.append((x0 + dx, y0 + dy))
     elif GEOD is None:
         # Fallback for geographic CRS: convert metres to degrees with simple approximation.
         deg_lat = radius_m / 111_320.0
-        deg_lon = radius_m / max(math.cos(math.radians(lat0)) * 111_320.0, 1e-6)
+        deg_lon = radius_m / max(math.cos(math.radians(y0)) * 111_320.0, 1e-6)
         for idx in range(segments):
             angle = 2 * math.pi * idx / segments
             dx = math.cos(angle) * deg_lon
             dy = math.sin(angle) * deg_lat
-            coords.append((lon0 + dx, lat0 + dy))
+            coords.append((x0 + dx, y0 + dy))
     else:
         # Geographic CRS: use geodetic calculations
         for idx in range(segments):
             azimuth = 360.0 * idx / segments
-            lon, lat, _ = GEOD.fwd(lon0, lat0, azimuth, radius_m)
-            coords.append((lon, lat))
+            x, y, _ = GEOD.fwd(x0, y0, azimuth, radius_m)
+            coords.append((x, y))
     if coords:
         coords.append(coords[0])
-    return coords
+
+    # Transform to WGS84 if using a projected CRS
+    return transform_coords(coords)
 
 
 def collect_observation_features_from_cmm(
@@ -259,9 +335,13 @@ def collect_observation_features_from_cmm(
             if traj_id_str not in id_set:
                 continue
 
-            coords = parse_linestring(row.get("geom", ""))
+            # Parse coordinates in original CRS (no transformation)
+            coords = parse_linestring(row.get("geom", ""), transform=False)
             if not coords:
                 continue
+
+            # Transform to WGS84 for point feature bounds checking
+            wgs84_coords = transform_coords(coords)
 
             try:
                 timestamps = json.loads(row.get("timestamps", "[]"))
@@ -284,7 +364,11 @@ def collect_observation_features_from_cmm(
             has_highlight_for_id = highlight_active and (traj_id_str in highlight_map)
 
             for seq in range(count):
-                lon, lat = coords[seq]
+                # Get coordinates in original CRS for offset calculations
+                x, y = coords[seq]
+                # Get coordinates in WGS84 for GeoJSON output
+                lon, lat = wgs84_coords[seq]
+
                 cov_entry = covariance_list[seq] if seq < len(covariance_list) else None
                 pl = pl_list[seq] if seq < len(pl_list) else None
                 timestamp_val = None
@@ -302,7 +386,8 @@ def collect_observation_features_from_cmm(
                 if sdn is None or sde is None or sdne is None:
                     continue
 
-                center = (lon, lat)
+                # Center in original CRS for ellipse/circle calculations
+                center = (x, y)
                 # Use global CRS flag instead of heuristic coordinate range check
                 if USE_PROJECTED_CRS:
                     metres_per_lat = 1.0
@@ -310,7 +395,9 @@ def collect_observation_features_from_cmm(
                 else:
                     metres_per_lat = 111_320.0
                     metres_per_lon = max(math.cos(math.radians(lat)) * 111_320.0, 1e-6)
-                updated_bounds = update_bounds(updated_bounds, [center])
+
+                # Update bounds using WGS84 coordinates
+                updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
 
                 point_features.append(
                     {
@@ -465,9 +552,13 @@ def collect_point_features(
             if traj_id is None or traj_id.strip() not in id_set:
                 continue
 
-            coords = parse_linestring(row.get("pgeom", ""))
-            if not coords:
+            # Parse coordinates in original CRS (no transformation)
+            raw_coords = parse_linestring(row.get("pgeom", ""), transform=False)
+            if not raw_coords:
                 continue
+
+            # Transform to WGS84 for GeoJSON output
+            wgs84_coords = transform_coords(raw_coords)
 
             trust_raw = row.get("trustworthiness")
             if not trust_raw:
@@ -481,7 +572,7 @@ def collect_point_features(
                 "error": parse_value_list(row.get("error", "")),
             }
 
-            for idx, (lon, lat) in enumerate(coords):
+            for idx, (lon, lat) in enumerate(wgs84_coords):
                 updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
 
                 def get_value(key: str) -> Optional[str]:
@@ -1227,12 +1318,25 @@ def main() -> None:
     args = parser.parse_args()
 
     # Set global CRS flag based on input
-    global USE_PROJECTED_CRS
+    global USE_PROJECTED_CRS, COORD_TRANSFORMER, INPUT_CRS
+    INPUT_CRS = args.input_crs.upper()
+
     # Check if the input CRS is a projected coordinate system
-    # Geographic CRSs typically have 2D geographic coordinate systems (EPSG:4326, 4269, etc.)
-    # We'll use a heuristic: if it's not EPSG:4326 (WGS84), assume projected
-    # Users can override with --input-crs
-    USE_PROJECTED_CRS = args.input_crs.upper() != "EPSG:4326"
+    # If it's not EPSG:4326 (WGS84), we need to transform coordinates
+    USE_PROJECTED_CRS = INPUT_CRS != "EPSG:4326"
+
+    # Initialize coordinate transformer if using a projected CRS
+    if USE_PROJECTED_CRS:
+        if Transformer is None:
+            raise SystemExit(
+                f"Error: pyproj is required for coordinate transformation from {INPUT_CRS} to EPSG:4326. "
+                "Install it with: pip install pyproj"
+            )
+        try:
+            COORD_TRANSFORMER = Transformer.from_crs(INPUT_CRS, "EPSG:4326", always_xy=True)
+            print(f"Initialized coordinate transformer: {INPUT_CRS} -> EPSG:4326")
+        except Exception as e:
+            raise SystemExit(f"Error initializing coordinate transformer from {INPUT_CRS} to EPSG:4326: {e}")
 
     cmm_path = Path(args.cmm)
     selected_ids = collect_ids(args.ids, cmm_path)
