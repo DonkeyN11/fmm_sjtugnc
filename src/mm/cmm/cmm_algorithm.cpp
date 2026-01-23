@@ -887,6 +887,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     std::vector<double> filtered_protection_levels;
     Traj_Candidates filtered_candidates;
     std::vector<std::vector<double>> filtered_emissions;
+    std::vector<int> filtered_original_indices;
     const bool has_timestamps = !traj.timestamps.empty();
     const size_t total_points = static_cast<size_t>(traj.geom.get_num_points());
 
@@ -895,6 +896,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     filtered_protection_levels.reserve(total_points);
     filtered_candidates.reserve(total_points);
     filtered_emissions.reserve(total_points);
+    filtered_original_indices.reserve(total_points);
     if (has_timestamps) {
         filtered_timestamps.reserve(total_points);
     }
@@ -915,6 +917,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
         } else {
             filtered_emissions.emplace_back();
         }
+        filtered_original_indices.push_back(static_cast<int>(idx));
     }
 
     size_t removed_empty = total_points - filtered_points.size();
@@ -976,6 +979,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
                 filtered_points.erase(filtered_points.begin() + erase_offset);
                 filtered_covariances.erase(filtered_covariances.begin() + erase_offset);
                 filtered_protection_levels.erase(filtered_protection_levels.begin() + erase_offset);
+                filtered_original_indices.erase(filtered_original_indices.begin() + erase_offset);
                 if (has_timestamps) {
                     filtered_timestamps.erase(filtered_timestamps.begin() + erase_offset);
                 }
@@ -1110,6 +1114,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     match_result.candidate_details = std::move(candidate_details);
     match_result.sp_distances = std::move(sp_distances);
     match_result.eu_distances = std::move(eu_distances);
+    match_result.original_indices = std::move(filtered_original_indices);
     return match_result;
 }
 

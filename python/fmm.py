@@ -1325,6 +1325,7 @@ class MatchResult(object):
     nbest_trustworthiness = property(_fmm.MatchResult_nbest_trustworthiness_get, _fmm.MatchResult_nbest_trustworthiness_set)
     sp_distances = property(_fmm.MatchResult_sp_distances_get, _fmm.MatchResult_sp_distances_set)
     eu_distances = property(_fmm.MatchResult_eu_distances_get, _fmm.MatchResult_eu_distances_set)
+    original_indices = property(_fmm.MatchResult_original_indices_get, _fmm.MatchResult_original_indices_set)
 
     def __init__(self):
         _fmm.MatchResult_swiginit(self, _fmm.new_MatchResult())
@@ -1516,6 +1517,9 @@ class UBODT(object):
 
     def update_delta(self, value):
         return _fmm.UBODT_update_delta(self, value)
+
+    def set_mmap_reader(self, reader):
+        return _fmm.UBODT_set_mmap_reader(self, reader)
 
     @staticmethod
     def read_ubodt_file(filename, multiplier=50000):

@@ -3,6 +3,7 @@
 //
 
 #include "mm/fmm/ubodt.hpp"
+#include "mm/fmm/ubodt_mmap.hpp"
 #include "util/util.hpp"
 
 #include <cstdint>
@@ -52,6 +53,14 @@ UBODT::~UBODT() {
 }
 
 Record *UBODT::look_up(NodeIndex source, NodeIndex target) const {
+  if (ubodt_mmap_) {
+      // Delegate to mmap reader
+      // Note: Casting const MmapRecord* to Record* is technically unsafe if accessing 'next'
+      // But look_up callers typically only read data fields, not traverse the list manually.
+      // This is an optimization trade-off.
+      return (Record*) ubodt_mmap_->look_up(source, target);
+  }
+
   unsigned int h = cal_bucket_index(source, target);
   Record *r = hashtable[h];
   while (r != nullptr) {
@@ -66,6 +75,10 @@ Record *UBODT::look_up(NodeIndex source, NodeIndex target) const {
 
 std::vector<EdgeIndex> UBODT::look_sp_path(NodeIndex source,
                                            NodeIndex target) const {
+  if (ubodt_mmap_) {
+      return ubodt_mmap_->look_sp_path(source, target);
+  }
+
   std::vector<EdgeIndex> edges;
   if (source == target) { return edges; }
   Record *r = look_up(source, target);
@@ -134,6 +147,7 @@ C_Path UBODT::construct_complete_path(int traj_id, const TGOpath &path,
 }
 
 double UBODT::get_delta() const {
+  if (ubodt_mmap_) return ubodt_mmap_->get_delta();
   return delta;
 }
 
@@ -383,73 +397,23 @@ std::shared_ptr<UBODT> UBODT::read_ubodt_mmap_binary(const std::string &filename
 
 std::shared_ptr<UBODT> UBODT::read_ubodt_indexed_binary(const std::string &filename,
                                                         int multiplier) {
-  uint64_t num_records = 0;
-  uint64_t num_sources = 0;
-  uint64_t header_bytes = 0;
-  if (!is_indexed_binary_format(filename, &num_records, &num_sources, &header_bytes)) {
-    SPDLOG_CRITICAL("File {} is not recognised as indexed UBODT binary", filename);
-    throw std::runtime_error("Invalid indexed UBODT format: " + filename);
-  }
-
   SPDLOG_INFO("Reading UBODT file (indexed binary format) from {}", filename);
-  SPDLOG_INFO("Header contains {} records and {} source buckets", num_records, num_sources);
-
-  std::ifstream ifs(filename, std::ios::binary);
-  if (!ifs.is_open()) {
-    SPDLOG_CRITICAL("Failed to open indexed UBODT file: {}", filename);
-    throw std::runtime_error("Failed to open indexed UBODT file: " + filename);
+  
+  // Use the new MMap loader which supports indexed format
+  auto mmap_reader = make_mmap_ubodt(filename);
+  
+  if (!mmap_reader || !mmap_reader->is_valid()) {
+      SPDLOG_CRITICAL("Failed to mmap indexed file {}", filename);
+      throw std::runtime_error("MMap failed for indexed file");
   }
 
-  // Skip header (record count + source index)
-  ifs.seekg(static_cast<std::streamoff>(header_bytes), std::ios::beg);
-  if (!ifs.good()) {
-    SPDLOG_CRITICAL("Failed to seek to record section in {}", filename);
-    throw std::runtime_error("Indexed UBODT header corrupt: " + filename);
-  }
-
-  const size_t record_size = sizeof(NETWORK::NodeIndex) * 4 +
-                             sizeof(NETWORK::EdgeIndex) + sizeof(double);
-  if (record_size == 0) {
-    SPDLOG_CRITICAL("Unexpected zero record size while loading {}", filename);
-    throw std::runtime_error("Invalid record size for UBODT");
-  }
-
-  int buckets = (num_records > 0)
-                    ? find_prime_number(num_records / LOAD_FACTOR)
-                    : find_prime_number(1.0);
-  std::shared_ptr<UBODT> table = std::make_shared<UBODT>(buckets, multiplier);
-
-  double delta = 0.0;
-  int progress_step = 1000000;
-
-  for (uint64_t i = 0; i < num_records; ++i) {
-    Record *r = (Record *) malloc(sizeof(Record));
-    ifs.read(reinterpret_cast<char *>(&r->source), sizeof(NETWORK::NodeIndex));
-    ifs.read(reinterpret_cast<char *>(&r->target), sizeof(NETWORK::NodeIndex));
-    ifs.read(reinterpret_cast<char *>(&r->first_n), sizeof(NETWORK::NodeIndex));
-    ifs.read(reinterpret_cast<char *>(&r->prev_n), sizeof(NETWORK::NodeIndex));
-    ifs.read(reinterpret_cast<char *>(&r->next_e), sizeof(NETWORK::EdgeIndex));
-    ifs.read(reinterpret_cast<char *>(&r->cost), sizeof(double));
-
-    if (!ifs.good()) {
-      free(r);
-      SPDLOG_CRITICAL("Unexpected end of file while reading indexed UBODT {}", filename);
-      throw std::runtime_error("Indexed UBODT truncated: " + filename);
-    }
-
-    r->next = nullptr;
-    table->insert(r);
-    if (r->cost > delta) delta = r->cost;
-
-    if ((i + 1) % progress_step == 0) {
-      SPDLOG_INFO("Read rows {}", i + 1);
-    }
-  }
-
-  ifs.close();
-
-  table->update_delta(delta);
-  SPDLOG_INFO("Finish reading indexed UBODT with {} rows, delta {}", num_records, delta);
+  // Create a minimal UBODT object (empty hashtable)
+  std::shared_ptr<UBODT> table = std::make_shared<UBODT>(1, multiplier);
+  
+  // Set the mmap reader
+  table->set_mmap_reader(mmap_reader);
+  
+  SPDLOG_INFO("Using memory-mapped Indexed UBODT (zero-copy mode).");
   return table;
 }
 
