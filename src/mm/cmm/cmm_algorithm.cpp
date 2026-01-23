@@ -119,6 +119,19 @@ void push_top_k(std::vector<double> *scores, double value, size_t k) {
 
 template <typename T>
 // Parse a JSON array (encoded inside a CSV field) into a numeric vector of type T.
+//
+// Format specification:
+// Used for timestamps and protection_levels columns in CSV files.
+// These columns should contain a JSON 1D array where:
+// - Each value corresponds to one trajectory point
+// - Values are parsed as type T (typically double for timestamps/protection_levels)
+//
+// Example format for timestamps:
+// [1234567890.0,1234567891.0,1234567892.0,...]
+//
+// Example format for protection_levels:
+// [1.38,1.38,1.39,1.37,...]
+//
 bool parse_numeric_array(const std::string &json_text, std::vector<T> *output) {
     output->clear();
     const std::string trimmed = trim_copy(json_text);
@@ -141,6 +154,22 @@ bool parse_numeric_array(const std::string &json_text, std::vector<T> *output) {
 }
 
 // Parse and validate covariance matrices encoded as flattened JSON arrays.
+//
+// Format specification:
+// The covariances column in CSV should contain a JSON 2D array where:
+// - Each row in the JSON array corresponds to one trajectory point
+// - Each row contains exactly 6 numeric values: [sde, sdn, sdu, sdne, sdeu, sdun]
+//   where:
+//   - sde: East standard deviation
+//   - sdn: North standard deviation
+//   - sdu: Up standard deviation
+//   - sdne: North-East covariance
+//   - sdeu: East-Up covariance
+//   - sdun: Up-North covariance
+//
+// Example format:
+// [[0.68,0.69,0.81,0.033,0.0,0.0],[0.67,0.69,0.81,0.032,0.0,0.0],...]
+//
 bool parse_covariance_array(const std::string &json_text,
                             std::vector<CovarianceMatrix> *output) {
     output->clear();
@@ -519,27 +548,29 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    bool normalized_arg,
                                                    bool use_mahalanobis_candidates_arg,
                                                    int window_length_arg,
-                                                   bool margin_used_trustworthiness_arg)
+                                                   bool margin_used_trustworthiness_arg,
+                                                   bool filtered_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance),
       normalized(normalized_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
       window_length(window_length_arg),
-      margin_used_trustworthiness(margin_used_trustworthiness_arg) {
+      margin_used_trustworthiness(margin_used_trustworthiness_arg),
+      filtered(filtered_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
-    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {} margin_used_trustworthiness {}",
-                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness);
+    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {} margin_used_trustworthiness {} filtered {}",
+                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
 CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     const boost::property_tree::ptree &xml_data) {
-    int k = xml_data.get("config.parameters.k", 8); 
+    int k = xml_data.get("config.parameters.k", 8);
     int min_candidates = xml_data.get("config.parameters.min_candidates", 3);
     double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 1.0);
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
@@ -547,7 +578,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
     int window_length = xml_data.get("config.parameters.window_length", 10);
     bool margin_used_trustworthiness = xml_data.get("config.other.margin_used_trustworthiness", true);
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness};
+    bool filtered = xml_data.get("config.parameters.filtered", true);
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -561,7 +593,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
     int window_length = arg_data["window_length"].as<int>();
     bool margin_used_trustworthiness = arg_data["margin_used_trustworthiness"].as<bool>();
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness};
+    bool filtered = arg_data["filtered"].as<bool>();
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -582,6 +615,8 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("window_length", "Sliding window length for trustworthiness (points)",
          cxxopts::value<int>()->default_value("10"))
         ("margin_used_trustworthiness", "If true use margin (top1-top2) as trustworthiness, else use top1 score",
+         cxxopts::value<bool>()->default_value("true"))
+        ("filtered", "Filter out points with no candidates or disconnected transitions",
          cxxopts::value<bool>()->default_value("true"));
 }
 
@@ -595,6 +630,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
     oss << "--window_length (optional) <int>: sliding window length for trustworthiness (10)\n";
     oss << "--margin_used_trustworthiness (optional) <bool>: if true use margin (top1-top2), else use top1 score (true)\n";
+    oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -646,7 +682,8 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
     const CORE::LineString &geom,
     const std::vector<CovarianceMatrix> &covariances,
     const std::vector<double> &protection_levels,
-    const CovarianceMapMatchConfig &config) const {
+    const CovarianceMapMatchConfig &config,
+    const std::string &traj_id) const {
 
     SPDLOG_DEBUG("Search candidates with protection level for {} points", geom.get_num_points());
 
@@ -837,7 +874,11 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             } else if (!raw_probabilities.empty()) {
                 double uniform_prob = 1.0 / raw_probabilities.size();
                 normalized_probabilities.assign(raw_probabilities.size(), uniform_prob);
-                SPDLOG_WARN("Point {}: covariance determinant non-positive or no candidates within PL, using uniform emission", i);
+                if (!valid_covariance) {
+                    SPDLOG_WARN("Trajectory {} Point {}: covariance determinant non-positive, using uniform emission", traj_id, i);
+                } else {
+                    SPDLOG_WARN("Trajectory {} Point {}: no valid candidates within PL, using uniform emission", traj_id, i);
+                }
             }
             emission_probs = std::move(normalized_probabilities);
         } else {
@@ -858,6 +899,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
                                           const CovarianceMapMatchConfig &config,
                                           CMMTrajectory *filtered_traj) {
     SPDLOG_DEBUG("Count of points in trajectory {}", traj.geom.get_num_points());
+    SPDLOG_INFO("Trajectory {}: filtered mode is {}", traj.id, config.filtered ? "enabled" : "disabled");
 
     // Validate trajectory
     if (!traj.is_valid()) {
@@ -867,7 +909,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 
     SPDLOG_DEBUG("Search candidates with protection level");
     CandidateSearchResult candidate_result = search_candidates_with_protection_level(
-        traj.geom, traj.covariances, traj.protection_levels, config);
+        traj.geom, traj.covariances, traj.protection_levels, config, std::to_string(traj.id));
 
     Traj_Candidates candidates = std::move(candidate_result.candidates);
     std::vector<std::vector<double>> emission_probabilities = std::move(candidate_result.emission_probabilities);
@@ -881,138 +923,167 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
         return MatchResult{};
     }
 
-    std::vector<CORE::Point> filtered_points;
-    std::vector<double> filtered_timestamps;
-    std::vector<CovarianceMatrix> filtered_covariances;
-    std::vector<double> filtered_protection_levels;
-    Traj_Candidates filtered_candidates;
-    std::vector<std::vector<double>> filtered_emissions;
-    std::vector<int> filtered_original_indices;
-    const bool has_timestamps = !traj.timestamps.empty();
-    const size_t total_points = static_cast<size_t>(traj.geom.get_num_points());
-
-    filtered_points.reserve(total_points);
-    filtered_covariances.reserve(total_points);
-    filtered_protection_levels.reserve(total_points);
-    filtered_candidates.reserve(total_points);
-    filtered_emissions.reserve(total_points);
-    filtered_original_indices.reserve(total_points);
-    if (has_timestamps) {
-        filtered_timestamps.reserve(total_points);
-    }
-
-    for (size_t idx = 0; idx < candidates.size(); ++idx) {
-        if (candidates[idx].empty()) {
-            continue;
-        }
-        filtered_points.push_back(traj.geom.get_point(static_cast<int>(idx)));
-        if (has_timestamps) {
-            filtered_timestamps.push_back(traj.timestamps[idx]);
-        }
-        filtered_covariances.push_back(traj.covariances[idx]);
-        filtered_protection_levels.push_back(traj.protection_levels[idx]);
-        filtered_candidates.push_back(std::move(candidates[idx]));
-        if (idx < emission_probabilities.size()) {
-            filtered_emissions.push_back(std::move(emission_probabilities[idx]));
-        } else {
-            filtered_emissions.emplace_back();
-        }
-        filtered_original_indices.push_back(static_cast<int>(idx));
-    }
-
-    size_t removed_empty = total_points - filtered_points.size();
-    size_t removed_disconnected = 0;
-
-    auto has_valid_transition = [&](size_t prev_idx, size_t next_idx) -> bool {
-        if (prev_idx >= filtered_candidates.size() || next_idx >= filtered_candidates.size()) {
-            return false;
-        }
-        const Point_Candidates &prev_candidates = filtered_candidates[prev_idx];
-        const Point_Candidates &next_candidates = filtered_candidates[next_idx];
-        if (prev_candidates.empty() || next_candidates.empty()) {
-            return false;
-        }
-
-        const auto *prev_eps = (prev_idx < filtered_emissions.size())
-                               ? &filtered_emissions[prev_idx]
-                               : nullptr;
-        const auto *next_eps = (next_idx < filtered_emissions.size())
-                               ? &filtered_emissions[next_idx]
-                               : nullptr;
-
-        const CORE::Point &point_prev = filtered_points[prev_idx];
-        const CORE::Point &point_next = filtered_points[next_idx];
-        double eu_dist = boost::geometry::distance(point_prev, point_next);
-
-        for (size_t a = 0; a < prev_candidates.size(); ++a) {
-            double ep_a = (prev_eps && a < prev_eps->size()) ? (*prev_eps)[a] : 0.0;
-            if (ep_a <= 0.0 || !std::isfinite(ep_a)) {
-                continue;
-            }
-            for (size_t b = 0; b < next_candidates.size(); ++b) {
-                double ep_b = (next_eps && b < next_eps->size()) ? (*next_eps)[b] : 0.0;
-                if (ep_b <= 0.0 || !std::isfinite(ep_b)) {
-                    continue;
-                }
-                double sp_dist = get_sp_dist(&prev_candidates[a], &next_candidates[b], config.reverse_tolerance);
-                if (sp_dist < 0.0) {
-                    continue;
-                }
-                double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
-                if (tp <= 0.0 || !std::isfinite(tp)) {
-                    continue;
-                }
-                return true;
-            }
-        }
-        return false;
-    };
-
-    bool removed = true;
-    while (removed && filtered_candidates.size() > 1) {
-        removed = false;
-        for (size_t idx = 0; idx + 1 < filtered_candidates.size(); ) {
-            if (!has_valid_transition(idx, idx + 1)) {
-                auto erase_offset = static_cast<std::ptrdiff_t>(idx + 1);
-                filtered_candidates.erase(filtered_candidates.begin() + erase_offset);
-                filtered_emissions.erase(filtered_emissions.begin() + erase_offset);
-                filtered_points.erase(filtered_points.begin() + erase_offset);
-                filtered_covariances.erase(filtered_covariances.begin() + erase_offset);
-                filtered_protection_levels.erase(filtered_protection_levels.begin() + erase_offset);
-                filtered_original_indices.erase(filtered_original_indices.begin() + erase_offset);
-                if (has_timestamps) {
-                    filtered_timestamps.erase(filtered_timestamps.begin() + erase_offset);
-                }
-                ++removed_disconnected;
-                removed = true;
-                continue;
-            }
-            ++idx;
-        }
-    }
-
-    if (removed_empty > 0 || removed_disconnected > 0) {
-        SPDLOG_INFO("Trajectory {}: skipped {} empty epochs and {} disconnected epochs",
-                    traj.id, removed_empty, removed_disconnected);
-    }
-
+    // Prepare working trajectory and candidates
+    Traj_Candidates working_candidates;
+    std::vector<std::vector<double>> working_emissions;
     CMMTrajectory working_traj;
+    std::vector<int> working_original_indices;
+
+    const bool has_timestamps = !traj.timestamps.empty();
     working_traj.id = traj.id;
-    for (const auto &point : filtered_points) {
-        working_traj.geom.add_point(point);
-    }
+    working_traj.covariances = traj.covariances;
+    working_traj.protection_levels = traj.protection_levels;
     if (has_timestamps) {
-        working_traj.timestamps = std::move(filtered_timestamps);
+        working_traj.timestamps = traj.timestamps;
     }
-    working_traj.covariances = std::move(filtered_covariances);
-    working_traj.protection_levels = std::move(filtered_protection_levels);
+
+    if (config.filtered) {
+        // Filtering enabled: remove points with no candidates and disconnected transitions
+        std::vector<CORE::Point> filtered_points;
+        std::vector<double> filtered_timestamps;
+        std::vector<CovarianceMatrix> filtered_covariances;
+        std::vector<double> filtered_protection_levels;
+        std::vector<int> filtered_original_indices;
+        const size_t total_points = static_cast<size_t>(traj.geom.get_num_points());
+
+        filtered_points.reserve(total_points);
+        filtered_covariances.reserve(total_points);
+        filtered_protection_levels.reserve(total_points);
+        working_candidates.reserve(total_points);
+        working_emissions.reserve(total_points);
+        filtered_original_indices.reserve(total_points);
+        if (has_timestamps) {
+            filtered_timestamps.reserve(total_points);
+        }
+
+        // Step 1: Remove points with no candidates
+        for (size_t idx = 0; idx < candidates.size(); ++idx) {
+            if (candidates[idx].empty()) {
+                continue;
+            }
+            filtered_points.push_back(traj.geom.get_point(static_cast<int>(idx)));
+            if (has_timestamps) {
+                filtered_timestamps.push_back(traj.timestamps[idx]);
+            }
+            filtered_covariances.push_back(traj.covariances[idx]);
+            filtered_protection_levels.push_back(traj.protection_levels[idx]);
+            working_candidates.push_back(std::move(candidates[idx]));
+            if (idx < emission_probabilities.size()) {
+                working_emissions.push_back(std::move(emission_probabilities[idx]));
+            } else {
+                working_emissions.emplace_back();
+            }
+            filtered_original_indices.push_back(static_cast<int>(idx));
+        }
+
+        size_t removed_empty = total_points - filtered_points.size();
+        size_t removed_disconnected = 0;
+
+        // Step 2: Remove points with no valid transitions
+        auto has_valid_transition = [&](size_t prev_idx, size_t next_idx) -> bool {
+            if (prev_idx >= working_candidates.size() || next_idx >= working_candidates.size()) {
+                return false;
+            }
+            const Point_Candidates &prev_candidates = working_candidates[prev_idx];
+            const Point_Candidates &next_candidates = working_candidates[next_idx];
+            if (prev_candidates.empty() || next_candidates.empty()) {
+                return false;
+            }
+
+            const auto *prev_eps = (prev_idx < working_emissions.size())
+                                   ? &working_emissions[prev_idx]
+                                   : nullptr;
+            const auto *next_eps = (next_idx < working_emissions.size())
+                                   ? &working_emissions[next_idx]
+                                   : nullptr;
+
+            const CORE::Point &point_prev = filtered_points[prev_idx];
+            const CORE::Point &point_next = filtered_points[next_idx];
+            double eu_dist = boost::geometry::distance(point_prev, point_next);
+
+            for (size_t a = 0; a < prev_candidates.size(); ++a) {
+                double ep_a = (prev_eps && a < prev_eps->size()) ? (*prev_eps)[a] : 0.0;
+                if (ep_a <= 0.0 || !std::isfinite(ep_a)) {
+                    continue;
+                }
+                for (size_t b = 0; b < next_candidates.size(); ++b) {
+                    double ep_b = (next_eps && b < next_eps->size()) ? (*next_eps)[b] : 0.0;
+                    if (ep_b <= 0.0 || !std::isfinite(ep_b)) {
+                        continue;
+                    }
+                    double sp_dist = get_sp_dist(&prev_candidates[a], &next_candidates[b], config.reverse_tolerance);
+                    if (sp_dist < 0.0) {
+                        continue;
+                    }
+                    double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
+                    if (tp <= 0.0 || !std::isfinite(tp)) {
+                        continue;
+                    }
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        bool removed = true;
+        while (removed && working_candidates.size() > 1) {
+            removed = false;
+            for (size_t idx = 0; idx + 1 < working_candidates.size(); ) {
+                if (!has_valid_transition(idx, idx + 1)) {
+                    auto erase_offset = static_cast<std::ptrdiff_t>(idx + 1);
+                    working_candidates.erase(working_candidates.begin() + erase_offset);
+                    working_emissions.erase(working_emissions.begin() + erase_offset);
+                    filtered_points.erase(filtered_points.begin() + erase_offset);
+                    filtered_covariances.erase(filtered_covariances.begin() + erase_offset);
+                    filtered_protection_levels.erase(filtered_protection_levels.begin() + erase_offset);
+                    filtered_original_indices.erase(filtered_original_indices.begin() + erase_offset);
+                    if (has_timestamps) {
+                        filtered_timestamps.erase(filtered_timestamps.begin() + erase_offset);
+                    }
+                    ++removed_disconnected;
+                    removed = true;
+                    continue;
+                }
+                ++idx;
+            }
+        }
+
+        if (removed_empty > 0 || removed_disconnected > 0) {
+            SPDLOG_INFO("Trajectory {}: skipped {} empty epochs and {} disconnected epochs",
+                        traj.id, removed_empty, removed_disconnected);
+        }
+
+        // Build working trajectory from filtered data
+        for (const auto &point : filtered_points) {
+            working_traj.geom.add_point(point);
+        }
+        if (has_timestamps) {
+            working_traj.timestamps = std::move(filtered_timestamps);
+        }
+        working_traj.covariances = std::move(filtered_covariances);
+        working_traj.protection_levels = std::move(filtered_protection_levels);
+        working_original_indices = std::move(filtered_original_indices);
+    } else {
+        // Filtering disabled: use all points directly
+        const auto &points = traj.geom.get_geometry_const();
+        for (const auto &point : points) {
+            working_traj.geom.add_point(point);
+        }
+        working_candidates = std::move(candidates);
+        working_emissions = std::move(emission_probabilities);
+        // Generate original indices (identity mapping when no filtering)
+        working_original_indices.reserve(static_cast<size_t>(traj.geom.get_num_points()));
+        for (int i = 0; i < traj.geom.get_num_points(); ++i) {
+            working_original_indices.push_back(i);
+        }
+    }
 
     if (filtered_traj != nullptr) {
         *filtered_traj = working_traj;
     }
 
-    const Traj_Candidates &tc = filtered_candidates;
-    const std::vector<std::vector<double>> &emission_probs = filtered_emissions;
+    const Traj_Candidates &tc = working_candidates;
+    const std::vector<std::vector<double>> &emission_probs = working_emissions;
 
     if (tc.empty()) {
         return MatchResult{};
@@ -1114,7 +1185,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     match_result.candidate_details = std::move(candidate_details);
     match_result.sp_distances = std::move(sp_distances);
     match_result.eu_distances = std::move(eu_distances);
-    match_result.original_indices = std::move(filtered_original_indices);
+    match_result.original_indices = std::move(working_original_indices);
     return match_result;
 }
 

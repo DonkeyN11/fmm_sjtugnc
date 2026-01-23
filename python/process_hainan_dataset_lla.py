@@ -1,16 +1,16 @@
 #!/usr/bin/env python3
 """
-Hainan Dataset Processing Pipeline
-====================================
+Hainan Dataset Processing Pipeline (LLA Version)
+=================================================
 
 This script:
 1. Reads spp_solution.txt from directories 1.3, 1.4, 1.5, 1.6
-2. Converts to cmm_trajectory.csv (projected coordinates)
+2. Converts to cmm_trajectory.csv (LLA coordinates - no projection)
 3. Performs FMM and CMM map matching
 4. Generates Mapbox visualization
 
 Usage:
-    python process_hainan_dataset.py [--dataset-dir DIR] [--network FILE] [--ubodt FILE]
+    python process_hainan_dataset_lla.py [--dataset-dir DIR] [--network FILE] [--ubodt FILE]
 """
 
 import argparse
@@ -60,14 +60,6 @@ try:
 except ImportError:
     print(f"Error: fmm Python module not found. sys.path: {sys.path}")
     sys.exit(1)
-
-# Optional dependencies
-try:
-    from pyproj import CRS, Transformer, Geod
-except ImportError:
-    print("Warning: pyproj not available. Install with: pip install pyproj")
-    Transformer = None
-    Geod = None
 
 # NMEA regex pattern
 NMEA_RE = re.compile(r"\$[A-Z]{2}[A-Z0-9]{3}[^\r\n$]*")
@@ -150,7 +142,11 @@ def parse_zda_date(parts: List[str]) -> Optional[date]:
 
 
 def ellipse_to_covariance(smaj: float, smin: float, orient_deg: float) -> Tuple[float, float, float]:
-    """Convert ellipse parameters to covariance matrix."""
+    """Convert ellipse parameters to covariance matrix.
+
+    Note: Input smaj, smin are in meters (from GST message).
+    Output covariance is in degrees squared for LLA coordinates.
+    """
     theta = math.radians(orient_deg)
     sin_t = math.sin(theta)
     cos_t = math.cos(theta)
@@ -159,41 +155,47 @@ def ellipse_to_covariance(smaj: float, smin: float, orient_deg: float) -> Tuple[
     var_e = vmaj * sin_t * sin_t + vmin * cos_t * cos_t
     var_n = vmaj * cos_t * cos_t + vmin * sin_t * sin_t
     cov_en = (vmaj - vmin) * sin_t * cos_t
-    return math.sqrt(var_e), math.sqrt(var_n), cov_en
+
+    # Convert from meters^2 to degrees^2
+    # 1 degree ≈ 111320 meters at the equator
+    meters_per_degree = 111320.0
+    var_e_deg = var_e / (meters_per_degree ** 2)
+    var_n_deg = var_n / (meters_per_degree ** 2)
+    cov_en_deg = cov_en / (meters_per_degree ** 2)
+
+    return math.sqrt(var_e_deg), math.sqrt(var_n_deg), cov_en_deg
 
 
-def determine_utm_epsg(lon_deg: float, lat_deg: float) -> Optional[int]:
-    """Determine UTM EPSG code from coordinates."""
-    if not (math.isfinite(lon_deg) and math.isfinite(lat_deg)):
-        return None
-    if lat_deg <= -80.0 or lat_deg >= 84.0:
-        return None
-    zone = int(math.floor((lon_deg + 180.0) / 6.0)) + 1
-    zone = max(1, min(zone, 60))
-    base = 32600 if lat_deg >= 0.0 else 32700
-    return base + zone
+def meters_to_degrees(meters: float, latitude: float = 0.0) -> float:
+    """Convert meters to degrees at a given latitude.
+
+    At the equator: 1 degree ≈ 111320 meters
+    At higher latitudes, longitude degrees cover less distance.
+    """
+    meters_per_degree_lat = 111320.0
+    meters_per_degree_lon = 111320.0 * math.cos(math.radians(latitude))
+
+    # Use average for conversion
+    avg_meters_per_degree = (meters_per_degree_lat + meters_per_degree_lon) / 2
+    return meters / avg_meters_per_degree
 
 
 def parse_spp_solution(
     input_path: Path,
     output_path: Path,
     traj_id: int = 1,
-    project_utm: bool = True,
-    utm_epsg: Optional[int] = None,
     k_factor: float = 3.72,
-        default_sigma: float = 1.0,
+    default_sigma: float = 1.0,
 ) -> None:
     """
-    Parse spp_solution.txt and convert to cmm_trajectory.csv format.
+    Parse spp_solution.txt and convert to cmm_trajectory.csv format (LLA coordinates).
 
     Args:
         input_path: Path to spp_solution.txt
         output_path: Path to output cmm_trajectory.csv
         traj_id: Trajectory ID
-        project_utm: Whether to project to UTM coordinates
-        utm_epsg: UTM EPSG code (auto-detect if None)
         k_factor: K factor for protection level (default 3.72 for 10^-4 integrity risk)
-        default_sigma: Default sigma when GST is missing
+        default_sigma: Default sigma when GST is missing (in meters)
     """
     records: Dict[str, Dict[str, Optional[object]]] = {}
     time_order: List[str] = []
@@ -286,7 +288,7 @@ def parse_spp_solution(
                 rec["date"] = date_obj
                 dates.append(date_obj)
 
-        # Parse GST for covariance
+        # Parse GST for covariance (values are in meters)
         elif msg_type == "GST":
             if len(parts) > 7:
                 try:
@@ -337,53 +339,35 @@ def parse_spp_solution(
     if not points:
         raise RuntimeError("No valid position fixes with timestamps were found.")
 
-    # Determine UTM zone
-    if project_utm:
-        if Transformer is None:
-            raise RuntimeError("pyproj is required for UTM projection but is not available.")
-        if utm_epsg is None:
-            mean_lon = sum(p[2] for p in points) / len(points)
-            mean_lat = sum(p[1] for p in points) / len(points)
-            utm_epsg = determine_utm_epsg(mean_lon, mean_lat)
-        if utm_epsg is None:
-            raise RuntimeError("Unable to determine UTM EPSG; use --utm-epsg to set it explicitly.")
-        transformer = Transformer.from_crs("EPSG:4326", f"EPSG:{utm_epsg}", always_xy=True)
-        print(f"Using UTM EPSG:{utm_epsg} for projection.")
-    else:
-        transformer = None
-
     timestamps: List[float] = []
     coords: List[Tuple[float, float]] = []
     covariances: List[List[float]] = []
     protection_levels: List[float] = []
 
     for timestamp, lat, lon, rec in sorted(points, key=lambda item: item[0]):
-        # Project coordinates
-        if transformer:
-            x, y = transformer.transform(lon, lat)
-        else:
-            x, y = lon, lat
+        # Use LLA coordinates directly (lon, x; lat, y)
+        x, y = lon, lat
 
         # Extract covariance
+        # GST message provides values in meters
         smaj = rec["smaj"]
         smin = rec["smin"]
         orient = rec["orient"] if rec["orient"] is not None else 0.0
 
         if smaj is not None and smin is not None:
+            # Convert from meters to degrees
             sde, sdn, sdne = ellipse_to_covariance(smaj, smin, orient)
         else:
             if rec["lat_err"] is not None and rec["lon_err"] is not None:
-                sde, sdn = rec["lon_err"], rec["lat_err"]
+                # Convert lat_err/lon_err from meters to degrees
+                sde = meters_to_degrees(rec["lon_err"], lat)
+                sdn = meters_to_degrees(rec["lat_err"], lat)
             else:
-                sde = default_sigma
-                sdn = default_sigma
+                sde = meters_to_degrees(default_sigma, lat)
+                sdn = meters_to_degrees(default_sigma, lat)
             sdne = 0.0
 
-        # Convert to meters if needed (projected coordinates)
-        if not transformer:
-            sde, sdn, sdne = sde / 111320.0, sdn / 111320.0, sdne / (111320.0 * 111320.0)
-
-        # Altitude error
+        # Altitude error (keep in meters)
         sdu = rec["alt_err"] if rec["alt_err"] is not None else 0.0
         sdeu = 0.0
         sdun = 0.0
@@ -391,31 +375,34 @@ def parse_spp_solution(
         # Calculate protection level using HPL formula
         # HPL = K * sqrt((sigma_x^2 + sigma_y^2)/2 + sqrt(((sigma_x^2 - sigma_y^2)/2)^2 + sigma_xy^2))
         # where K is the integrity risk factor (default 3.72 for 10^-4 integrity risk)
-        var_e = sde * sde  # σ²_x (east variance)
-        var_n = sdn * sdn  # σ²_y (north variance)
-        var_en = sdne      # σ_xy (east-north covariance)
+        var_e = sde * sde  # σ²_x (east variance in degrees^2)
+        var_n = sdn * sdn  # σ²_y (north variance in degrees^2)
+        var_en = sdne      # σ_xy (east-north covariance in degrees^2)
 
         # Calculate maximum horizontal projection variance (σ²_hor,max)
         var_sum = var_e + var_n
         var_diff = var_e - var_n
         var_hor_max = 0.5 * var_sum + math.sqrt(0.25 * var_diff * var_diff + var_en * var_en)
 
-        # Calculate protection level
-        protection_level = k_factor * math.sqrt(var_hor_max)
+        # Calculate protection level in degrees
+        protection_level_deg = k_factor * math.sqrt(var_hor_max)
+
+        # Convert protection level back to meters for output
+        protection_level_m = meters_to_degrees(protection_level_deg, lat)
 
         coords.append((x, y))
         timestamps.append(round(timestamp, 6))
         covariances.append(
             [
-                round(sde, 8),
-                round(sdn, 8),
-                round(sdu, 8),
-                round(sdne, 10),
-                round(sdeu, 10),
-                round(sdun, 10),
+                round(sde, 12),   # More precision for degrees
+                round(sdn, 12),
+                round(sdu, 8),    # Altitude error in meters
+                round(sdne, 14),
+                round(sdeu, 14),
+                round(sdun, 14),
             ]
         )
-        protection_levels.append(round(protection_level, 8))
+        protection_levels.append(round(protection_level_m, 8))
 
     # Create WKT
     wkt = "LINESTRING (" + ", ".join(f"{x:.8f} {y:.8f}" for x, y in coords) + ")"
@@ -506,10 +493,6 @@ def run_fmm_matching_python(
                     x = mc.c.point.get_x(0)
                     y = mc.c.point.get_y(0)
                     pgeom_line.add_point(x, y)
-
-                # Format distances (available if needed in future)
-                # sp_dist_str = ",".join(f"{d:.2f}" for d in result.sp_distances)
-                # eu_dist_str = ",".join(f"{d:.2f}" for d in result.eu_distances)
 
                 # Write result
                 writer.writerow([
@@ -614,8 +597,8 @@ def run_cmm_matching_python(
 
                 # Format sp_distances and eu_distances as comma-separated strings
                 # (matching the C++ output format in mm_writer.cpp)
-                sp_dist_str = ",".join(f"{d:.2f}" for d in result.sp_distances)
-                eu_dist_str = ",".join(f"{d:.2f}" for d in result.eu_distances)
+                sp_dist_str = ",".join(f"{d:.6f}" for d in result.sp_distances)
+                eu_dist_str = ",".join(f"{d:.6f}" for d in result.eu_distances)
 
                 # Write result
                 writer.writerow([
@@ -632,7 +615,7 @@ def run_cmm_matching_python(
                 # Calculate total distances for summary
                 total_eu_dist = sum(result.eu_distances) if result.eu_distances else 0.0
                 total_sp_dist = sum(result.sp_distances) if result.sp_distances else 0.0
-                print(f"  Matched trajectory {traj_id}: total eu_dist={total_eu_dist:.2f}m, total sp_dist={total_sp_dist:.2f}m")
+                print(f"  Matched trajectory {traj_id}: total eu_dist={total_eu_dist:.6f}deg, total sp_dist={total_sp_dist:.6f}deg")
 
         print(f"CMM matching completed successfully")
         return True
@@ -696,23 +679,23 @@ def generate_mapbox_visualization(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Process Hainan dataset: convert trajectories, run FMM/CMM, generate visualization",
+        description="Process Hainan dataset: convert trajectories (LLA), run FMM/CMM, generate visualization",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Process specific subdirectories
-  python process_hainan_dataset.py \\
+  python process_hainan_dataset_lla.py \\
       --subdirs 1.1 1.2 2.1 \\
       --dataset-dir dataset_hainan_06 \\
       --network input/map/hainan/edges.shp \\
       --ubodt input/map/hainan/hainan_ubodt_indexed.bin
 
   # Use parameters from config files
-  python process_hainan_dataset.py \\
+  python process_hainan_dataset_lla.py \\
       --subdirs 1.1 1.2 \\
       --dataset-dir dataset_hainan_06 \\
       --cmm-k 16 \\
-      --fmm-radius 100
+      --fmm-radius 0.001  # Note: radius in degrees (~100m)
         """
     )
 
@@ -776,17 +759,10 @@ Examples:
         "--default-sigma",
         type=float,
         default=1.0,
-        help="Default sigma when GST is missing"
+        help="Default sigma when GST is missing (in meters)"
     )
 
-    parser.add_argument(
-        "--utm-epsg",
-        type=int,
-        default=None,
-        help="UTM EPSG code (e.g., 32649). If not provided, it will be auto-detected."
-    )
-
-    # CMM parameters
+    # CMM parameters (in degrees for LLA)
     parser.add_argument(
         "--cmm-k",
         type=int,
@@ -811,8 +787,8 @@ Examples:
     parser.add_argument(
         "--cmm-reverse-tolerance",
         type=float,
-        default=1.0,
-        help="CMM: reverse tolerance (meters)"
+        default=0.0001,  # ~10m in degrees
+        help="CMM: reverse tolerance (degrees, ~0.0001 deg ≈ 10m)"
     )
 
     parser.add_argument(
@@ -822,7 +798,7 @@ Examples:
         help="CMM: window length for trustworthiness"
     )
 
-    # FMM parameters
+    # FMM parameters (in degrees for LLA)
     parser.add_argument(
         "--fmm-k",
         type=int,
@@ -833,15 +809,15 @@ Examples:
     parser.add_argument(
         "--fmm-radius",
         type=float,
-        default=100.0,
-        help="FMM: search radius (meters)"
+        default=0.001,  # ~100m in degrees
+        help="FMM: search radius (degrees, ~0.001 deg ≈ 100m)"
     )
 
     parser.add_argument(
         "--fmm-gps-error",
         type=float,
-        default=10.0,
-        help="FMM: GPS error (meters)"
+        default=0.0001,  # ~10m in degrees
+        help="FMM: GPS error (degrees, ~0.0001 deg ≈ 10m)"
     )
 
     parser.add_argument(
@@ -869,7 +845,7 @@ Examples:
     subdirs = args.subdirs
 
     print("="*70)
-    print("Hainan Dataset Processing Pipeline (Python API)")
+    print("Hainan Dataset Processing Pipeline (Python API) - LLA Version")
     print("="*70)
     print(f"Dataset directory: {base_dir}")
     print(f"Subdirectories: {', '.join(subdirs)}")
@@ -877,19 +853,12 @@ Examples:
     print(f"UBODT: {args.ubodt}")
     print("="*70)
 
-    # Coordinate system conversion
-    # Switched to UTM (meters)
-    print("\nCoordinate System: UTM (meters)")
-    
-    # Parameters are already in meters, so we use them directly
-    fmm_radius_meters = args.fmm_radius
-    fmm_gps_error_meters = args.fmm_gps_error
-    cmm_reverse_tolerance_meters = args.cmm_reverse_tolerance
-
-    print(f"  FMM radius: {fmm_radius_meters}m")
-    print(f"  FMM GPS error: {fmm_gps_error_meters}m")
-    print(f"  CMM reverse tolerance: {cmm_reverse_tolerance_meters}m")
-    print("  Note: Covariance info in trajectory will be in meters.")
+    # Coordinate system: LLA (no projection)
+    print("\nCoordinate System: LLA (degrees)")
+    print(f"  FMM radius: {args.fmm_radius} deg (~{args.fmm_radius * 111320:.1f}m)")
+    print(f"  FMM GPS error: {args.fmm_gps_error} deg (~{args.fmm_gps_error * 111320:.1f}m)")
+    print(f"  CMM reverse tolerance: {args.cmm_reverse_tolerance} deg (~{args.cmm_reverse_tolerance * 111320:.1f}m)")
+    print("  Note: Covariance info in trajectory will be in degrees.")
 
     # Check required files exist
     if not Path(args.network).exists():
@@ -904,7 +873,7 @@ Examples:
     print("\n" + "="*70)
     print("Loading Network and UBODT (shared for all matching)")
     print("="*70)
-    print("WARNING: Ensure your Network and UBODT are in the same UTM zone as the trajectory!")
+    print("WARNING: Ensure your Network and UBODT are in LLA (WGS84) coordinates!")
 
     print(f"Loading network from: {args.network}")
     network = Network(args.network, args.network_id, args.network_source, args.network_target)
@@ -916,7 +885,7 @@ Examples:
     print(f"  Vertices: {graph.get_num_vertices()}")
 
     print(f"Loading UBODT from: {args.ubodt}")
-    
+
     # Check if UBODT is preloaded by daemon
     def check_daemon_loaded(filepath):
         status_file = "/tmp/ubodt_daemon_status.txt"
@@ -927,9 +896,8 @@ Examples:
                 content = f.read()
                 if "UBODT_DAEMON_STATUS" not in content:
                     return False
-                
+
                 # Simple check if file path is in content and LOADED: yes
-                # A more robust parsing matching the C++ logic would be better but this suffices for info
                 if os.path.abspath(filepath) in content or filepath in content:
                     if "LOADED: yes" in content:
                         return True
@@ -953,8 +921,8 @@ Examples:
         print("Creating map matching instances...")
         fmm_config = FastMapMatchConfig(
             k_arg=args.fmm_k,
-            r_arg=fmm_radius_meters,  # Use meters for UTM
-            gps_error=fmm_gps_error_meters  # Use meters for UTM
+            r_arg=args.fmm_radius,  # In degrees for LLA
+            gps_error=args.fmm_gps_error  # In degrees for LLA
         )
         fmm = FastMapMatch(network, graph, ubodt)
         print("  FMM instance created")
@@ -963,7 +931,7 @@ Examples:
             k_arg=args.cmm_k,
             min_candidates_arg=args.cmm_min_candidates,
             protection_level_multiplier_arg=args.cmm_protection_level_multiplier,
-            reverse_tolerance=cmm_reverse_tolerance_meters,  # Use meters for UTM
+            reverse_tolerance=args.cmm_reverse_tolerance,  # In degrees for LLA
             normalized_arg=True,
             use_mahalanobis_candidates_arg=True,
             window_length_arg=args.cmm_window_length,
@@ -1000,20 +968,20 @@ Examples:
                 continue
 
             # Step 1: Convert to cmm_trajectory.csv
-            print("\nStep 1/4: Converting to cmm_trajectory.csv (UTM)")
+            print("\nStep 1/4: Converting to cmm_trajectory.csv (LLA)")
             print("-" * 50)
             try:
                 parse_spp_solution(
                     input_path=spp_file,
                     output_path=cmm_traj_file,
                     traj_id=int(subdir.replace(".", "")),  # Use subdir number as ID
-                    project_utm=True,  # Convert to UTM
-                    utm_epsg=args.utm_epsg,  # Use specified EPSG or auto-detect
                     k_factor=args.k_factor,
                     default_sigma=args.default_sigma
                 )
             except Exception as e:
                 print(f"Error converting {spp_file}: {e}")
+                import traceback
+                traceback.print_exc()
                 continue
 
             # Step 2: Run FMM matching (using shared instances)
@@ -1071,7 +1039,7 @@ Examples:
         print("--------")
         print(f"Processed directories: {', '.join(subdirs)}")
         print(f"Output location: Each subdir/mr/ directory contains:")
-        print("  - cmm_trajectory.csv   (converted trajectory)")
+        print("  - cmm_trajectory.csv   (converted trajectory in LLA)")
 
         if not args.no_matching:
             print("  - cmm_results.csv      (CMM matching results)")
@@ -1080,32 +1048,10 @@ Examples:
         if not args.no_visualization and not args.no_matching:
             print("  - mapbox_view.html      (interactive map visualization)")
 
-        print("\nNote: Network, Graph, and UBODT were loaded ONCE and reused for all matching.")
-        print("This significantly improves performance when processing multiple trajectories.")
-
-        # Explicitly clean up resources to free memory
-        # (Important for large UBODT files ~97GB)
-        # if not args.no_matching:
-        #     print("\nReleasing resources...")
-        #     import gc
-
-        #     # Delete map matching instances first (they hold references to UBODT)
-        #     del fmm
-        #     del cmm
-        #     print("  Released FMM and CMM instances")
-
-        #     # Delete UBODT (largest memory consumer)
-        #     del ubodt
-        #     print("  Released UBODT")
-
-        #     # Delete graph and network
-        #     del graph
-        #     del network
-        #     print("  Released Network and Graph")
-
-        #     # Force garbage collection
-        #     gc.collect()
-        #     print("  Memory cleanup complete")
+        print("\nNote: Coordinates are in LLA (degrees).")
+        print("Covariance values are in degrees².")
+        print("Distance parameters (radius, tolerance, etc.) are in degrees.")
+        print("Network, Graph, and UBODT were loaded ONCE and reused for all matching.")
 
     return 0
 
