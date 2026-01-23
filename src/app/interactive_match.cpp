@@ -20,8 +20,6 @@
 #include "mm/cmm/cmm_algorithm.hpp"
 #include "network/network.hpp"
 #include "io/gps_reader.hpp"
-#include "config/fmm_config.hpp"
-#include "config/cmm_config.hpp"
 #include "util/debug.hpp"
 
 #include <iostream>

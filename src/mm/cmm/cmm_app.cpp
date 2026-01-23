@@ -3,6 +3,7 @@
 //
 
 #include "mm/cmm/cmm_app.hpp"
+#include "mm/fmm/ubodt_manager.hpp"
 
 #include "util/debug.hpp"
 
@@ -29,8 +30,18 @@ CMMApp::CMMApp(const CMMAppConfig &config, std::shared_ptr<UBODT> preloaded_ubod
 
 void CMMApp::initialize_matcher() {
     if (!ubodt_) {
-        SPDLOG_INFO("Loading UBODT from {}", config_.ubodt_file);
-        ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
+        // Check if UBODT is already loaded in memory
+        auto &manager = UBODTManager::getInstance();
+
+        if (config_.use_memory_cache && manager.is_loaded(config_.ubodt_file)) {
+            SPDLOG_INFO("Using cached UBODT from memory");
+            ubodt_ = manager.get_ubodt(config_.ubodt_file);
+            // Enable auto-release so UBODT is released after use
+            manager.set_auto_release(true);
+        } else {
+            SPDLOG_INFO("Loading UBODT from {}", config_.ubodt_file);
+            ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
+        }
     } else {
         SPDLOG_INFO("Using provided pre-loaded UBODT");
     }

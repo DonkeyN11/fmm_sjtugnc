@@ -35,6 +35,7 @@ struct CMMAppConfig {
     CovarianceMapMatchConfig cmm_config;
     std::string ubodt_file;
     bool use_omp;
+    bool use_memory_cache = true;  // If true, check memory cache for UBODT
     int log_level;
     int step;
     bool convert_to_projected;
