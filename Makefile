@@ -422,19 +422,6 @@ H3_OBJ/fast:
 .PHONY : H3_OBJ/fast
 
 #=============================================================================
-# Target rules for targets named ubodt_manager
-
-# Build rule for target.
-ubodt_manager: cmake_check_build_system
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 ubodt_manager
-.PHONY : ubodt_manager
-
-# fast build rule for target.
-ubodt_manager/fast:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ubodt_manager.dir/build.make CMakeFiles/ubodt_manager.dir/build
-.PHONY : ubodt_manager/fast
-
-#=============================================================================
 # Target rules for targets named CORE
 
 # Build rule for target.
@@ -725,30 +712,6 @@ src/app/ubodt_gen_app.s: src/app/ubodt_gen_app.cpp.s
 src/app/ubodt_gen_app.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/ubodt_gen.dir/build.make CMakeFiles/ubodt_gen.dir/src/app/ubodt_gen_app.cpp.s
 .PHONY : src/app/ubodt_gen_app.cpp.s
-
-src/app/ubodt_manager_app.o: src/app/ubodt_manager_app.cpp.o
-.PHONY : src/app/ubodt_manager_app.o
-
-# target to build an object file
-src/app/ubodt_manager_app.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ubodt_manager.dir/build.make CMakeFiles/ubodt_manager.dir/src/app/ubodt_manager_app.cpp.o
-.PHONY : src/app/ubodt_manager_app.cpp.o
-
-src/app/ubodt_manager_app.i: src/app/ubodt_manager_app.cpp.i
-.PHONY : src/app/ubodt_manager_app.i
-
-# target to preprocess a source file
-src/app/ubodt_manager_app.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ubodt_manager.dir/build.make CMakeFiles/ubodt_manager.dir/src/app/ubodt_manager_app.cpp.i
-.PHONY : src/app/ubodt_manager_app.cpp.i
-
-src/app/ubodt_manager_app.s: src/app/ubodt_manager_app.cpp.s
-.PHONY : src/app/ubodt_manager_app.s
-
-# target to generate assembly for a file
-src/app/ubodt_manager_app.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/ubodt_manager.dir/build.make CMakeFiles/ubodt_manager.dir/src/app/ubodt_manager_app.cpp.s
-.PHONY : src/app/ubodt_manager_app.cpp.s
 
 src/config/gps_config.o: src/config/gps_config.cpp.o
 .PHONY : src/config/gps_config.o
@@ -1205,54 +1168,6 @@ src/mm/fmm/ubodt_gen_app_config.s: src/mm/fmm/ubodt_gen_app_config.cpp.s
 src/mm/fmm/ubodt_gen_app_config.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/FMM_OBJ.dir/build.make CMakeFiles/FMM_OBJ.dir/src/mm/fmm/ubodt_gen_app_config.cpp.s
 .PHONY : src/mm/fmm/ubodt_gen_app_config.cpp.s
-
-src/mm/fmm/ubodt_manage_app.o: src/mm/fmm/ubodt_manage_app.cpp.o
-.PHONY : src/mm/fmm/ubodt_manage_app.o
-
-# target to build an object file
-src/mm/fmm/ubodt_manage_app.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/FMM_OBJ.dir/build.make CMakeFiles/FMM_OBJ.dir/src/mm/fmm/ubodt_manage_app.cpp.o
-.PHONY : src/mm/fmm/ubodt_manage_app.cpp.o
-
-src/mm/fmm/ubodt_manage_app.i: src/mm/fmm/ubodt_manage_app.cpp.i
-.PHONY : src/mm/fmm/ubodt_manage_app.i
-
-# target to preprocess a source file
-src/mm/fmm/ubodt_manage_app.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/FMM_OBJ.dir/build.make CMakeFiles/FMM_OBJ.dir/src/mm/fmm/ubodt_manage_app.cpp.i
-.PHONY : src/mm/fmm/ubodt_manage_app.cpp.i
-
-src/mm/fmm/ubodt_manage_app.s: src/mm/fmm/ubodt_manage_app.cpp.s
-.PHONY : src/mm/fmm/ubodt_manage_app.s
-
-# target to generate assembly for a file
-src/mm/fmm/ubodt_manage_app.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/FMM_OBJ.dir/build.make CMakeFiles/FMM_OBJ.dir/src/mm/fmm/ubodt_manage_app.cpp.s
-.PHONY : src/mm/fmm/ubodt_manage_app.cpp.s
-
-src/mm/fmm/ubodt_manage_app_config.o: src/mm/fmm/ubodt_manage_app_config.cpp.o
-.PHONY : src/mm/fmm/ubodt_manage_app_config.o
-
-# target to build an object file
-src/mm/fmm/ubodt_manage_app_config.cpp.o:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/FMM_OBJ.dir/build.make CMakeFiles/FMM_OBJ.dir/src/mm/fmm/ubodt_manage_app_config.cpp.o
-.PHONY : src/mm/fmm/ubodt_manage_app_config.cpp.o
-
-src/mm/fmm/ubodt_manage_app_config.i: src/mm/fmm/ubodt_manage_app_config.cpp.i
-.PHONY : src/mm/fmm/ubodt_manage_app_config.i
-
-# target to preprocess a source file
-src/mm/fmm/ubodt_manage_app_config.cpp.i:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/FMM_OBJ.dir/build.make CMakeFiles/FMM_OBJ.dir/src/mm/fmm/ubodt_manage_app_config.cpp.i
-.PHONY : src/mm/fmm/ubodt_manage_app_config.cpp.i
-
-src/mm/fmm/ubodt_manage_app_config.s: src/mm/fmm/ubodt_manage_app_config.cpp.s
-.PHONY : src/mm/fmm/ubodt_manage_app_config.s
-
-# target to generate assembly for a file
-src/mm/fmm/ubodt_manage_app_config.cpp.s:
-	$(MAKE) $(MAKESILENT) -f CMakeFiles/FMM_OBJ.dir/build.make CMakeFiles/FMM_OBJ.dir/src/mm/fmm/ubodt_manage_app_config.cpp.s
-.PHONY : src/mm/fmm/ubodt_manage_app_config.cpp.s
 
 src/mm/fmm/ubodt_manager.o: src/mm/fmm/ubodt_manager.cpp.o
 .PHONY : src/mm/fmm/ubodt_manager.o
@@ -1986,7 +1901,6 @@ help:
 	@echo "... ubodt_converter"
 	@echo "... ubodt_daemon"
 	@echo "... ubodt_gen"
-	@echo "... ubodt_manager"
 	@echo "... example/cmm_example.o"
 	@echo "... example/cmm_example.i"
 	@echo "... example/cmm_example.s"
@@ -2017,9 +1931,6 @@ help:
 	@echo "... src/app/ubodt_gen_app.o"
 	@echo "... src/app/ubodt_gen_app.i"
 	@echo "... src/app/ubodt_gen_app.s"
-	@echo "... src/app/ubodt_manager_app.o"
-	@echo "... src/app/ubodt_manager_app.i"
-	@echo "... src/app/ubodt_manager_app.s"
 	@echo "... src/config/gps_config.o"
 	@echo "... src/config/gps_config.i"
 	@echo "... src/config/gps_config.s"
@@ -2077,12 +1988,6 @@ help:
 	@echo "... src/mm/fmm/ubodt_gen_app_config.o"
 	@echo "... src/mm/fmm/ubodt_gen_app_config.i"
 	@echo "... src/mm/fmm/ubodt_gen_app_config.s"
-	@echo "... src/mm/fmm/ubodt_manage_app.o"
-	@echo "... src/mm/fmm/ubodt_manage_app.i"
-	@echo "... src/mm/fmm/ubodt_manage_app.s"
-	@echo "... src/mm/fmm/ubodt_manage_app_config.o"
-	@echo "... src/mm/fmm/ubodt_manage_app_config.i"
-	@echo "... src/mm/fmm/ubodt_manage_app_config.s"
 	@echo "... src/mm/fmm/ubodt_manager.o"
 	@echo "... src/mm/fmm/ubodt_manager.i"
 	@echo "... src/mm/fmm/ubodt_manager.s"

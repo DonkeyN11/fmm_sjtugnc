@@ -2166,5 +2166,80 @@ class CovarianceMapMatch(object):
 # Register CovarianceMapMatch in _fmm:
 _fmm.CovarianceMapMatch_swigregister(CovarianceMapMatch)
 
+class UBODTManager(object):
+    thisown = property(lambda x: x.this.own(), lambda x, v: x.this.own(v), doc="The membership flag")
+
+    def __init__(self, *args, **kwargs):
+        raise AttributeError("No constructor defined")
+    __repr__ = _swig_repr
+
+    @staticmethod
+    def getInstance():
+        return _fmm.UBODTManager_getInstance()
+
+    def get_ubodt(self, filename, multiplier=1, force_reload=False):
+        return _fmm.UBODTManager_get_ubodt(self, filename, multiplier, force_reload)
+
+    def get_partial_ubodt(self, *args):
+        return _fmm.UBODTManager_get_partial_ubodt(self, *args)
+
+    def get_cached_ubodt(self, filename, cache_size=10000, multiplier=1, force_reload=False):
+        return _fmm.UBODTManager_get_cached_ubodt(self, filename, cache_size, multiplier, force_reload)
+
+    def is_loaded(self, filename):
+        return _fmm.UBODTManager_is_loaded(self, filename)
+
+    def release_ubodt(self, filename):
+        return _fmm.UBODTManager_release_ubodt(self, filename)
+
+    def release_all(self):
+        return _fmm.UBODTManager_release_all(self)
+
+    def get_stats(self):
+        return _fmm.UBODTManager_get_stats(self)
+
+    def print_status(self):
+        return _fmm.UBODTManager_print_status(self)
+
+    def set_auto_release(self, enable):
+        return _fmm.UBODTManager_set_auto_release(self, enable)
+
+    def get_auto_release(self):
+        return _fmm.UBODTManager_get_auto_release(self)
+
+    @staticmethod
+    def check_daemon_loaded(filename):
+        return _fmm.UBODTManager_check_daemon_loaded(filename)
+
+# Register UBODTManager in _fmm:
+_fmm.UBODTManager_swigregister(UBODTManager)
+
+def UBODTManager_getInstance():
+    return _fmm.UBODTManager_getInstance()
+
+def UBODTManager_check_daemon_loaded(filename):
+    return _fmm.UBODTManager_check_daemon_loaded(filename)
+
+
+def load_ubodt(filename, multiplier=1, keep=True):
+    return _fmm.load_ubodt(filename, multiplier, keep)
+
+def load_partial_ubodt(filename, network, trajectories, buffer_ratio=0.1, keep=True):
+    return _fmm.load_partial_ubodt(filename, network, trajectories, buffer_ratio, keep)
+
+def load_cached_ubodt(filename, cache_size=10000, multiplier=1, keep=True):
+    return _fmm.load_cached_ubodt(filename, cache_size, multiplier, keep)
+
+def release_ubodt(filename):
+    return _fmm.release_ubodt(filename)
+
+def release_all_ubodts():
+    return _fmm.release_all_ubodts()
+
+def is_ubodt_loaded(filename):
+    return _fmm.is_ubodt_loaded(filename)
+
+def print_ubodt_status():
+    return _fmm.print_ubodt_status()
 
 

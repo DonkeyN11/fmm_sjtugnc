@@ -149,6 +149,13 @@ public:
     void set_auto_release(bool enable) { auto_release_ = enable; }
     bool get_auto_release() const { return auto_release_; }
 
+    /**
+     * Check if a UBODT file is loaded by the ubodt_daemon
+     * @param filename Path to UBODT file
+     * @return true if loaded by daemon
+     */
+    static bool check_daemon_loaded(const std::string &filename);
+
 private:
     UBODTManager() = default;
     ~UBODTManager() = default;

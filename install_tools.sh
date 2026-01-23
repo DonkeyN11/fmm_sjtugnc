@@ -22,7 +22,7 @@ fi
 
 # Copy executables
 echo "Installing FMM tools..."
-TOOLS="fmm cmm stmatch h3mm ubodt_gen ubodt_converter ubodt_manager ubodt_daemon"
+TOOLS="fmm cmm stmatch h3mm ubodt_gen ubodt_converter ubodt_daemon"
 
 for tool in $TOOLS; do
     if [ -f "build/$tool" ]; then

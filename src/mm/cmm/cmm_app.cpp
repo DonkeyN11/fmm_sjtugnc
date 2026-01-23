@@ -39,7 +39,11 @@ void CMMApp::initialize_matcher() {
             // Enable auto-release so UBODT is released after use
             manager.set_auto_release(true);
         } else {
-            SPDLOG_INFO("Loading UBODT from {}", config_.ubodt_file);
+            if (UBODTManager::check_daemon_loaded(config_.ubodt_file)) {
+                SPDLOG_INFO("UBODT is preloaded by ubodt_daemon. Using fast loading from OS cache.");
+            } else {
+                SPDLOG_INFO("UBODT not found in daemon. Loading from disk.");
+            }
             ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
         }
     } else {
