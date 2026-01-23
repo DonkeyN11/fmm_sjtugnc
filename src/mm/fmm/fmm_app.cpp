@@ -232,7 +232,11 @@ FMMApp::FMMApp(const FMMAppConfig &config) :
         // Enable auto-release so UBODT is released after use
         manager.set_auto_release(true);
     } else {
-        SPDLOG_INFO("Loading UBODT from file");
+        if (UBODTManager::check_daemon_loaded(config_.ubodt_file)) {
+            SPDLOG_INFO("UBODT is preloaded by ubodt_daemon. Using fast loading from OS cache.");
+        } else {
+            SPDLOG_INFO("UBODT not found in daemon. Loading from file.");
+        }
         auto start_time = UTIL::get_current_time();
         ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
         auto end_time = UTIL::get_current_time();

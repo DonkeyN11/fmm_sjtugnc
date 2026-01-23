@@ -206,9 +206,6 @@ target_link_libraries(h3mm FMMLIB)
 add_executable(cmm src/app/cmm.cpp)
 target_link_libraries(cmm FMMLIB ${BOOST_SERIALIZATION_LINK})
 
-add_executable(ubodt_manager src/app/ubodt_manager_app.cpp)
-target_link_libraries(ubodt_manager FMMLIB)
-
 add_executable(ubodt_daemon src/app/ubodt_daemon.cpp)
 target_link_libraries(ubodt_daemon FMMLIB)
 
@@ -225,7 +222,7 @@ message(STATUS "Installation folder ${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS FMMLIB LIBRARY DESTINATION lib)
 
-install(TARGETS fmm ubodt_gen ubodt_converter ubodt_manager ubodt_daemon stmatch h3mm cmm DESTINATION bin)
+install(TARGETS fmm ubodt_gen ubodt_converter ubodt_daemon stmatch h3mm cmm DESTINATION bin)
 
 if(FMM_INSTALL_HEADER)
   message(STATUS "Install fmm headers")

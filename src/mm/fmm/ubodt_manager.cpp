@@ -6,6 +6,10 @@
 #include "util/util.hpp"
 
 #include <chrono>
+#include <fstream>
+#include <csignal>
+#include <limits.h>  // For PATH_MAX
+#include <cstring>   // For string operations
 
 using namespace FMM;
 using namespace FMM::CORE;
@@ -15,6 +19,59 @@ using namespace FMM::MM;
 // ============================================================================
 // UBODTManager Implementation
 // ============================================================================
+
+bool UBODTManager::check_daemon_loaded(const std::string &filename) {
+    std::string status_file = "/tmp/ubodt_daemon_status.txt";
+    std::ifstream in(status_file);
+    if (!in.is_open()) {
+        return false;
+    }
+
+    std::string line;
+    std::string daemon_file;
+    bool is_loaded = false;
+    pid_t pid = 0;
+    bool found_daemon = false;
+
+    while (std::getline(in, line)) {
+        if (line.find("PID:") == 0) {
+            try {
+                pid = std::stoi(line.substr(4));
+            } catch (...) { pid = 0; }
+        } else if (line.find("UBODT_FILE:") == 0) {
+            daemon_file = line.substr(11);
+            // Trim whitespace
+            size_t start = daemon_file.find_first_not_of(" \t");
+            size_t end = daemon_file.find_last_not_of(" \t");
+            if (start != std::string::npos) {
+                daemon_file = daemon_file.substr(start, end - start + 1);
+            }
+        } else if (line.find("LOADED:") == 0) {
+            if (line.find("yes") != std::string::npos) {
+                is_loaded = true;
+            }
+        } else if (line.find("UBODT_DAEMON_STATUS") == 0) {
+            found_daemon = true;
+        }
+    }
+    in.close();
+
+    // Check if process is running
+    if (found_daemon && pid > 0 && kill(pid, 0) == 0) {
+        // Check if filenames match (simple string match)
+        // Normalize paths could be better but this is a basic check
+        if (is_loaded && daemon_file == filename) {
+            return true;
+        }
+        // Also try to check if one is suffix of another to be more robust
+        if (is_loaded && (daemon_file.find(filename) != std::string::npos || 
+                          filename.find(daemon_file) != std::string::npos)) {
+            return true;
+        }
+    }
+
+    return false;
+}
 
 std::shared_ptr<UBODT> UBODTManager::get_ubodt(const std::string &filename,
                                                 int multiplier,

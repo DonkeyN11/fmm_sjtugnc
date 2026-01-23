@@ -905,6 +905,32 @@ Examples:
     print(f"  Vertices: {graph.get_num_vertices()}")
 
     print(f"Loading UBODT from: {args.ubodt}")
+    
+    # Check if UBODT is preloaded by daemon
+    def check_daemon_loaded(filepath):
+        status_file = "/tmp/ubodt_daemon_status.txt"
+        if not os.path.exists(status_file):
+            return False
+        try:
+            with open(status_file, 'r') as f:
+                content = f.read()
+                if "UBODT_DAEMON_STATUS" not in content:
+                    return False
+                
+                # Simple check if file path is in content and LOADED: yes
+                # A more robust parsing matching the C++ logic would be better but this suffices for info
+                if os.path.abspath(filepath) in content or filepath in content:
+                    if "LOADED: yes" in content:
+                        return True
+        except:
+            return False
+        return False
+
+    if check_daemon_loaded(args.ubodt):
+        print("  [INFO] UBODT is preloaded by ubodt_daemon. Loading should be faster (OS cache).")
+    else:
+        print("  [INFO] UBODT not found in daemon. Loading from disk.")
+
     ubodt = UBODT.read_ubodt_file(args.ubodt)
     print(f"  Rows: {ubodt.get_num_rows()}")
     print("Network and UBODT loaded successfully!\n")

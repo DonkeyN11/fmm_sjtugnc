@@ -50,6 +50,7 @@
 #include "mm/h3mm/h3mm.hpp"
 #include "mm/fmm/ubodt.hpp"
 #include "mm/cmm/cmm_algorithm.hpp"
+#include "mm/fmm/ubodt_manager.hpp"
 using namespace FMM;
 using namespace FMM::CORE;
 using namespace FMM::NETWORK;
@@ -88,3 +89,4 @@ using namespace FMM::CONFIG;
 %include "mm/h3mm/h3_util.hpp"
 %include "mm/h3mm/h3mm.hpp"
 %include "mm/cmm/cmm_algorithm.hpp"
+%include "mm/fmm/ubodt_manager.hpp"
