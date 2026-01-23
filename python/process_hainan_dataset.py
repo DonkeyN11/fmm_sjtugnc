@@ -36,12 +36,29 @@ while True:
         max_int = int(max_int / 10)
 
 # Add build path for Python module
-sys.path.insert(0, '/home/dell/fmm_sjtugnc/build/python')
+script_dir = Path(__file__).resolve().parent
+project_root = script_dir.parent
+build_path = project_root / 'build' / 'python'
+
+# Prioritize local directory (script_dir) where fmm.py resides
+if str(script_dir) not in sys.path:
+    sys.path.insert(0, str(script_dir))
+else:
+    # Ensure it is at the front
+    sys.path.remove(str(script_dir))
+    sys.path.insert(0, str(script_dir))
+
+# Optional: Add build_path if fmm.py exists there (e.g. out-of-source build)
+if (build_path / "fmm.py").exists():
+    if str(build_path) not in sys.path:
+        sys.path.insert(0, str(build_path))
 
 try:
     from fmm import *
+    import fmm as fmm_module
+    print(f"Loaded fmm from: {fmm_module.__file__}")
 except ImportError:
-    print("Error: fmm Python module not found. Please build the project first.")
+    print(f"Error: fmm Python module not found. sys.path: {sys.path}")
     sys.exit(1)
 
 # Optional dependencies
@@ -70,17 +87,20 @@ def dm_to_dd(dm_str: str) -> float:
 
 
 def iter_nmea_sentences(path: Path) -> Iterable[str]:
-    """Iterate over NMEA sentences in a file."""
+    """Iterate over NMEA sentences in a file line by line."""
     try:
-        with path.open("rb") as fh:
-            data = fh.read()
-            text = data.decode("ascii", errors="ignore")
-            for match in NMEA_RE.finditer(text):
-                line = match.group(0).strip()
-                if "*" in line:
-                    star = line.find("*")
-                    line = line[: min(star + 3, len(line))]
-                yield line
+        with path.open("r", encoding="ascii", errors="ignore") as fh:
+            for line in fh:
+                line = line.strip()
+                if not line:
+                    continue
+                # Find all matches in the line (handles multiple sentences per line)
+                for match in NMEA_RE.finditer(line):
+                    content = match.group(0)
+                    if "*" in content:
+                        star = content.find("*")
+                        content = content[: min(star + 3, len(content))]
+                    yield content
     except Exception as e:
         print(f"Warning: Error reading {path}: {e}")
         return
@@ -734,6 +754,27 @@ Examples:
         help="Path to UBODT file"
     )
 
+    parser.add_argument(
+        "--protection-level-scale",
+        type=float,
+        default=2.0,
+        help="Scale factor for protection level"
+    )
+
+    parser.add_argument(
+        "--default-sigma",
+        type=float,
+        default=1.0,
+        help="Default sigma when GST is missing"
+    )
+
+    parser.add_argument(
+        "--utm-epsg",
+        type=int,
+        default=None,
+        help="UTM EPSG code (e.g., 32649). If not provided, it will be auto-detected."
+    )
+
     # CMM parameters
     parser.add_argument(
         "--cmm-k",
@@ -826,20 +867,18 @@ Examples:
     print("="*70)
 
     # Coordinate system conversion
-    # The network is in WGS84 (lat/lon), so if input is also in lat/lon,
-    # we need to convert meter-based parameters to degrees.
-    # Approximate conversion: 1 degree ≈ 111320 meters (at equator)
-    print("\nCoordinate System: WGS84 (lat/lon)")
-    print("Converting meter-based parameters to degrees...")
-    METERS_PER_DEGREE = 111320.0
+    # Switched to UTM (meters)
+    print("\nCoordinate System: UTM (meters)")
+    
+    # Parameters are already in meters, so we use them directly
+    fmm_radius_meters = args.fmm_radius
+    fmm_gps_error_meters = args.fmm_gps_error
+    cmm_reverse_tolerance_meters = args.cmm_reverse_tolerance
 
-    fmm_radius_deg = args.fmm_radius / METERS_PER_DEGREE
-    fmm_gps_error_deg = args.fmm_gps_error / METERS_PER_DEGREE
-    cmm_reverse_tolerance_deg = args.cmm_reverse_tolerance / METERS_PER_DEGREE
-
-    print(f"  FMM radius: {args.fmm_radius}m → {fmm_radius_deg:.6f}°")
-    print(f"  FMM GPS error: {args.fmm_gps_error}m → {fmm_gps_error_deg:.6f}°")
-    print(f"  CMM reverse tolerance: {args.cmm_reverse_tolerance}m → {cmm_reverse_tolerance_deg:.6f}°")
+    print(f"  FMM radius: {fmm_radius_meters}m")
+    print(f"  FMM GPS error: {fmm_gps_error_meters}m")
+    print(f"  CMM reverse tolerance: {cmm_reverse_tolerance_meters}m")
+    print("  Note: Covariance info in trajectory will be in meters.")
 
     # Check required files exist
     if not Path(args.network).exists():
@@ -854,6 +893,7 @@ Examples:
     print("\n" + "="*70)
     print("Loading Network and UBODT (shared for all matching)")
     print("="*70)
+    print("WARNING: Ensure your Network and UBODT are in the same UTM zone as the trajectory!")
 
     print(f"Loading network from: {args.network}")
     network = Network(args.network, args.network_id, args.network_source, args.network_target)
@@ -876,8 +916,8 @@ Examples:
         print("Creating map matching instances...")
         fmm_config = FastMapMatchConfig(
             k_arg=args.fmm_k,
-            r_arg=fmm_radius_deg,  # Use degrees for lat/lon coordinates
-            gps_error=fmm_gps_error_deg  # Use degrees for lat/lon coordinates
+            r_arg=fmm_radius_meters,  # Use meters for UTM
+            gps_error=fmm_gps_error_meters  # Use meters for UTM
         )
         fmm = FastMapMatch(network, graph, ubodt)
         print("  FMM instance created")
@@ -886,7 +926,7 @@ Examples:
             k_arg=args.cmm_k,
             min_candidates_arg=args.cmm_min_candidates,
             protection_level_multiplier_arg=args.cmm_protection_level_multiplier,
-            reverse_tolerance=cmm_reverse_tolerance_deg,  # Use degrees for lat/lon
+            reverse_tolerance=cmm_reverse_tolerance_meters,  # Use meters for UTM
             normalized_arg=True,
             use_mahalanobis_candidates_arg=True,
             window_length_arg=args.cmm_window_length,
@@ -923,17 +963,17 @@ Examples:
                 continue
 
             # Step 1: Convert to cmm_trajectory.csv
-            print("\nStep 1/4: Converting to cmm_trajectory.csv")
+            print("\nStep 1/4: Converting to cmm_trajectory.csv (UTM)")
             print("-" * 50)
             try:
                 parse_spp_solution(
                     input_path=spp_file,
                     output_path=cmm_traj_file,
                     traj_id=int(subdir.replace(".", "")),  # Use subdir number as ID
-                    project_utm=False,  # Keep in WGS84 (lat/lon) to match network CRS
-                    utm_epsg=None,  # Not used when project_utm=False
-                    protection_level_scale=2.0,
-                    default_sigma=1.0
+                    project_utm=True,  # Convert to UTM
+                    utm_epsg=args.utm_epsg,  # Use specified EPSG or auto-detect
+                    protection_level_scale=args.protection_level_scale,
+                    default_sigma=args.default_sigma
                 )
             except Exception as e:
                 print(f"Error converting {spp_file}: {e}")
@@ -1008,27 +1048,27 @@ Examples:
 
         # Explicitly clean up resources to free memory
         # (Important for large UBODT files ~97GB)
-        if not args.no_matching:
-            print("\nReleasing resources...")
-            import gc
+        # if not args.no_matching:
+        #     print("\nReleasing resources...")
+        #     import gc
 
-            # Delete map matching instances first (they hold references to UBODT)
-            del fmm
-            del cmm
-            print("  Released FMM and CMM instances")
+        #     # Delete map matching instances first (they hold references to UBODT)
+        #     del fmm
+        #     del cmm
+        #     print("  Released FMM and CMM instances")
 
-            # Delete UBODT (largest memory consumer)
-            del ubodt
-            print("  Released UBODT")
+        #     # Delete UBODT (largest memory consumer)
+        #     del ubodt
+        #     print("  Released UBODT")
 
-            # Delete graph and network
-            del graph
-            del network
-            print("  Released Network and Graph")
+        #     # Delete graph and network
+        #     del graph
+        #     del network
+        #     print("  Released Network and Graph")
 
-            # Force garbage collection
-            gc.collect()
-            print("  Memory cleanup complete")
+        #     # Force garbage collection
+        #     gc.collect()
+        #     print("  Memory cleanup complete")
 
     return 0
 

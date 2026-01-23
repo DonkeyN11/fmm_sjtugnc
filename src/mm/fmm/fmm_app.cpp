@@ -3,6 +3,7 @@
 //
 
 #include "mm/fmm/fmm_app.hpp"
+#include "mm/fmm/ubodt_manager.hpp"
 #include "io/gps_reader.hpp"
 #include "io/mm_writer.hpp"
 #include <ogrsf_frmts.h>
@@ -222,8 +223,22 @@ FMMApp::FMMApp(const FMMAppConfig &config) :
     network_(config_.network_config, config_.convert_to_projected),
     ng_(network_) {
 
-    SPDLOG_INFO("Loading UBODT from file");
-    ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
+    // Check if UBODT is already loaded in memory
+    auto &manager = UBODTManager::getInstance();
+
+    if (config_.use_memory_cache && manager.is_loaded(config_.ubodt_file)) {
+        SPDLOG_INFO("Using cached UBODT from memory");
+        ubodt_ = manager.get_ubodt(config_.ubodt_file);
+        // Enable auto-release so UBODT is released after use
+        manager.set_auto_release(true);
+    } else {
+        SPDLOG_INFO("Loading UBODT from file");
+        auto start_time = UTIL::get_current_time();
+        ubodt_ = UBODT::read_ubodt_file(config_.ubodt_file);
+        auto end_time = UTIL::get_current_time();
+        double duration = UTIL::get_duration(start_time, end_time);
+        SPDLOG_INFO("UBODT loaded in {:.2f}s", duration);
+    }
 }
 
 FMMApp::FMMApp(const FMMAppConfig &config, std::shared_ptr<UBODT> preloaded_ubodt) :

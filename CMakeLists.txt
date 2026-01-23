@@ -26,7 +26,7 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 project(fmm)
 
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE -DBOOST_ALLOW_DEPRECATED_HEADERS -Wno-deprecated-declarations -DBOOST_NO_CONCEPT_CHECKS -fpermissive")
+set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE -DBOOST_ALLOW_DEPRECATED_HEADERS -Wno-deprecated-declarations -Wno-nonnull -DBOOST_NO_CONCEPT_CHECKS -fpermissive")
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
@@ -206,6 +206,12 @@ target_link_libraries(h3mm FMMLIB)
 add_executable(cmm src/app/cmm.cpp)
 target_link_libraries(cmm FMMLIB ${BOOST_SERIALIZATION_LINK})
 
+add_executable(ubodt_manager src/app/ubodt_manager_app.cpp)
+target_link_libraries(ubodt_manager FMMLIB)
+
+add_executable(ubodt_daemon src/app/ubodt_daemon.cpp)
+target_link_libraries(ubodt_daemon FMMLIB)
+
 add_executable(interactive_match src/app/interactive_match.cpp)
 target_link_libraries(interactive_match FMMLIB)
 
@@ -219,7 +225,7 @@ message(STATUS "Installation folder ${CMAKE_INSTALL_PREFIX}")
 
 install(TARGETS FMMLIB LIBRARY DESTINATION lib)
 
-install(TARGETS fmm ubodt_gen ubodt_converter stmatch h3mm cmm DESTINATION bin)
+install(TARGETS fmm ubodt_gen ubodt_converter ubodt_manager ubodt_daemon stmatch h3mm cmm DESTINATION bin)
 
 if(FMM_INSTALL_HEADER)
   message(STATUS "Install fmm headers")
