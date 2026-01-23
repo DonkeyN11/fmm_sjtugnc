@@ -19,8 +19,11 @@
 #include "mm/fmm/fmm_algorithm.hpp"
 #include "mm/cmm/cmm_algorithm.hpp"
 #include "network/network.hpp"
+#include "network/network_graph.hpp"
 #include "io/gps_reader.hpp"
 #include "util/debug.hpp"
+#include "config/network_config.hpp"
+#include "config/gps_config.hpp"
 
 #include <iostream>
 #include <sstream>
@@ -47,8 +50,13 @@ public:
 
         // Load network
         SPDLOG_INFO("Loading network from {}", network_file);
-        NetworkConfig network_config(network_file, "id", "source", "target");
+        NetworkConfig network_config;
+        network_config.file = network_file;
+        network_config.id = "id";
+        network_config.source = "source";
+        network_config.target = "target";
         network_ = std::make_unique<Network>(network_config, true);
+        graph_ = std::make_unique<NetworkGraph>(*network_);
         SPDLOG_INFO("Network loaded: {} edges, {} vertices",
                    network_->get_edge_count(), network_->get_node_count());
     }
@@ -145,6 +153,7 @@ private:
     std::string ubodt_file_;
     std::string mode_;
     std::unique_ptr<Network> network_;
+    std::unique_ptr<NetworkGraph> graph_;
     bool ubodt_loaded_;
     bool use_cache_ = false;
 
@@ -180,10 +189,11 @@ private:
         auto start = std::chrono::high_resolution_clock::now();
 
         if (use_cache_) {
-            ubodt_ = UBODTHelper::load_cached_ubodt(ubodt_file_, 10000, 1, true);
-        } else {
-            ubodt_ = UBODTHelper::load_ubodt(ubodt_file_, 1, true);
+            std::cout << "Warning: Caching disabled in this build due to type compatibility issues.\n";
+            // ubodt_ = UBODTHelper::load_cached_ubodt(ubodt_file_, 10000, 1, true);
         }
+        
+        ubodt_ = UBODTHelper::load_ubodt(ubodt_file_, 1, true);
 
         auto end = std::chrono::high_resolution_clock::now();
         double duration = std::chrono::duration<double>(end - start).count();
@@ -207,7 +217,7 @@ private:
 
         try {
             // Read trajectories
-            TrajectoryReader reader(traj_file, "id", "geom");
+            CSVTrajectoryReader reader(traj_file, "id", "geom");
             std::vector<Trajectory> trajectories;
 
             int count = 0;
@@ -281,10 +291,10 @@ private:
     }
 
     std::vector<std::string> match_fmm(const std::vector<Trajectory> &trajectories) {
-        FMMConfig config;
+        FastMapMatchConfig config;
         config.radius = 300;  // 300m search radius
 
-        FMMAlgorithm fmm_algo(*network_, ubodt_);
+        FastMapMatch fmm_algo(*network_, *graph_, ubodt_);
 
         std::vector<std::string> matched_ids;
         for (const auto &traj : trajectories) {
@@ -298,14 +308,21 @@ private:
     }
 
     std::vector<std::string> match_cmm(const std::vector<Trajectory> &trajectories) {
-        CMMConfig config;
+        CovarianceMapMatchConfig config;
         // Configure CMM parameters...
 
-        CMMAlgorithm cmm_algo(*network_, ubodt_);
+        CovarianceMapMatch cmm_algo(*network_, *graph_, ubodt_);
 
         std::vector<std::string> matched_ids;
         for (const auto &traj : trajectories) {
-            auto result = cmm_algo.match_traj(traj, config);
+            // Convert Trajectory to CMMTrajectory (dummy conversion since we don't have covariance in CSV)
+            // In a real scenario, we would need to read covariance from input or estimate it
+            std::vector<CovarianceMatrix> covs(traj.geom.get_num_points(), {10.0, 10.0, 10.0, 0.0, 0.0, 0.0});
+            std::vector<double> pls(traj.geom.get_num_points(), 20.0);
+            
+            CMMTrajectory cmm_traj(traj.id, traj.geom, traj.timestamps, covs, pls);
+            
+            auto result = cmm_algo.match_traj(cmm_traj, config);
             if (!result.cpath.empty()) {
                 matched_ids.push_back(std::to_string(traj.id));
             }

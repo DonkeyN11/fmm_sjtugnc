@@ -9,11 +9,11 @@ unset PYTHONPATH
 unset LD_LIBRARY_PATH
 
 # 添加fmm路径
-export PYTHONPATH="/home/dell/Czhang/fmm_sjtugnc/build/python:$PYTHONPATH"
+export PYTHONPATH="$(pwd)/build/python:$PYTHONPATH"
 
 echo "📍 当前Python: $(which python3)"
 echo "📍 Python版本: $(python3 --version)"
-echo "📍 FMM路径: /home/dell/Czhang/fmm_sjtugnc/build/python"
+echo "📍 FMM路径: $(pwd)/build/python"
 
 # 测试fmm模块
 echo "🧪 测试fmm模块..."

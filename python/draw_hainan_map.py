@@ -680,6 +680,14 @@ def render_html(
 <div id="info">
   <strong>Trajectory IDs:</strong> $IDS_LABEL<br/>
   Hover layers to inspect details.
+  <div id="trajectory-filter" style="margin-top:10px;">
+    <label style="display:flex;align-items:center;gap:6px;">
+      <span>Filter IDs:</span>
+      <input type="text" id="trajectory-filter-input" placeholder="e.g. 1,2,3" style="flex:1;padding:2px 6px;" />
+      <button id="trajectory-filter-btn" style="padding:2px 8px;">Filter</button>
+    </label>
+    <div id="trajectory-filter-info" style="margin-top:4px;font-size:11px;color:#aaa;">Leave empty to show all</div>
+  </div>
   <div id="search-box" style="margin-top:10px;">
     <label style="display:flex;align-items:center;gap:6px;">
       <span>Search seq:</span>
@@ -1006,6 +1014,9 @@ def render_html(
     const toggleCmm = document.getElementById('toggle-cmm');
     const toggleFmm = document.getElementById('toggle-fmm');
     const toggleObservation = document.getElementById('toggle-observation');
+    const trajectoryFilterInput = document.getElementById('trajectory-filter-input');
+    const trajectoryFilterButton = document.getElementById('trajectory-filter-btn');
+    const trajectoryFilterInfo = document.getElementById('trajectory-filter-info');
     const seqSearchInput = document.getElementById('seq-search-input');
     const seqSearchButton = document.getElementById('seq-search-btn');
     const seqSearchResults = document.getElementById('seq-search-results');
@@ -1015,6 +1026,88 @@ def render_html(
     function setLayerVisibility(layerId, visible) {
       if (!map.getLayer(layerId)) return;
       map.setLayoutProperty(layerId, 'visibility', visible ? 'visible' : 'none');
+    }
+
+    let filteredTrajectoryIds = null;
+
+    function applyTrajectoryFilter() {
+      if (!trajectoryFilterInput) return;
+      const value = trajectoryFilterInput.value.trim();
+      if (!value) {
+        filteredTrajectoryIds = null;
+        if (trajectoryFilterInfo) {
+          trajectoryFilterInfo.textContent = 'Showing all trajectories';
+        }
+        updateLayerFilters();
+        return;
+      }
+      const ids = value.split(',').map(s => s.trim()).filter(s => s);
+      if (ids.length === 0) {
+        filteredTrajectoryIds = null;
+        if (trajectoryFilterInfo) {
+          trajectoryFilterInfo.textContent = 'Showing all trajectories';
+        }
+        updateLayerFilters();
+        return;
+      }
+      filteredTrajectoryIds = ids;
+      if (trajectoryFilterInfo) {
+        trajectoryFilterInfo.textContent = 'Showing: ' + ids.join(', ');
+      }
+      updateLayerFilters();
+    }
+
+    function updateLayerFilters() {
+      if (filteredTrajectoryIds === null) {
+        if (hasCmm) {
+          map.setFilter('cmm-points-layer', null);
+        }
+        if (hasFmm) {
+          map.setFilter('fmm-points-layer', null);
+        }
+        if (hasObservationPoints) {
+          map.setFilter('observation-point-layer', null);
+        }
+        if (hasObservationEllipses) {
+          const currentFilter = map.getFilter('observation-cov-layer');
+          if (currentFilter && highlightedKey) {
+          } else {
+            map.setFilter('observation-cov-layer', ['==', ['get', 'id'], '__none__']);
+          }
+        }
+        if (hasPlCircles) {
+          const currentFilter = map.getFilter('pl-circle-layer');
+          if (currentFilter && highlightedKey) {
+          } else {
+            map.setFilter('pl-circle-layer', ['==', ['get', 'id'], '__none__']);
+          }
+        }
+      } else {
+        const idFilters = filteredTrajectoryIds.map(id => ['==', ['get', 'id'], id]);
+        const combinedFilter = ['any', ...idFilters];
+
+        if (hasCmm) {
+          map.setFilter('cmm-points-layer', combinedFilter);
+        }
+        if (hasFmm) {
+          map.setFilter('fmm-points-layer', combinedFilter);
+        }
+        if (hasObservationPoints) {
+          map.setFilter('observation-point-layer', combinedFilter);
+        }
+        if (hasObservationEllipses) {
+          if (highlightedKey) {
+          } else {
+            map.setFilter('observation-cov-layer', combinedFilter);
+          }
+        }
+        if (hasPlCircles) {
+          if (highlightedKey) {
+          } else {
+            map.setFilter('pl-circle-layer', combinedFilter);
+          }
+        }
+      }
     }
 
     let highlightedKey = null;
@@ -1214,6 +1307,15 @@ def render_html(
       if (!toggleObservation.checked) {
         hideObservationEnvelope();
       }
+    }
+
+    if (trajectoryFilterButton && trajectoryFilterInput) {
+      trajectoryFilterButton.addEventListener('click', applyTrajectoryFilter);
+      trajectoryFilterInput.addEventListener('keyup', (event) => {
+        if (event.key === 'Enter') {
+          applyTrajectoryFilter();
+        }
+      });
     }
 
     if (seqSearchButton && seqSearchInput) {

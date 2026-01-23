@@ -96,6 +96,7 @@ struct MatchResult {
   std::vector<std::vector<double>> nbest_trustworthiness; /**< top-N (log) trustworthiness scores per point */
   std::vector<double> sp_distances; /**< per-point shortest path distances (aligned with observations) */
   std::vector<double> eu_distances; /**< per-point Euclidean distances between observations */
+  std::vector<int> original_indices; /**< original trajectory point indices for filtered points */
 };
 
 #ifndef SWIG

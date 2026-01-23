@@ -17,6 +17,8 @@
 namespace FMM {
 namespace MM {
 
+class UBODT_MMap; // Forward declaration
+
 /**
  * %Record type of the upper bounded origin destination table
  */
@@ -52,7 +54,7 @@ class UBODT {
    * @return  A row in the ubodt if the od pair is found, otherwise nullptr
    * is returned.
    */
-  Record *look_up(NETWORK::NodeIndex source, NETWORK::NodeIndex target) const;
+  virtual Record *look_up(NETWORK::NodeIndex source, NETWORK::NodeIndex target) const;
 
   /**
    * Look up a shortest path (SP) containing edges from source to target.
@@ -61,7 +63,7 @@ class UBODT {
    * @param  target target node
    * @return  a shortest path connecting source to target
    */
-  std::vector<NETWORK::EdgeIndex> look_sp_path(NETWORK::NodeIndex source,
+  virtual std::vector<NETWORK::EdgeIndex> look_sp_path(NETWORK::NodeIndex source,
       NETWORK::NodeIndex target) const;
 
   /**
@@ -106,6 +108,11 @@ class UBODT {
 
   inline void update_delta(double value) {
     delta = value;
+  }
+
+  // Set the memory mapped reader
+  void set_mmap_reader(std::shared_ptr<UBODT_MMap> reader) {
+      ubodt_mmap_ = reader;
   }
 
   /**
@@ -184,6 +191,9 @@ class UBODT {
   long long num_rows=0;   // multiplier to get a unique ID
   double delta = 0.0;
   Record **hashtable;
+  
+  // Optional memory mapped reader
+  std::shared_ptr<UBODT_MMap> ubodt_mmap_ = nullptr;
 };
 }
 }
