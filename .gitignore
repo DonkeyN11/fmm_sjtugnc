@@ -1,19 +1,11 @@
 # folders
-simulation/
 bin/
-input/
-output/
-dist/
 test/bin/
 test/log/
-input_cmm/
 tmp/
 build_debug/
-plots/
-output_backup251104/
-input_cmm_backup251104/
-dataset_hainan/
-dataset_hainan_06/
+
+
 # Doc files
 
 docs/html
@@ -48,6 +40,8 @@ _deps
 .kdev4/
 *.kdev4
 .idea/
+*.bin
+*.png
 
 # log file
 *.log
@@ -111,3 +105,5 @@ sync.sh
 # csv results
 *.csv
 *.txt
+*.json
+*.html

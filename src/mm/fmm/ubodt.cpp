@@ -55,10 +55,9 @@ UBODT::~UBODT() {
 Record *UBODT::look_up(NodeIndex source, NodeIndex target) const {
   if (ubodt_mmap_) {
       // Delegate to mmap reader
-      // Note: Casting const MmapRecord* to Record* is technically unsafe if accessing 'next'
-      // But look_up callers typically only read data fields, not traverse the list manually.
-      // This is an optimization trade-off.
-      return (Record*) ubodt_mmap_->look_up(source, target);
+      // Since Record is now packed, it matches the layout of MmapRecord for data fields.
+      // Callers should not traverse 'next' pointer for records returned from mmap.
+      return (Record*)(void*) ubodt_mmap_->look_up(source, target);
   }
 
   unsigned int h = cal_bucket_index(source, target);
