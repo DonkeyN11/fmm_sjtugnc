@@ -274,6 +274,7 @@ public:
      * @param gps_config GPS configuration including covariance and protection level files
      * @param result_config result configuration
      * @param config map matching configuration
+     * @param input_epsg EPSG code of input trajectory CRS (e.g., 4326 for WGS84)
      * @param use_omp whether to use OpenMP
      * @return a string storing information about running time and statistics
      */
@@ -281,7 +282,7 @@ public:
         const FMM::CONFIG::GPSConfig &gps_config,
         const FMM::CONFIG::ResultConfig &result_config,
         const CovarianceMapMatchConfig &config,
-        bool convert_to_projected,
+        int input_epsg,
         bool use_omp = true);
 
 protected:

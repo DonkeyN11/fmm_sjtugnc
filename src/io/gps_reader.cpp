@@ -554,34 +554,25 @@ GPSBounds compute_gps_bounds(const FMM::CONFIG::GPSConfig &config) {
 GPSBounds FMM::IO::compute_gps_bounds_in_network_crs(
     const FMM::CONFIG::GPSConfig &gps_config,
     const std::string &network_file,
-    bool convert_to_projected) {
+    int input_epsg) {
   GPSBounds bounds = FMM::IO::compute_gps_bounds(gps_config);
   if (!bounds.valid) {
     return bounds;
   }
 
+  // Create GPS CRS from explicit input_epsg (no auto-detection)
   OGRSpatialReference gps_sr;
   std::string gps_wkt;
-  bool gps_has_sr = false;
-  int gps_format = gps_config.get_gps_format();
-  if (gps_format == 0) {
-    gps_has_sr = load_spatial_ref_from_dataset(gps_config.file, &gps_sr, &gps_wkt);
-  }
-  if (!gps_has_sr) {
-    if (!gps_config.crs.empty()) {
-      gps_has_sr = spatial_ref_from_string(gps_config.crs, &gps_sr, &gps_wkt);
-    } else {
-      gps_has_sr = spatial_ref_from_string("EPSG:4326", &gps_sr, &gps_wkt);
-      if (gps_has_sr) {
-        SPDLOG_WARN("GPS CRS not specified; default to EPSG:4326 for bbox transform");
-      }
-    }
-  }
-  if (!gps_has_sr) {
-    SPDLOG_WARN("Failed to determine GPS CRS; bbox stays in GPS coordinate space");
+  std::ostringstream epsg_str;
+  epsg_str << "EPSG:" << input_epsg;
+  if (!spatial_ref_from_string(epsg_str.str(), &gps_sr, &gps_wkt)) {
+    SPDLOG_WARN("Failed to create GPS CRS from EPSG:{}; bbox stays in GPS coordinate space", input_epsg);
     return bounds;
   }
+  gps_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+  SPDLOG_INFO("Input trajectory CRS set to EPSG:{}", input_epsg);
 
+  // Get network CRS
   OGRSpatialReference network_sr;
   std::string network_wkt;
   bool network_is_projected = false;
@@ -596,45 +587,34 @@ GPSBounds FMM::IO::compute_gps_bounds_in_network_crs(
     SPDLOG_WARN("Failed to inspect network CRS; bbox stays in GPS coordinate space");
     return bounds;
   }
-  if (network_wkt.empty() && !convert_to_projected) {
+
+  // Use network CRS from shapefile or default to EPSG:4326
+  if (network_wkt.empty()) {
     SPDLOG_WARN("Network CRS missing; default to EPSG:4326 for bbox transform");
     network_wkt = "EPSG:4326";
   }
-  if (convert_to_projected && !network_is_projected) {
-    double center_lon = (net_minx + net_maxx) * 0.5;
-    double center_lat = (net_miny + net_maxy) * 0.5;
-    int target_epsg = determine_utm_epsg(center_lon, center_lat);
-    if (target_epsg > 0) {
-      std::ostringstream epsg;
-      epsg << "EPSG:" << target_epsg;
-      if (!spatial_ref_from_string(epsg.str(), &network_sr, &network_wkt)) {
-        SPDLOG_WARN("Failed to build target UTM CRS; bbox stays in GPS coordinate space");
-        return bounds;
-      }
-    } else {
-      SPDLOG_WARN("Unable to determine projected CRS from network; bbox stays in GPS coordinate space");
-      return bounds;
-    }
-  } else {
-    if (!spatial_ref_from_string(network_wkt, &network_sr, nullptr)) {
-      SPDLOG_WARN("Failed to parse network CRS; bbox stays in GPS coordinate space");
-      return bounds;
-    }
+
+  if (!spatial_ref_from_string(network_wkt, &network_sr, nullptr)) {
+    SPDLOG_WARN("Failed to parse network CRS; bbox stays in GPS coordinate space");
+    return bounds;
   }
   network_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
 
+  // If GPS and network CRS are the same, no transformation needed
   if (gps_sr.IsSame(&network_sr)) {
     bounds.has_spatial_ref = true;
     bounds.spatial_ref_wkt = network_wkt;
     return bounds;
   }
 
+  // Transform GPS bbox to network CRS
   OGRCoordinateTransformation *ct =
       OGRCreateCoordinateTransformation(&gps_sr, &network_sr);
   if (ct == nullptr) {
-    SPDLOG_WARN("Failed to create CRS transform; bbox stays in GPS coordinate space");
+    SPDLOG_WARN("Failed to create CRS transform (EPSG:{} -> network CRS); bbox stays in GPS coordinate space", input_epsg);
     return bounds;
   }
+
   double out_minx = 0.0;
   double out_miny = 0.0;
   double out_maxx = 0.0;
@@ -642,16 +622,18 @@ GPSBounds FMM::IO::compute_gps_bounds_in_network_crs(
   bool ok = transform_bbox(bounds.minx, bounds.miny, bounds.maxx, bounds.maxy,
                            ct, &out_minx, &out_miny, &out_maxx, &out_maxy);
   OCTDestroyCoordinateTransformation(ct);
+
   if (!ok) {
     SPDLOG_WARN("Failed to transform bbox; bbox stays in GPS coordinate space");
     return bounds;
   }
+
   bounds.minx = out_minx;
   bounds.miny = out_miny;
   bounds.maxx = out_maxx;
   bounds.maxy = out_maxy;
   bounds.has_spatial_ref = true;
   bounds.spatial_ref_wkt = network_wkt;
-  SPDLOG_INFO("GPS bbox transformed to network CRS");
+  SPDLOG_INFO("GPS bbox transformed from EPSG:{} to network CRS", input_epsg);
   return bounds;
 }
