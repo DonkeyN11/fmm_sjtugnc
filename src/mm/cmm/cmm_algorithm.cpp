@@ -449,19 +449,38 @@ std::optional<TransformInfo> compute_transform_info(
 // update their covariance/protection metadata accordingly.
 bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
                                   const NETWORK::Network &network,
-                                  bool convert_to_projected) {
-    if (!convert_to_projected || trajectories == nullptr || trajectories->empty()) {
-        return false;
-    }
-    if (!network.is_projected()) {
-        SPDLOG_WARN("Coordinate conversion requested but network CRS is not projected; skip trajectory reprojection.");
-        return false;
-    }
+                                  int input_epsg) {
+    // Check if network has spatial reference
     if (!network.has_spatial_ref()) {
         SPDLOG_WARN("Network CRS information unavailable; skip trajectory reprojection.");
         return false;
     }
 
+    // Get network EPSG code
+    int network_epsg = 0;
+    OGRSpatialReference network_sr;
+    if (network_sr.importFromWkt(network.get_spatial_ref_wkt().c_str()) != OGRERR_NONE) {
+        SPDLOG_WARN("Failed to import network CRS from WKT; skip trajectory reprojection.");
+        return false;
+    }
+    network_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    const char *auth_name = network_sr.GetAuthorityName(nullptr);
+    const char *auth_code = network_sr.GetAuthorityCode(nullptr);
+    if (auth_name && auth_code && std::string(auth_name) == "EPSG") {
+        network_epsg = std::stoi(auth_code);
+    } else {
+        SPDLOG_WARN("Network CRS is not EPSG; assuming EPSG:4326");
+        network_epsg = 4326;
+    }
+
+    // Check if reprojection is needed
+    if (input_epsg == network_epsg) {
+        SPDLOG_INFO("Input EPSG ({}) matches network EPSG ({}); no reprojection needed.", input_epsg, network_epsg);
+        return false;
+    }
+
+    // Check if trajectories are already in network CRS
     bool all_projected = true;
     for (const auto &traj : *trajectories) {
         if (!geometry_is_projected(traj.geom)) {
@@ -474,18 +493,19 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
         return false;
     }
 
-    OGRSpatialReference target_sr;
-    if (target_sr.importFromWkt(network.get_spatial_ref_wkt().c_str()) != OGRERR_NONE) {
-        SPDLOG_WARN("Failed to import network CRS from WKT; skip trajectory reprojection.");
+    // Create coordinate transformation from input EPSG to network CRS
+    OGRSpatialReference source_sr;
+    std::ostringstream source_epsg_str;
+    source_epsg_str << "EPSG:" << input_epsg;
+    if (source_sr.importFromEPSG(input_epsg) != OGRERR_NONE) {
+        SPDLOG_WARN("Failed to import source CRS from EPSG:{}; skip trajectory reprojection.", input_epsg);
         return false;
     }
-    target_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    OGRSpatialReference source_sr;
-    source_sr.SetWellKnownGeogCS("WGS84");
     source_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    OGRCoordinateTransformation *transform = OGRCreateCoordinateTransformation(&source_sr, &target_sr);
+
+    OGRCoordinateTransformation *transform = OGRCreateCoordinateTransformation(&source_sr, &network_sr);
     if (transform == nullptr) {
-        SPDLOG_WARN("Failed to create coordinate transformation for trajectories.");
+        SPDLOG_WARN("Failed to create coordinate transformation (EPSG:{} -> Network CRS); skip trajectory reprojection.", input_epsg);
         return false;
     }
 
@@ -533,7 +553,8 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
 
     OCTDestroyCoordinateTransformation(transform);
     if (transformed_any) {
-        SPDLOG_INFO("Reprojected {} trajectories to match projected network CRS.", trajectories->size());
+        SPDLOG_INFO("Reprojected {} trajectories from EPSG:{} to network CRS (EPSG:{})",
+                     trajectories->size(), input_epsg, network_epsg);
     }
     return transformed_any;
 }
@@ -1445,7 +1466,7 @@ std::string CovarianceMapMatch::match_gps_file(
     const FMM::CONFIG::GPSConfig &gps_config,
     const FMM::CONFIG::ResultConfig &result_config,
     const CovarianceMapMatchConfig &cmm_config,
-    bool convert_to_projected,
+    int input_epsg,
     bool use_omp) {
     std::ostringstream oss;
     std::string status;
@@ -1817,31 +1838,58 @@ std::string CovarianceMapMatch::match_gps_file(
     ifs.close();
 
     bool trajectories_reprojected = false;
-    // Align GPS observations with the network CRS if requested so the matcher
+    // Align GPS observations with the network CRS if needed so the matcher
     // can operate in a consistent coordinate system.
-    if (convert_to_projected) {
+    // Check if input CRS (input_epsg) differs from network CRS
+    bool need_reprojection = false;
+    if (network_.has_spatial_ref()) {
+        // Get network EPSG code from WKT
+        int network_epsg = 0;
+        OGRSpatialReference network_sr;
+        if (network_sr.importFromWkt(network_.get_spatial_ref_wkt().c_str()) == OGRERR_NONE) {
+            const char *auth_name = network_sr.GetAuthorityName(nullptr);
+            const char *auth_code = network_sr.GetAuthorityCode(nullptr);
+            if (auth_name && auth_code && std::string(auth_name) == "EPSG") {
+                network_epsg = std::stoi(auth_code);
+            }
+        }
+        need_reprojection = (input_epsg != network_epsg);
+        SPDLOG_INFO("Input EPSG: {}, Network EPSG: {}, Reprojection needed: {}",
+                     input_epsg, network_epsg, need_reprojection);
+    }
+
+    if (need_reprojection) {
         try {
-            trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, convert_to_projected);
+            // Create a reprojection function that uses the network's CRS
+            // Note: maybe_reproject_trajectories will be refactored to use input_epsg
+            trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, need_reprojection);
         } catch (const std::exception &ex) {
             SPDLOG_WARN("Trajectory reprojection failed: {}", ex.what());
         }
     }
 
-    // Prepare the CSV writer and the optional transformation back to geographic coordinates.
+    // Prepare the CSV writer and the optional transformation back to input CRS.
     FMM::IO::CSVMatchResultWriter writer(result_config.file, result_config.output_config);
     std::unique_ptr<OGRCoordinateTransformation, decltype(&OCTDestroyCoordinateTransformation)>
         output_transform(nullptr, OCTDestroyCoordinateTransformation);
-    if (convert_to_projected && network_.is_projected() && network_.has_spatial_ref()) {
-        OGRSpatialReference projected_sr;
-        if (projected_sr.importFromWkt(network_.get_spatial_ref_wkt().c_str()) == OGRERR_NONE) {
-            projected_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            OGRSpatialReference geographic_sr;
-            geographic_sr.SetWellKnownGeogCS("WGS84");
-            geographic_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            if (OGRCoordinateTransformation *ct = OGRCreateCoordinateTransformation(&projected_sr, &geographic_sr)) {
-                output_transform.reset(ct);
+
+    // Only transform back to input CRS if reprojection was performed
+    if (trajectories_reprojected && network_.has_spatial_ref()) {
+        // Create transformation from network CRS back to input EPSG
+        OGRSpatialReference network_sr;
+        if (network_sr.importFromWkt(network_.get_spatial_ref_wkt().c_str()) == OGRERR_NONE) {
+            network_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            OGRSpatialReference input_sr;
+            if (input_sr.importFromEPSG(input_epsg) == OGRERR_NONE) {
+                input_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+                if (OGRCoordinateTransformation *ct = OGRCreateCoordinateTransformation(&network_sr, &input_sr)) {
+                    output_transform.reset(ct);
+                    SPDLOG_INFO("Created output transformation from network CRS back to EPSG:{}", input_epsg);
+                } else {
+                    SPDLOG_WARN("Failed to create output coordinate transformation; results remain in network CRS.");
+                }
             } else {
-                SPDLOG_WARN("Failed to create output coordinate transformation; results remain in projected CRS.");
+                SPDLOG_WARN("Failed to create input CRS from EPSG:{}; results remain in network CRS.", input_epsg);
             }
         } else {
             SPDLOG_WARN("Failed to reconstruct network CRS for output transformation.");

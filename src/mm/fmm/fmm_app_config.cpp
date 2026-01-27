@@ -44,12 +44,12 @@ void FMMAppConfig::load_xml(const std::string &file){
   log_level = tree.get("config.other.log_level",2);
   step =  tree.get("config.other.step",100);
   use_omp = !(!tree.get_child_optional("config.other.use_omp"));
-  convert_to_projected = tree.get("config.other.convert_to_projected", false);
+  input_epsg = tree.get("config.other.input_epsg", 4326);  // Default to WGS84
   network_bbox_from_gps = tree.get("config.other.network_bbox_from_gps", false);
   network_bbox_padding = tree.get("config.other.network_bbox_padding", 0.0);
   if (network_bbox_from_gps && !network_config.has_bbox) {
     auto bounds = IO::compute_gps_bounds_in_network_crs(
-        gps_config, network_config.file, convert_to_projected);
+        gps_config, network_config.file, input_epsg);
     if (bounds.valid) {
       network_config.has_bbox = true;
       network_config.bbox_minx = bounds.minx - network_bbox_padding;
@@ -79,8 +79,8 @@ void FMMAppConfig::load_arg(int argc, char **argv){
     ("s,step","Step report",cxxopts::value<int>()->default_value("100"))
     ("h,help","Help information")
     ("use_omp","Use parallel computing if specified")
-    ("convert_to_projected", "Convert inputs to a projected CRS when necessary",
-     cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
+    ("input_epsg", "EPSG code of input trajectory CRS (4326=WGS84, 326xx=UTM N, 327xx=UTM S)",
+     cxxopts::value<int>()->default_value("4326"))
     ("network_bbox_from_gps", "Auto-crop network by GPS bounds",
      cxxopts::value<bool>()->default_value("false")->implicit_value("true"))
     ("network_bbox_padding", "Padding for GPS-derived bbox",
@@ -98,7 +98,7 @@ void FMMAppConfig::load_arg(int argc, char **argv){
   log_level = result["log_level"].as<int>();
   step = result["step"].as<int>();
   use_omp = result.count("use_omp")>0;
-  convert_to_projected = result["convert_to_projected"].as<bool>();
+  input_epsg = result["input_epsg"].as<int>();
   network_bbox_from_gps = result["network_bbox_from_gps"].as<bool>();
   network_bbox_padding = result["network_bbox_padding"].as<double>();
   if (result.count("help")>0) {
@@ -106,7 +106,7 @@ void FMMAppConfig::load_arg(int argc, char **argv){
   }
   if (network_bbox_from_gps && !network_config.has_bbox) {
     auto bounds = IO::compute_gps_bounds_in_network_crs(
-        gps_config, network_config.file, convert_to_projected);
+        gps_config, network_config.file, input_epsg);
     if (bounds.valid) {
       network_config.has_bbox = true;
       network_config.bbox_minx = bounds.minx - network_bbox_padding;
@@ -133,7 +133,7 @@ void FMMAppConfig::print_help(){
   oss<<"-l/--log_level (optional) <int>: log level (2)\n";
   oss<<"-s/--step (optional) <int>: progress report step (100)\n";
   oss<<"--use_omp: use OpenMP for multithreaded map matching\n";
-  oss<<"--convert_to_projected (optional): Convert inputs to a projected CRS when necessary (false)\n";
+  oss<<"--input_epsg (optional): EPSG code of input trajectory CRS (4326=WGS84, 326xx=UTM N, 327xx=UTM S) (4326)\n";
   oss<<"--network_bbox_from_gps (optional): Auto-crop network by GPS bounds (false)\n";
   oss<<"--network_bbox_padding (optional): Padding for GPS-derived bbox (0.0)\n";
   oss<<"-h/--help:print help information\n";
@@ -150,7 +150,7 @@ void FMMAppConfig::print() const {
   SPDLOG_INFO("Log level {}",UTIL::LOG_LEVESLS[log_level]);
   SPDLOG_INFO("Step {}",step);
   SPDLOG_INFO("Use omp {}",(use_omp ? "true" : "false"));
-  SPDLOG_INFO("Convert to projected {}", (convert_to_projected ? "true" : "false"));
+  SPDLOG_INFO("Input EPSG {}", input_epsg);
   SPDLOG_INFO("Network bbox from GPS {}", (network_bbox_from_gps ? "true" : "false"));
   SPDLOG_INFO("Network bbox padding {}", network_bbox_padding);
   SPDLOG_INFO("---- Print configuration done ----");

@@ -58,36 +58,55 @@ bool transform_linestring(LineString *line,
 }
 
 TransformPtr make_wgs84_to_network_transform(const Network &network,
-                                             bool convert_to_projected) {
+                                             int input_epsg) {
   TransformPtr transform(nullptr, destroy_ct);
-  if (!convert_to_projected) {
-    return transform;
-  }
-  if (!network.is_projected()) {
-    SPDLOG_WARN("convert_to_projected enabled but network CRS is not projected; skip trajectory reprojection.");
-    return transform;
-  }
+
   if (!network.has_spatial_ref()) {
     SPDLOG_WARN("Network CRS information unavailable; skip trajectory reprojection.");
     return transform;
   }
-  OGRSpatialReference target_sr;
-  if (target_sr.importFromWkt(network.get_spatial_ref_wkt().c_str()) != OGRERR_NONE) {
+
+  // Get network EPSG code
+  int network_epsg = 0;
+  OGRSpatialReference network_sr;
+  if (network_sr.importFromWkt(network.get_spatial_ref_wkt().c_str()) != OGRERR_NONE) {
     SPDLOG_WARN("Failed to import network CRS; skip trajectory reprojection.");
     return transform;
   }
-  target_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-  OGRSpatialReference source_sr;
-  source_sr.SetWellKnownGeogCS("WGS84");
-  source_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-  OGRCoordinateTransformation *ct =
-    OGRCreateCoordinateTransformation(&source_sr, &target_sr);
-  if (ct == nullptr) {
-    SPDLOG_WARN("Failed to create coordinate transformation; skip trajectory reprojection.");
+  network_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+  const char *auth_name = network_sr.GetAuthorityName(nullptr);
+  const char *auth_code = network_sr.GetAuthorityCode(nullptr);
+  if (auth_name && auth_code && std::string(auth_name) == "EPSG") {
+    network_epsg = std::stoi(auth_code);
+  } else {
+    SPDLOG_WARN("Network CRS is not EPSG; assuming EPSG:4326");
+    network_epsg = 4326;
+  }
+
+  // Check if reprojection is needed
+  if (input_epsg == network_epsg) {
+    SPDLOG_INFO("Input EPSG ({}) matches network EPSG ({}); no reprojection needed.", input_epsg, network_epsg);
     return transform;
   }
+
+  // Create transformation from input EPSG to network CRS
+  OGRSpatialReference source_sr;
+  if (source_sr.importFromEPSG(input_epsg) != OGRERR_NONE) {
+    SPDLOG_WARN("Failed to import source CRS from EPSG:{}; skip trajectory reprojection.", input_epsg);
+    return transform;
+  }
+  source_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+  OGRCoordinateTransformation *ct =
+      OGRCreateCoordinateTransformation(&source_sr, &network_sr);
+  if (ct == nullptr) {
+    SPDLOG_WARN("Failed to create coordinate transformation (EPSG:{} -> Network CRS); skip trajectory reprojection.", input_epsg);
+    return transform;
+  }
+
   transform.reset(ct);
-  SPDLOG_INFO("Trajectories will be reprojected to match network CRS.");
+  SPDLOG_INFO("Trajectories will be reprojected from EPSG:{} to network CRS (EPSG:{})", input_epsg, network_epsg);
   return transform;
 }
 
@@ -126,7 +145,7 @@ void FMMApp::run() {
   IO::CSVMatchResultWriter writer(config_.result_config.file,
                                   config_.result_config.output_config);
   auto trajectory_transform = make_wgs84_to_network_transform(
-    network_, config_.convert_to_projected);
+    network_, config_.input_epsg);  // Use explicit input_epsg
   // Start map matching
   int progress = 0;
   int points_matched = 0;
@@ -220,7 +239,7 @@ void FMMApp::run() {
 // FMMApp constructor implementations
 FMMApp::FMMApp(const FMMAppConfig &config) :
     config_(config),
-    network_(config_.network_config, config_.convert_to_projected),
+    network_(config_.network_config, false),  // Network stays in original CRS
     ng_(network_) {
 
     // Check if UBODT is already loaded in memory
@@ -247,7 +266,7 @@ FMMApp::FMMApp(const FMMAppConfig &config) :
 
 FMMApp::FMMApp(const FMMAppConfig &config, std::shared_ptr<UBODT> preloaded_ubodt) :
     config_(config),
-    network_(config_.network_config, config_.convert_to_projected),
+    network_(config_.network_config, false),  // Network stays in original CRS
     ng_(network_),
     ubodt_(preloaded_ubodt) {
     SPDLOG_INFO("Using provided pre-loaded UBODT");

@@ -293,7 +293,7 @@ GPSBounds compute_gps_bounds(const FMM::CONFIG::GPSConfig &config);
 GPSBounds compute_gps_bounds_in_network_crs(
     const FMM::CONFIG::GPSConfig &gps_config,
     const std::string &network_file,
-    bool convert_to_projected);
+    int input_epsg);  // EPSG code of input trajectory CRS
 
 } // IO
 } // FMM
