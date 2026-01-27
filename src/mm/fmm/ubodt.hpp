@@ -30,7 +30,7 @@ struct Record {
   NETWORK::EdgeIndex next_e; /**< next edge visited from source to target */
   double cost; /**< distance from source to target */
   Record *next; /**< the next record stored in hashtable */
-};
+} __attribute__((packed));
 
 /**
  * Upperbounded origin destination table
