@@ -34,7 +34,7 @@ struct MmapRecord {
     NETWORK::NodeIndex prev_n;
     NETWORK::EdgeIndex next_e;
     double cost;
-} __attribute__((packed));
+} PACKED;
 
 /**
  * Memory-mapped UBODT reader for fast access
