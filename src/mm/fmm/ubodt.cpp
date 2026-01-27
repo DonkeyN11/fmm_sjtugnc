@@ -293,12 +293,16 @@ std::shared_ptr<UBODT> UBODT::read_ubodt_binary(const std::string &filename,
   while (ifs.tellg() < streamEnd) {
     ++NUM_ROWS;
     Record *r = (Record *) malloc(sizeof(Record));
-    ia >> r->source;
-    ia >> r->target;
-    ia >> r->first_n;
-    ia >> r->prev_n;
-    ia >> r->next_e;
-    ia >> r->cost;
+    NETWORK::NodeIndex source, target, first_n, prev_n;
+    NETWORK::EdgeIndex next_e;
+    double cost;
+    ia >> source >> target >> first_n >> prev_n >> next_e >> cost;
+    r->source = source;
+    r->target = target;
+    r->first_n = first_n;
+    r->prev_n = prev_n;
+    r->next_e = next_e;
+    r->cost = cost;
     r->next = nullptr;
     table->insert(r);
     if (NUM_ROWS % progress_step == 0) {

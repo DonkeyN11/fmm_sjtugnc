@@ -149,7 +149,13 @@ void UBODTGenAlgorithm::precompute_ubodt_omp(
     boost::archive::binary_oarchive oa(myfile);
     for (int i = 0; i < num_threads; ++i) {
       for (Record &r : thread_records[i]) {
-        oa << r.source << r.target << r.first_n << r.prev_n << r.next_e << r.cost;
+        NETWORK::NodeIndex source = r.source;
+        NETWORK::NodeIndex target = r.target;
+        NETWORK::NodeIndex first_n = r.first_n;
+        NETWORK::NodeIndex prev_n = r.prev_n;
+        NETWORK::EdgeIndex next_e = r.next_e;
+        double cost = r.cost;
+        oa << source << target << first_n << prev_n << next_e << cost;
       }
     }
     myfile.close();
@@ -318,8 +324,14 @@ void UBODTGenAlgorithm::write_result_binary(boost::archive::binary_oarchive &str
   }
 #pragma omp critical
   for (Record &r:source_map) {
-    stream << r.source << r.target
-           << r.first_n << r.prev_n << r.next_e << r.cost;
+    NETWORK::NodeIndex source = r.source;
+    NETWORK::NodeIndex target = r.target;
+    NETWORK::NodeIndex first_n = r.first_n;
+    NETWORK::NodeIndex prev_n = r.prev_n;
+    NETWORK::EdgeIndex next_e = r.next_e;
+    double cost = r.cost;
+    stream << source << target
+           << first_n << prev_n << next_e << cost;
   }
 }
 

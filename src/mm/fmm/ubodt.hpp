@@ -14,6 +14,12 @@
 #include "mm/transition_graph.hpp"
 #include "util/debug.hpp"
 
+#ifndef SWIG
+#define PACKED __attribute__((packed))
+#else
+#define PACKED
+#endif
+
 namespace FMM {
 namespace MM {
 
@@ -30,7 +36,7 @@ struct Record {
   NETWORK::EdgeIndex next_e; /**< next edge visited from source to target */
   double cost; /**< distance from source to target */
   Record *next; /**< the next record stored in hashtable */
-} __attribute__((packed));
+} PACKED;
 
 /**
  * Upperbounded origin destination table
