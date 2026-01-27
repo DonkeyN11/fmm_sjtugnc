@@ -1,0 +1,61 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <input>
+    <network>
+      <file>input/map/haikou/edges.shp</file>
+      <id>fid</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+
+    <ubodt>
+      <file>input/map/haikou_ubodt_indexed.bin</file>
+    </ubodt>
+
+    <gps>
+      <file>monte_carlo_1050/input/cmm_trajectory.csv</file>
+      <id>id</id>
+      <geom>geom</geom>
+      <timestamp>timestamps</timestamp>
+      <covariance>covariances</covariance>
+      <protection_level>protection_levels</protection_level>
+      <!-- 如果是逐点 CSV，可以加空标签以告知读取器 -->
+      <!-- <gps_point/> -->
+    </gps>
+  </input>
+
+  <output>
+    <file>output/251224/cmm_result_100.csv</file>
+    <fields>output
+      <!-- <cpath/> -->
+      <pgeom/>
+      <eu_dist/>
+      <sp_dist/>
+      <ep/>
+      <tp/>
+      <trustworthiness/>
+      <!-- <n_best_trustworthiness/> -->
+      <!-- <candidates/> -->
+      <!-- <error/> -->
+      <timestamp/>
+    </fields>
+  </output>
+
+  <parameters>
+    <k>16</k>
+    <min_candidates>1</min_candidates>
+    <protection_level_multiplier>1.0</protection_level_multiplier>
+    <reverse_tolerance>0.0</reverse_tolerance>
+    <normalized>true</normalized>
+    <use_mahalanobis>true</use_mahalanobis>
+    <window_length>100</window_length>
+  </parameters>
+
+  <other>
+    <log_level>2</log_level>
+    <use_omp>true</use_omp>
+    <step>500</step>
+    <convert_to_projected>true</convert_to_projected>
+    <margin_used_trustworthiness>false</margin_used_trustworthiness>
+  </other>
+</config>

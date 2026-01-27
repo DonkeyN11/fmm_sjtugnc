@@ -4,7 +4,9 @@ test/bin/
 test/log/
 tmp/
 build_debug/
-
+dataset-hainan/
+dataset-hainan-2025-06/
+input/map/
 
 # Doc files
 

@@ -1,0 +1,45 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+  <input>
+    <ubodt>
+      <file>input/map/hainan_ubodt_indexed.bin</file>
+    </ubodt>
+    <network>
+      <file>input/map/hainan/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+    <gps>
+      <file>simulation/huge_sigma/raw_data/cmm_trajectory.csv</file>
+      <id>id</id>
+      <geom>geom</geom>
+      <timestamp>timestamps</timestamp>
+    </gps>
+  </input>
+  <parameters>
+    <k>16</k>
+    <r>100</r>
+    <pf>0</pf>
+    <gps_error>10</gps_error>
+  </parameters>
+  <output>
+    <fields>
+      <cpath/>
+      <pgeom/>
+      <ep/>
+      <tp/>
+      <trustworthiness/>
+      <!-- <n_best_trustworthiness/> -->
+      <!-- <eu_dist/> -->
+      <!-- <sp_dist/> -->
+      <timestamp/>
+    </fields>
+    <file>simulation/huge_sigma/mm_result/fmm_result.csv</file>
+  </output> 
+
+  <other>
+    <use_omp/>
+    <convert_to_projected>true</convert_to_projected>
+  </other>
+</config>
