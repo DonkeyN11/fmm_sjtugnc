@@ -51,9 +51,6 @@ def ellipse_to_cov_m(smaj, smin, orient_deg):
     vmin = smin * smin
     
     # Variance in North and East
-    # If theta=0, major is North. 
-    # var_n = vmaj * cos^2(0) + vmin * sin^2(0) = vmaj
-    # var_e = vmaj * sin^2(0) + vmin * cos^2(0) = vmin
     var_n = vmaj * (cos_t**2) + vmin * (sin_t**2)
     var_e = vmaj * (sin_t**2) + vmin * (cos_t**2)
     # Covariance East-North
@@ -92,8 +89,6 @@ def process_spp_file(file_path, transformer):
     # Get ID from path
     parts = file_path.split(os.sep)
     try:
-        # dataset-hainan-06/1.1/实时定位结果/spp_solution.txt -> 1.1
-        # find the part that looks like a number or version
         traj_id = parts[-3]
     except:
         traj_id = "unknown"
@@ -101,8 +96,6 @@ def process_spp_file(file_path, transformer):
     data_records = {} # time_str -> data
     current_date = None
     
-    # First pass to find dates (NMEA sometimes lacks date in GGA/GST)
-    # We'll use a simple heuristic: use the date from RMC or ZDA for surrounding records
     try:
         with open(file_path, 'r', encoding='ascii', errors='ignore') as f:
             for line in f:
@@ -151,7 +144,6 @@ def process_spp_file(file_path, transformer):
         return []
 
     results = []
-    # Sort by time_str to maintain order if possible
     for t_str in sorted(data_records.keys()):
         rec = data_records[t_str]
         if 'lat' not in rec or 'lon' not in rec or 'smaj' not in rec:
@@ -176,35 +168,24 @@ def process_spp_file(file_path, transformer):
         # 1. Covariance in meters (Local North-East frame)
         cov_m = ellipse_to_cov_m(smaj, smin, orient)
         
-        # 2. Jacobian transformation to degrees
+        # 2. Jacobian transformation
         J_inv = get_jacobian_inv(lon, lat, transformer)
         
         # 3. Covariance in degrees
-        # cov_deg = J_inv * cov_m * J_inv^T
         cov_deg = J_inv @ cov_m @ J_inv.T
         
         sde = math.sqrt(max(0, cov_deg[0, 0]))
         sdn = math.sqrt(max(0, cov_deg[1, 1]))
         sden = cov_deg[0, 1]
         
-        # Altitude (keep Up in meters)
-        sdu = alt_sd
-        sdeu = 0.0
-        sdnu = 0.0
-        
         # 4. Protection Level
-        # Standard deviation of the major axis in degrees
-        # Eigenvalues of 2D covariance matrix
         tr = cov_deg[0, 0] + cov_deg[1, 1]
         det = cov_deg[0, 0] * cov_deg[1, 1] - cov_deg[0, 1]**2
-        # lambda = (tr +- sqrt(tr^2 - 4*det)) / 2
         term = math.sqrt(max(0, tr**2 - 4*det))
         lambda_max = (tr + term) / 2.0
-        
         smaj_deg = math.sqrt(max(0, lambda_max))
         protection_level = 6.0 * smaj_deg
         
-        # Convert traj_id to integer if possible (e.g., 1.1 -> 11)
         try:
             traj_id_int = int(traj_id.replace('.', ''))
         except:
@@ -217,27 +198,25 @@ def process_spp_file(file_path, transformer):
             'y': lat,
             'sde': sde,
             'sdn': sdn,
-            'sdu': sdu,
+            'sdu': alt_sd,
+            'sden': sden,
+            'sdeu': 0.0,
+            'sdnu': 0.0,
             'sdne': sden,
-            'sdeu': sdeu,
-            'sdun': sdnu,
+            'sdun': 0.0,
             'protection_level': protection_level
         })
         
     return results
 
 def main():
-    # Transformer for Jacobian calculation
-    # EPSG:4326 (Lon, Lat) to EPSG:32649 (UTM 49N)
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:32649", always_xy=True)
-    
     all_results = []
-    # Find all matching files
     files = glob.glob("dataset-hainan-06/*/实时定位结果/spp_solution.txt")
     files.sort()
     
     if not files:
-        print("No spp_solution.txt files found matching the pattern.")
+        print("No spp_solution.txt files found.")
         return
 
     for f in files:
@@ -245,19 +224,15 @@ def main():
         if res:
             all_results.extend(res)
             print(f"  Extracted {len(res)} points.")
-        else:
-            print(f"  No valid NMEA data found (possibly binary or missing GST).")
         
     if all_results:
         df = pd.DataFrame(all_results)
         output_file = "dataset-hainan-06/cmm_input_points.csv"
         # Use semicolon as delimiter as expected by the C++ code
         df.to_csv(output_file, index=False, sep=';')
-        print("-" * 30)
         print(f"Success! Saved total {len(df)} points to {output_file}")
-        print(f"Columns: {', '.join(df.columns)}")
     else:
-        print("No data was extracted from any file.")
+        print("No data extracted.")
 
 if __name__ == "__main__":
     main()
