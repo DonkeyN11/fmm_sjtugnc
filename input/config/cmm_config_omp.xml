@@ -26,7 +26,10 @@
 
   <output>
     <file>dataset-hainan-06/mr/cmm_results.csv</file>
-    <fields>output
+    <point_mode>true</point_mode>
+    <fields>
+      <seq/>
+      <timestamp/>
       <cpath/>
       <tpath/>
       <opath/>
@@ -39,14 +42,13 @@
       <n_best_trustworthiness/>
       <!-- <candidates/> -->
       <!-- <error/> -->
-      <timestamp/>
     </fields>
   </output>
 
   <parameters>
     <k>16</k>
     <min_candidates>1</min_candidates>
-    <protection_level_multiplier>1.0</protection_level_multiplier>
+    <protection_level_multiplier>10.0</protection_level_multiplier>
     <reverse_tolerance>0.0</reverse_tolerance>
     <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>

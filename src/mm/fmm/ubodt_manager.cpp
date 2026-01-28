@@ -311,7 +311,7 @@ size_t UBODTManager::release_all() {
     return total;
 }
 
-UBODTManager::ManagerStats UBODTManager::get_stats() const {
+ManagerStats UBODTManager::get_stats() const {
     std::lock_guard<std::mutex> lock(mutex_);
 
     ManagerStats stats;

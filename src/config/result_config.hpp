@@ -61,6 +61,9 @@ struct OutputConfig {
   bool write_timestamp = false; /**< if true, timestamp (original timestamp
                                     of each GPS point) will be exported */
   bool write_candidates = false; /**< if true, emit all candidates per observation */
+  bool write_seq = false; /**< if true, output sequence number of each point */
+  bool write_ogeom = false; /**< if true, output original GPS point geometry */
+  bool point_mode = true; /**< if true, output in point mode (one row per matched point) */
 };
 
 /**
