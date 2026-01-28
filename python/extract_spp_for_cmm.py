@@ -218,9 +218,9 @@ def process_spp_file(file_path, transformer):
             'sde': sde,
             'sdn': sdn,
             'sdu': sdu,
-            'sden': sden,
+            'sdne': sden,
             'sdeu': sdeu,
-            'sdnu': sdnu,
+            'sdun': sdnu,
             'protection_level': protection_level
         })
         
@@ -250,8 +250,9 @@ def main():
         
     if all_results:
         df = pd.DataFrame(all_results)
-        output_file = "cmm_input_points.csv"
-        df.to_csv(output_file, index=False)
+        output_file = "dataset-hainan-06/cmm_input_points.csv"
+        # Use semicolon as delimiter as expected by the C++ code
+        df.to_csv(output_file, index=False, sep=';')
         print("-" * 30)
         print(f"Success! Saved total {len(df)} points to {output_file}")
         print(f"Columns: {', '.join(df.columns)}")
