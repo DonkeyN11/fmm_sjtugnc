@@ -353,3 +353,24 @@ double ep = TransitionGraph::calc_ep(dist, gps_error);
 
 
 ```
+
+# III. Operational Constraints (Strict)
+
+### 1. Safety Protocols (CRITICAL)
+* **Destructive Commands**: 🚨 **ABSOLUTELY FORBIDDEN**: Do **NOT** generate scripts or commands containing `rm -rf`, `rm -r`, or unverified recursive deletion on directories.
+* **Cleanup**: If file cleanup is necessary, suggest deleting specific files explicitly (e.g., `rm build/CMakeCache.txt`) or ask the user to perform the cleanup manually.
+
+### 2. Code & File Management
+* **Pathing**: ALWAYS use **relative paths** from the project root (e.g., `src/mm/fmm_algorithm.hpp`). Never use absolute paths.
+* **Test Placement**:
+    * 🚨 **STRICT RULE**: Do **NOT** create test scripts inside `src/` or `python/`.
+    * All C++ tests go into `tests/` (or `test/`).
+    * All Python tests go into `tests/python/`.
+* **Diff Format**: When suggesting changes, use standard Unified Format (`diff -u`) with at least **3 lines of context**.
+
+### 3. Coding Standards
+* **Language Standard**: C++17.
+* **Optimization**: Use `-O3` compatible code. Avoid heavy standard library overhead in hot loops.
+* **Math**: Use LaTeX format for complex mathematical formulas (e.g., $\sigma_{major}$).
+
+---
