@@ -27,6 +27,15 @@ namespace FMM {
 namespace MM {
 
 /**
+ * Statistics for UBODT Manager
+ */
+struct ManagerStats {
+    size_t total_ubodts;        /**< Total number of UBODTs loaded */
+    size_t total_references;    /**< Total reference count */
+    size_t memory_estimated;    /**< Estimated memory usage (bytes) */
+};
+
+/**
  * UBODT Manager - Singleton pattern for managing UBODT instances
  *
  * Features:
@@ -128,13 +137,8 @@ public:
 
     /**
      * Get statistics
+     * @return ManagerStats structure with usage statistics
      */
-    struct ManagerStats {
-        size_t total_ubodts;        // Total number of UBODTs loaded
-        size_t total_references;    // Total reference count
-        size_t memory_estimated;    // Estimated memory usage (bytes)
-    };
-
     ManagerStats get_stats() const;
 
     /**

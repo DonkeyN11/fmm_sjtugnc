@@ -45,6 +45,12 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "speed ";
   if (output_config.write_timestamp)
     ss << "timestamp ";
+  if (output_config.write_seq)
+    ss << "seq ";
+  if (output_config.write_ogeom)
+    ss << "ogeom ";
+  if (output_config.point_mode)
+    ss << "point_mode ";
   SPDLOG_INFO("ResultConfig");
   SPDLOG_INFO("File: {}",file);
   SPDLOG_INFO("Fields: {}",ss.str());
@@ -94,6 +100,12 @@ std::string FMM::CONFIG::ResultConfig::to_string() const{
     oss << "speed ";
   if (output_config.write_timestamp)
     oss << "timestamp ";
+  if (output_config.write_seq)
+    oss << "seq ";
+  if (output_config.write_ogeom)
+    oss << "ogeom ";
+  if (output_config.point_mode)
+    oss << "point_mode ";
   return oss.str();
 };
 
@@ -106,87 +118,76 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
     // close the default output fields (cpath,mgeom are true by default)
     config.output_config.write_cpath = false;
     config.output_config.write_mgeom = false;
-    if (xml_data.get_child_optional("config.output.fields.opath")) {
-      config.output_config.write_opath = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.cpath")) {
-      config.output_config.write_cpath = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.tpath")) {
-      config.output_config.write_tpath = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.mgeom")) {
-      config.output_config.write_mgeom = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.pgeom")) {
-      config.output_config.write_pgeom = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.offset")) {
-      config.output_config.write_offset = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.error")) {
-      config.output_config.write_error = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.spdist")) {
-      config.output_config.write_spdist = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.sp_dist")) {
-      config.output_config.write_sp_dist = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.eu_dist")) {
-      config.output_config.write_eu_dist = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.ep")) {
-      config.output_config.write_ep = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.tp")) {
-      config.output_config.write_tp = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.trustworthiness")) {
-      config.output_config.write_trustworthiness = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.n_best_trustworthiness")) {
-      config.output_config.write_n_best_trustworthiness = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.cumu_prob")) {
-      config.output_config.write_cumu_prob = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.candidates")) {
-      config.output_config.write_candidates = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.length")) {
-      config.output_config.write_length = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.duration")) {
-      config.output_config.write_duration = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.speed")) {
-      config.output_config.write_speed = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.timestamp")) {
-      config.output_config.write_timestamp = true;
-    }
-    if (xml_data.get_child_optional("config.output.fields.all")) {
-      config.output_config.write_opath = true;
-      config.output_config.write_pgeom = true;
-      config.output_config.write_offset = true;
-      config.output_config.write_error = true;
-      config.output_config.write_spdist = true;
-      config.output_config.write_sp_dist = true;
-      config.output_config.write_eu_dist = true;
-      config.output_config.write_cpath = true;
-      config.output_config.write_mgeom = true;
-      config.output_config.write_tpath = true;
-      config.output_config.write_ep = true;
-      config.output_config.write_tp = true;
-      config.output_config.write_trustworthiness = true;
-      config.output_config.write_n_best_trustworthiness = true;
-      config.output_config.write_cumu_prob = true;
-      config.output_config.write_candidates = true;
-      config.output_config.write_length = true;
-      config.output_config.write_duration = true;
-      config.output_config.write_speed = true;
-      config.output_config.write_timestamp = true;
+    auto fields = xml_data.get_child("config.output.fields");
+    for (auto& v : fields) {
+      if (v.first == "seq") {
+        config.output_config.write_seq = true;
+      } else if (v.first == "opath") {
+        config.output_config.write_opath = true;
+      } else if (v.first == "cpath") {
+        config.output_config.write_cpath = true;
+      } else if (v.first == "tpath") {
+        config.output_config.write_tpath = true;
+      } else if (v.first == "mgeom") {
+        config.output_config.write_mgeom = true;
+      } else if (v.first == "pgeom") {
+        config.output_config.write_pgeom = true;
+      } else if (v.first == "offset") {
+        config.output_config.write_offset = true;
+      } else if (v.first == "error") {
+        config.output_config.write_error = true;
+      } else if (v.first == "spdist") {
+        config.output_config.write_spdist = true;
+      } else if (v.first == "sp_dist") {
+        config.output_config.write_sp_dist = true;
+      } else if (v.first == "eu_dist") {
+        config.output_config.write_eu_dist = true;
+      } else if (v.first == "ep") {
+        config.output_config.write_ep = true;
+      } else if (v.first == "tp") {
+        config.output_config.write_tp = true;
+      } else if (v.first == "trustworthiness") {
+        config.output_config.write_trustworthiness = true;
+      } else if (v.first == "n_best_trustworthiness") {
+        config.output_config.write_n_best_trustworthiness = true;
+      } else if (v.first == "cumu_prob") {
+        config.output_config.write_cumu_prob = true;
+      } else if (v.first == "candidates") {
+        config.output_config.write_candidates = true;
+      } else if (v.first == "length") {
+        config.output_config.write_length = true;
+      } else if (v.first == "duration") {
+        config.output_config.write_duration = true;
+      } else if (v.first == "speed") {
+        config.output_config.write_speed = true;
+      } else if (v.first == "timestamp") {
+        config.output_config.write_timestamp = true;
+      } else if (v.first == "ogeom") {
+        config.output_config.write_ogeom = true;
+      } else if (v.first == "point_mode") {
+        config.output_config.point_mode = true;
+      } else if (v.first == "all") {
+        config.output_config.write_opath = true;
+        config.output_config.write_pgeom = true;
+        config.output_config.write_offset = true;
+        config.output_config.write_error = true;
+        config.output_config.write_spdist = true;
+        config.output_config.write_sp_dist = true;
+        config.output_config.write_eu_dist = true;
+        config.output_config.write_cpath = true;
+        config.output_config.write_mgeom = true;
+        config.output_config.write_tpath = true;
+        config.output_config.write_ep = true;
+        config.output_config.write_tp = true;
+        config.output_config.write_trustworthiness = true;
+        config.output_config.write_n_best_trustworthiness = true;
+        config.output_config.write_cumu_prob = true;
+        config.output_config.write_candidates = true;
+        config.output_config.write_length = true;
+        config.output_config.write_duration = true;
+        config.output_config.write_speed = true;
+        config.output_config.write_timestamp = true;
+      }
     }
   }
   return config;
@@ -196,11 +197,17 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
   const cxxopts::ParseResult &arg_data) {
   FMM::CONFIG::ResultConfig config;
   config.file = arg_data["output"].as<std::string>();
+  if (arg_data.count("seq") > 0 && arg_data["seq"].as<bool>()) {
+    config.output_config.write_seq = true;
+  }
   if (arg_data.count("output_fields") > 0) {
     config.output_config.write_cpath = false;
     config.output_config.write_mgeom = false;
     std::string fields = arg_data["output_fields"].as<std::string>();
     std::set<std::string> dict = string2set(fields);
+    if (dict.find("seq") != dict.end()) {
+      config.output_config.write_seq = true;
+    }
     if (dict.find("opath") != dict.end()) {
       config.output_config.write_opath = true;
     }
@@ -261,6 +268,12 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     if (dict.find("timestamp") != dict.end()) {
       config.output_config.write_timestamp = true;
     }
+    if (dict.find("ogeom") != dict.end()) {
+      config.output_config.write_ogeom = true;
+    }
+    if (dict.find("point_mode") != dict.end()) {
+      config.output_config.point_mode = true;
+    }
     if (dict.find("all") != dict.end()) {
       config.output_config.write_opath = true;
       config.output_config.write_pgeom = true;
@@ -317,12 +330,16 @@ void FMM::CONFIG::ResultConfig::register_arg(cxxopts::Options &options){
     ("o,output","Output file name",
     cxxopts::value<std::string>()->default_value(""))
     ("output_fields","Output fields",
-    cxxopts::value<std::string>()->default_value(""));
+    cxxopts::value<std::string>()->default_value(""))
+    ("seq","Output sequence number of each point",
+    cxxopts::value<bool>()->default_value("false"))
+    ("point_mode","Output in point mode (one row per matched point)",
+    cxxopts::value<bool>()->default_value("true"));
 };
 
 void FMM::CONFIG::ResultConfig::register_help(std::ostringstream &oss){
   oss<<"--output (required) <string>: Output file name\n";
   oss<<"--output_fields (optional) <string>: Output fields\n";
-  oss<<"  opath,cpath,tpath,mgeom,pgeom,\n";
-  oss<<"  offset,error,spdist,sp_dist,eu_dist,tp,ep,trustworthiness,n_best_trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,all\n";
+  oss<<"  opath,cpath,tpath,mgeom,pgeom,ogeom,\n";
+  oss<<"  offset,error,spdist,sp_dist,eu_dist,tp,ep,trustworthiness,n_best_trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,seq,point_mode,all\n";
 };

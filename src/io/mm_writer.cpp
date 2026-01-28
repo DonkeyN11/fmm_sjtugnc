@@ -28,6 +28,9 @@ CSVMatchResultWriter::CSVMatchResultWriter(
 
 void CSVMatchResultWriter::write_header() {
   std::string header = "id";
+  if (config_.point_mode) header += ";seq";
+  if (config_.write_ogeom) header += ";ogeom";
+  if (config_.write_timestamp) header += ";timestamp";
   if (config_.write_opath) header += ";opath";
   if (config_.write_error) header += ";error";
   if (config_.write_offset) header += ";offset";
@@ -47,13 +50,17 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
   if (config_.write_speed) header += ";speed";
-  if (config_.write_timestamp) header += ";timestamp";
+
   m_fstream << header << '\n';
 }
 
 void CSVMatchResultWriter::write_result(
     const FMM::CORE::Trajectory &traj,
     const FMM::MM::MatchResult &result) {
+  if (config_.point_mode) {
+    write_point_mode(traj, result);
+    return;
+  }
   std::stringstream buf;
   buf << result.id;
   if (config_.write_opath) {
@@ -272,20 +279,21 @@ void CSVMatchResultWriter::write_result(
   }
   if (config_.write_tpath) {
     buf << ";";
-    if (!result.cpath.empty()) {
+    if (!result.cpath.empty() && !result.indices.empty()) {
       // Iterate through consecutive indexes and write the traversed path
       int J = result.indices.size();
       for (int j = 0; j < J - 1; ++j) {
         int a = result.indices[j];
         int b = result.indices[j + 1];
+        // Output cpath[a:b], edges separated by |
         for (int i = a; i < b; ++i) {
           buf << result.cpath[i];
-          buf << ",";
+          if (i < b - 1) buf << "|";  // Within segment: use | separator
         }
         buf << result.cpath[b];
         if (j < J - 2) {
-          // Last element should not have a bar
-          buf << "|";
+          // Between segments: use , separator
+          buf << ",";
         }
       }
     }
@@ -613,6 +621,192 @@ void CSVMatchResultWriter::write_result(
   }
   buf << '\n';
   // Ensure that fstream is called corrected in OpenMP
+  #pragma omp critical
+  m_fstream << buf.rdbuf();
+}
+
+void CSVMatchResultWriter::write_point_mode(
+    const FMM::CORE::Trajectory &traj,
+    const FMM::MM::MatchResult &result) {
+  std::stringstream buf;
+  int N = result.opt_candidate_path.size();
+  for (int i = 0; i < N; ++i) {
+    const auto &mc = result.opt_candidate_path[i];
+    int original_idx = result.original_indices.empty() ? i : result.original_indices[i];
+
+    buf << result.id;
+    buf << ";" << i; // seq field
+
+    // ogeom: Original GPS point
+    if (config_.write_ogeom) {
+      buf << ";";
+      if (original_idx >= 0 && original_idx < traj.geom.get_num_points()) {
+        const auto &orig_point = traj.geom.get_point(original_idx);
+        buf << "POINT(" << boost::geometry::get<0>(orig_point) << " "
+            << boost::geometry::get<1>(orig_point) << ")";
+      }
+    }
+
+    if (config_.write_opath) {
+      buf << ";";
+      if (mc.c.edge) {
+        buf << mc.c.edge->id;
+      }
+    }
+
+    if (config_.write_error) {
+      buf << ";" << mc.c.dist;
+    }
+
+    if (config_.write_offset) {
+      buf << ";" << mc.c.offset;
+    }
+
+    if (config_.write_spdist) {
+      buf << ";" << (i == 0 ? 0.0 : mc.sp_dist);
+    }
+
+    if (config_.write_sp_dist) {
+      buf << ";";
+      if (!result.sp_distances.empty() && i < static_cast<int>(result.sp_distances.size())) {
+        buf << result.sp_distances[i];
+      } else if (i == 0) {
+        buf << "0.0";
+      } else {
+        buf << mc.sp_dist;
+      }
+    }
+
+    if (config_.write_eu_dist) {
+      buf << ";";
+      if (!result.eu_distances.empty() && i < static_cast<int>(result.eu_distances.size())) {
+        buf << result.eu_distances[i];
+      } else if (i == 0) {
+        buf << "0.0";
+      } else if (original_idx > 0 && original_idx < traj.geom.get_num_points()) {
+        const auto &prev_p = traj.geom.get_point(original_idx - 1);
+        const auto &curr_p = traj.geom.get_point(original_idx);
+        buf << boost::geometry::distance(prev_p, curr_p);
+      }
+    }
+
+    if (config_.write_pgeom) {
+      buf << ";POINT(" << boost::geometry::get<0>(mc.c.point) << " "
+          << boost::geometry::get<1>(mc.c.point) << ")";
+    }
+
+    // cpath: output cpath[indices[i]]
+    if (config_.write_cpath) {
+      buf << ";";
+      if (!result.indices.empty() && i >= 0 && i < static_cast<int>(result.indices.size()) &&
+          result.indices[i] >= 0 && result.indices[i] < static_cast<int>(result.cpath.size())) {
+        buf << result.cpath[result.indices[i]];
+      }
+    }
+
+    // tpath: output the i-th segment
+    if (config_.write_tpath) {
+      buf << ";";
+      if (!result.cpath.empty() && !result.indices.empty() &&
+          i >= 0 && i < static_cast<int>(result.indices.size()) - 1) {
+        int start_idx = result.indices[i];
+        int end_idx = result.indices[i + 1];
+        if (start_idx >= 0 && end_idx <= static_cast<int>(result.cpath.size()) && start_idx < end_idx) {
+          for (int j = start_idx; j < end_idx; ++j) {
+            buf << result.cpath[j];
+            if (j < end_idx - 1) buf << "|";  // Within segment: use | separator
+          }
+        }
+      }
+      // Last point has no next segment, output empty string
+    }
+
+    // mgeom: extract i-th point from result.mgeom
+    if (config_.write_mgeom) {
+      buf << ";";
+      if (i >= 0 && i < result.mgeom.get_num_points()) {
+        const auto &point = result.mgeom.get_point(i);
+        buf << "POINT(" << boost::geometry::get<0>(point) << " "
+            << boost::geometry::get<1>(point) << ")";
+      }
+    }
+
+    if (config_.write_ep) {
+      buf << ";" << mc.ep;
+    }
+
+    if (config_.write_tp) {
+      buf << ";" << mc.tp;
+    }
+
+    if (config_.write_trustworthiness) {
+      buf << ";" << mc.trustworthiness;
+    }
+
+    if (config_.write_n_best_trustworthiness) {
+      buf << ";(";
+      if (i < static_cast<int>(result.nbest_trustworthiness.size())) {
+        const auto &scores = result.nbest_trustworthiness[i];
+        for (size_t j = 0; j < scores.size(); ++j) {
+          buf << scores[j] << (j + 1 < scores.size() ? "," : "");
+        }
+      }
+      buf << ")";
+    }
+
+    if (config_.write_cumu_prob) {
+      buf << ";" << mc.cumu_prob;
+    }
+
+    if (config_.write_candidates) {
+      buf << ";(";
+      if (i < static_cast<int>(result.candidate_details.size())) {
+        const auto &list = result.candidate_details[i];
+        for (size_t j = 0; j < list.size(); ++j) {
+          buf << "(" << list[j].x << "," << list[j].y << "," << list[j].ep << ")"
+              << (j + 1 < list.size() ? "," : "");
+        }
+      }
+      buf << ")";
+    }
+
+    if (config_.write_length) {
+      buf << ";";
+      if (mc.c.edge) {
+        buf << mc.c.edge->length;
+      }
+    }
+
+    if (config_.write_duration) {
+      buf << ";";
+      if (!traj.timestamps.empty() && original_idx >= 0 && original_idx < static_cast<int>(traj.timestamps.size())) {
+        if (original_idx == 0) {
+          buf << "0.0";
+        } else {
+          buf << (traj.timestamps[original_idx] - traj.timestamps[original_idx - 1]);
+        }
+      }
+    }
+
+    if (config_.write_speed) {
+      buf << ";";
+      if (!traj.timestamps.empty() && original_idx > 0 &&
+          original_idx < static_cast<int>(traj.timestamps.size())) {
+        double duration = traj.timestamps[original_idx] - traj.timestamps[original_idx - 1];
+        double d = result.sp_distances.empty() ? mc.sp_dist : result.sp_distances[i];
+        buf << (duration > 0 ? d / duration : 0);
+      }
+    }
+
+    if (config_.write_timestamp) {
+      buf << ";";
+      if (!traj.timestamps.empty() && original_idx >= 0 && original_idx < static_cast<int>(traj.timestamps.size())) {
+        buf << traj.timestamps[original_idx];
+      }
+    }
+
+    buf << "\n";
+  }
   #pragma omp critical
   m_fstream << buf.rdbuf();
 }
