@@ -15,12 +15,16 @@
     <gps>
       <file>dataset-hainan-06/cmm_input_points.csv</file>
       <id>id</id>
-      <geom>geom</geom>
-      <timestamp>timestamps</timestamp>
-      <covariance>covariances</covariance>
-      <protection_level>protection_levels</protection_level>
-      <!-- 如果是逐点 CSV，可以加空标签以告知读取器 -->
-      <!-- <gps_point/> -->
+      <x>x</x>
+      <y>y</y>
+      <timestamp>timestamp</timestamp>
+      <sde>sde</sde>
+      <sdn>sdn</sdn>
+      <sdu>sdu</sdu>
+      <sdne>sdne</sdne>
+      <sdeu>sdeu</sdeu>
+      <sdun>sdun</sdun>
+      <protection_level>protection_level</protection_level>
     </gps>
   </input>
 
@@ -49,7 +53,7 @@
     <k>16</k>
     <min_candidates>1</min_candidates>
     <protection_level_multiplier>10.0</protection_level_multiplier>
-    <reverse_tolerance>0.0</reverse_tolerance>
+    <reverse_tolerance>0.1</reverse_tolerance>
     <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>
     <window_length>100</window_length>

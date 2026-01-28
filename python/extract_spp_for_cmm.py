@@ -199,10 +199,8 @@ def process_spp_file(file_path, transformer):
             'sde': sde,
             'sdn': sdn,
             'sdu': alt_sd,
-            'sden': sden,
-            'sdeu': 0.0,
-            'sdnu': 0.0,
             'sdne': sden,
+            'sdeu': 0.0,
             'sdun': 0.0,
             'protection_level': protection_level
         })
