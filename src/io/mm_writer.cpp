@@ -15,6 +15,7 @@
 
 #include <boost/geometry.hpp>
 #include <sstream>
+#include <iomanip>
 
 namespace FMM {
 
@@ -645,6 +646,14 @@ void CSVMatchResultWriter::write_point_mode(
             << boost::geometry::get<1>(orig_point) << ")";
       }
 
+      // timestamp: output from trajectory if available
+      if (config_.write_timestamp) {
+        buf << ";";
+        if (!traj.timestamps.empty() && i < static_cast<int>(traj.timestamps.size())) {
+          buf << std::fixed << std::setprecision(0) << traj.timestamps[i];
+        }
+      }
+
       // opath: empty (no matched edge)
       if (config_.write_opath) {
         buf << ";";
@@ -754,14 +763,6 @@ void CSVMatchResultWriter::write_point_mode(
         buf << ";-1";
       }
 
-      // timestamp: output from trajectory if available
-      if (config_.write_timestamp) {
-        buf << ";";
-        if (!traj.timestamps.empty() && i < static_cast<int>(traj.timestamps.size())) {
-          buf << traj.timestamps[i];
-        }
-      }
-
       buf << "\n";
     }
     #pragma omp critical
@@ -785,6 +786,14 @@ void CSVMatchResultWriter::write_point_mode(
         const auto &orig_point = traj.geom.get_point(original_idx);
         buf << "POINT(" << boost::geometry::get<0>(orig_point) << " "
             << boost::geometry::get<1>(orig_point) << ")";
+      }
+    }
+
+    // timestamp: output from trajectory if available
+    if (config_.write_timestamp) {
+      buf << ";";
+      if (!traj.timestamps.empty() && original_idx >= 0 && original_idx < static_cast<int>(traj.timestamps.size())) {
+        buf << std::fixed << std::setprecision(0) << traj.timestamps[original_idx];
       }
     }
 
@@ -936,13 +945,6 @@ void CSVMatchResultWriter::write_point_mode(
         double duration = traj.timestamps[original_idx] - traj.timestamps[original_idx - 1];
         double d = result.sp_distances.empty() ? mc.sp_dist : result.sp_distances[i];
         buf << (duration > 0 ? d / duration : 0);
-      }
-    }
-
-    if (config_.write_timestamp) {
-      buf << ";";
-      if (!traj.timestamps.empty() && original_idx >= 0 && original_idx < static_cast<int>(traj.timestamps.size())) {
-        buf << traj.timestamps[original_idx];
       }
     }
 
