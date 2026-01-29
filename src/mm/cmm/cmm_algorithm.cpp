@@ -1946,7 +1946,10 @@ std::string CovarianceMapMatch::match_gps_file(
     // Parallel execution path guarded by OpenMP when multiple trajectories exist.
     if (use_omp && trajectories.size() > 1) {
 #ifdef _OPENMP
+        // Buffer for storing results to maintain output order
+        std::vector<std::pair<CORE::Trajectory, MM::MatchResult>> result_buffer;
         const int trajectories_count = static_cast<int>(trajectories.size());
+        result_buffer.resize(trajectories_count);
         #pragma omp parallel for schedule(dynamic)
         for (int idx = 0; idx < trajectories_count; ++idx) {
             const CMMTrajectory &trajectory = trajectories[idx];
@@ -1959,7 +1962,7 @@ std::string CovarianceMapMatch::match_gps_file(
                 CORE::Trajectory output_traj = simple_traj;
                 MM::MatchResult output_result = result;
                 apply_output_transform(&output_traj, &output_result);
-                writer.write_result(output_traj, output_result);
+                result_buffer[idx] = std::make_pair(output_traj, output_result);
             }
             const int points_in_tr = simple_traj.geom.get_num_points();
             #pragma omp critical(progress_section)
@@ -1977,6 +1980,16 @@ std::string CovarianceMapMatch::match_gps_file(
                     std::cout << buf.rdbuf();
                 }
             }
+        }
+
+        // Sort results by trajectory ID and write in order
+        std::sort(result_buffer.begin(), result_buffer.end(),
+            [](const auto &a, const auto &b) {
+                return a.first.id < b.first.id;
+            });
+
+        for (const auto &item : result_buffer) {
+            writer.write_result(item.first, item.second);
         }
 #else
         use_omp = false;
