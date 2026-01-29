@@ -39,6 +39,8 @@ struct OutputConfig {
   bool write_spdist = false; /**< if true, spdist (the distance traversed
                                   between each two consecutive points)
                                   will be exported */
+  bool write_sp_dist = false; /**< if true, sp_dist (CMM per-point shortest path) will be exported */
+  bool write_eu_dist = false; /**< if true, eu_dist (CMM per-point Euclidean distance) will be exported */
   bool write_pgeom = false; /**< if true, pgeom (a linestring connecting
                                  the matched point) will be exported */
   bool write_ep = false; /**< if true, ep (emission proability of each point)
@@ -59,6 +61,9 @@ struct OutputConfig {
   bool write_timestamp = false; /**< if true, timestamp (original timestamp
                                     of each GPS point) will be exported */
   bool write_candidates = false; /**< if true, emit all candidates per observation */
+  bool write_seq = false; /**< if true, output sequence number of each point */
+  bool write_ogeom = false; /**< if true, output original GPS point geometry */
+  bool point_mode = true; /**< if true, output in point mode (one row per matched point) */
 };
 
 /**

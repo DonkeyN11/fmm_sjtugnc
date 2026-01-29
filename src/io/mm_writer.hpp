@@ -72,6 +72,13 @@ public:
   void write_result(const FMM::CORE::Trajectory &traj,
                     const FMM::MM::MatchResult &result);
   /**
+   * Write match result in point mode (one row per matched point)
+   * @param traj Input trajectory
+   * @param result Map match result
+   */
+  void write_point_mode(const FMM::CORE::Trajectory &traj,
+                        const FMM::MM::MatchResult &result);
+  /**
    * Write multiple match results at once (for batch writing)
    * @param results Vector of pairs containing trajectory and result
    */

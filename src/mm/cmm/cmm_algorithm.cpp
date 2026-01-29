@@ -12,6 +12,7 @@
 
 // #include <Eigen/Dense>
 #include <algorithm>
+#include <cstddef>
 #include <cmath>
 #include <numeric>
 #include <cctype>
@@ -118,6 +119,19 @@ void push_top_k(std::vector<double> *scores, double value, size_t k) {
 
 template <typename T>
 // Parse a JSON array (encoded inside a CSV field) into a numeric vector of type T.
+//
+// Format specification:
+// Used for timestamps and protection_levels columns in CSV files.
+// These columns should contain a JSON 1D array where:
+// - Each value corresponds to one trajectory point
+// - Values are parsed as type T (typically double for timestamps/protection_levels)
+//
+// Example format for timestamps:
+// [1234567890.0,1234567891.0,1234567892.0,...]
+//
+// Example format for protection_levels:
+// [1.38,1.38,1.39,1.37,...]
+//
 bool parse_numeric_array(const std::string &json_text, std::vector<T> *output) {
     output->clear();
     const std::string trimmed = trim_copy(json_text);
@@ -140,6 +154,22 @@ bool parse_numeric_array(const std::string &json_text, std::vector<T> *output) {
 }
 
 // Parse and validate covariance matrices encoded as flattened JSON arrays.
+//
+// Format specification:
+// The covariances column in CSV should contain a JSON 2D array where:
+// - Each row in the JSON array corresponds to one trajectory point
+// - Each row contains exactly 6 numeric values: [sde, sdn, sdu, sdne, sdeu, sdun]
+//   where:
+//   - sde: East standard deviation
+//   - sdn: North standard deviation
+//   - sdu: Up standard deviation
+//   - sdne: North-East covariance
+//   - sdeu: East-Up covariance
+//   - sdun: Up-North covariance
+//
+// Example format:
+// [[0.68,0.69,0.81,0.033,0.0,0.0],[0.67,0.69,0.81,0.032,0.0,0.0],...]
+//
 bool parse_covariance_array(const std::string &json_text,
                             std::vector<CovarianceMatrix> *output) {
     output->clear();
@@ -419,19 +449,38 @@ std::optional<TransformInfo> compute_transform_info(
 // update their covariance/protection metadata accordingly.
 bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
                                   const NETWORK::Network &network,
-                                  bool convert_to_projected) {
-    if (!convert_to_projected || trajectories == nullptr || trajectories->empty()) {
-        return false;
-    }
-    if (!network.is_projected()) {
-        SPDLOG_WARN("Coordinate conversion requested but network CRS is not projected; skip trajectory reprojection.");
-        return false;
-    }
+                                  int input_epsg) {
+    // Check if network has spatial reference
     if (!network.has_spatial_ref()) {
         SPDLOG_WARN("Network CRS information unavailable; skip trajectory reprojection.");
         return false;
     }
 
+    // Get network EPSG code
+    int network_epsg = 0;
+    OGRSpatialReference network_sr;
+    if (network_sr.importFromWkt(network.get_spatial_ref_wkt().c_str()) != OGRERR_NONE) {
+        SPDLOG_WARN("Failed to import network CRS from WKT; skip trajectory reprojection.");
+        return false;
+    }
+    network_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+
+    const char *auth_name = network_sr.GetAuthorityName(nullptr);
+    const char *auth_code = network_sr.GetAuthorityCode(nullptr);
+    if (auth_name && auth_code && std::string(auth_name) == "EPSG") {
+        network_epsg = std::stoi(auth_code);
+    } else {
+        SPDLOG_WARN("Network CRS is not EPSG; assuming EPSG:4326");
+        network_epsg = 4326;
+    }
+
+    // Check if reprojection is needed
+    if (input_epsg == network_epsg) {
+        SPDLOG_INFO("Input EPSG ({}) matches network EPSG ({}); no reprojection needed.", input_epsg, network_epsg);
+        return false;
+    }
+
+    // Check if trajectories are already in network CRS
     bool all_projected = true;
     for (const auto &traj : *trajectories) {
         if (!geometry_is_projected(traj.geom)) {
@@ -444,18 +493,19 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
         return false;
     }
 
-    OGRSpatialReference target_sr;
-    if (target_sr.importFromWkt(network.get_spatial_ref_wkt().c_str()) != OGRERR_NONE) {
-        SPDLOG_WARN("Failed to import network CRS from WKT; skip trajectory reprojection.");
+    // Create coordinate transformation from input EPSG to network CRS
+    OGRSpatialReference source_sr;
+    std::ostringstream source_epsg_str;
+    source_epsg_str << "EPSG:" << input_epsg;
+    if (source_sr.importFromEPSG(input_epsg) != OGRERR_NONE) {
+        SPDLOG_WARN("Failed to import source CRS from EPSG:{}; skip trajectory reprojection.", input_epsg);
         return false;
     }
-    target_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    OGRSpatialReference source_sr;
-    source_sr.SetWellKnownGeogCS("WGS84");
     source_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-    OGRCoordinateTransformation *transform = OGRCreateCoordinateTransformation(&source_sr, &target_sr);
+
+    OGRCoordinateTransformation *transform = OGRCreateCoordinateTransformation(&source_sr, &network_sr);
     if (transform == nullptr) {
-        SPDLOG_WARN("Failed to create coordinate transformation for trajectories.");
+        SPDLOG_WARN("Failed to create coordinate transformation (EPSG:{} -> Network CRS); skip trajectory reprojection.", input_epsg);
         return false;
     }
 
@@ -503,7 +553,8 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
 
     OCTDestroyCoordinateTransformation(transform);
     if (transformed_any) {
-        SPDLOG_INFO("Reprojected {} trajectories to match projected network CRS.", trajectories->size());
+        SPDLOG_INFO("Reprojected {} trajectories from EPSG:{} to network CRS (EPSG:{})",
+                     trajectories->size(), input_epsg, network_epsg);
     }
     return transformed_any;
 }
@@ -518,27 +569,29 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    bool normalized_arg,
                                                    bool use_mahalanobis_candidates_arg,
                                                    int window_length_arg,
-                                                   bool margin_used_trustworthiness_arg)
+                                                   bool margin_used_trustworthiness_arg,
+                                                   bool filtered_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance),
       normalized(normalized_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
       window_length(window_length_arg),
-      margin_used_trustworthiness(margin_used_trustworthiness_arg) {
+      margin_used_trustworthiness(margin_used_trustworthiness_arg),
+      filtered(filtered_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
-    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {} margin_used_trustworthiness {}",
-                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness);
+    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {} margin_used_trustworthiness {} filtered {}",
+                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
 CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     const boost::property_tree::ptree &xml_data) {
-    int k = xml_data.get("config.parameters.k", 8); 
+    int k = xml_data.get("config.parameters.k", 8);
     int min_candidates = xml_data.get("config.parameters.min_candidates", 3);
     double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 1.0);
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
@@ -546,7 +599,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
     int window_length = xml_data.get("config.parameters.window_length", 10);
     bool margin_used_trustworthiness = xml_data.get("config.other.margin_used_trustworthiness", true);
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness};
+    bool filtered = xml_data.get("config.parameters.filtered", true);
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -560,7 +614,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
     int window_length = arg_data["window_length"].as<int>();
     bool margin_used_trustworthiness = arg_data["margin_used_trustworthiness"].as<bool>();
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness};
+    bool filtered = arg_data["filtered"].as<bool>();
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -581,6 +636,8 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("window_length", "Sliding window length for trustworthiness (points)",
          cxxopts::value<int>()->default_value("10"))
         ("margin_used_trustworthiness", "If true use margin (top1-top2) as trustworthiness, else use top1 score",
+         cxxopts::value<bool>()->default_value("true"))
+        ("filtered", "Filter out points with no candidates or disconnected transitions",
          cxxopts::value<bool>()->default_value("true"));
 }
 
@@ -594,6 +651,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
     oss << "--window_length (optional) <int>: sliding window length for trustworthiness (10)\n";
     oss << "--margin_used_trustworthiness (optional) <bool>: if true use margin (top1-top2), else use top1 score (true)\n";
+    oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -645,7 +703,8 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
     const CORE::LineString &geom,
     const std::vector<CovarianceMatrix> &covariances,
     const std::vector<double> &protection_levels,
-    const CovarianceMapMatchConfig &config) const {
+    const CovarianceMapMatchConfig &config,
+    const std::string &traj_id) const {
 
     SPDLOG_DEBUG("Search candidates with protection level for {} points", geom.get_num_points());
 
@@ -836,7 +895,11 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             } else if (!raw_probabilities.empty()) {
                 double uniform_prob = 1.0 / raw_probabilities.size();
                 normalized_probabilities.assign(raw_probabilities.size(), uniform_prob);
-                SPDLOG_WARN("Point {}: covariance determinant non-positive or no candidates within PL, using uniform emission", i);
+                if (!valid_covariance) {
+                    SPDLOG_WARN("Trajectory {} Point {}: covariance determinant non-positive, using uniform emission", traj_id, i);
+                } else {
+                    SPDLOG_WARN("Trajectory {} Point {}: no valid candidates within PL, using uniform emission", traj_id, i);
+                }
             }
             emission_probs = std::move(normalized_probabilities);
         } else {
@@ -854,8 +917,10 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
 // Execute the full map-matching pipeline for a single trajectory using covariance-aware search.
 MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
-                                          const CovarianceMapMatchConfig &config) {
+                                          const CovarianceMapMatchConfig &config,
+                                          CMMTrajectory *filtered_traj) {
     SPDLOG_DEBUG("Count of points in trajectory {}", traj.geom.get_num_points());
+    SPDLOG_INFO("Trajectory {}: filtered mode is {}", traj.id, config.filtered ? "enabled" : "disabled");
 
     // Validate trajectory
     if (!traj.is_valid()) {
@@ -865,20 +930,192 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 
     SPDLOG_DEBUG("Search candidates with protection level");
     CandidateSearchResult candidate_result = search_candidates_with_protection_level(
-        traj.geom, traj.covariances, traj.protection_levels, config);
+        traj.geom, traj.covariances, traj.protection_levels, config, std::to_string(traj.id));
 
-    const Traj_Candidates &tc = candidate_result.candidates;
-    const std::vector<std::vector<double>> &emission_probabilities = candidate_result.emission_probabilities;
+    Traj_Candidates candidates = std::move(candidate_result.candidates);
+    std::vector<std::vector<double>> emission_probabilities = std::move(candidate_result.emission_probabilities);
 
-    SPDLOG_DEBUG("Trajectory candidate {}", tc);
-    if (tc.empty()) return MatchResult{};
+    SPDLOG_DEBUG("Trajectory candidate {}", candidates);
+    if (candidates.empty()) {
+        if (filtered_traj != nullptr) {
+            *filtered_traj = CMMTrajectory{};
+            filtered_traj->id = traj.id;
+        }
+        return MatchResult{};
+    }
+
+    // Prepare working trajectory and candidates
+    Traj_Candidates working_candidates;
+    std::vector<std::vector<double>> working_emissions;
+    CMMTrajectory working_traj;
+    std::vector<int> working_original_indices;
+
+    const bool has_timestamps = !traj.timestamps.empty();
+    working_traj.id = traj.id;
+    working_traj.covariances = traj.covariances;
+    working_traj.protection_levels = traj.protection_levels;
+    if (has_timestamps) {
+        working_traj.timestamps = traj.timestamps;
+    }
+
+    if (config.filtered) {
+        // Filtering enabled: remove points with no candidates and disconnected transitions
+        std::vector<CORE::Point> filtered_points;
+        std::vector<double> filtered_timestamps;
+        std::vector<CovarianceMatrix> filtered_covariances;
+        std::vector<double> filtered_protection_levels;
+        std::vector<int> filtered_original_indices;
+        const size_t total_points = static_cast<size_t>(traj.geom.get_num_points());
+
+        filtered_points.reserve(total_points);
+        filtered_covariances.reserve(total_points);
+        filtered_protection_levels.reserve(total_points);
+        working_candidates.reserve(total_points);
+        working_emissions.reserve(total_points);
+        filtered_original_indices.reserve(total_points);
+        if (has_timestamps) {
+            filtered_timestamps.reserve(total_points);
+        }
+
+        // Step 1: Remove points with no candidates
+        for (size_t idx = 0; idx < candidates.size(); ++idx) {
+            if (candidates[idx].empty()) {
+                continue;
+            }
+            filtered_points.push_back(traj.geom.get_point(static_cast<int>(idx)));
+            if (has_timestamps) {
+                filtered_timestamps.push_back(traj.timestamps[idx]);
+            }
+            filtered_covariances.push_back(traj.covariances[idx]);
+            filtered_protection_levels.push_back(traj.protection_levels[idx]);
+            working_candidates.push_back(std::move(candidates[idx]));
+            if (idx < emission_probabilities.size()) {
+                working_emissions.push_back(std::move(emission_probabilities[idx]));
+            } else {
+                working_emissions.emplace_back();
+            }
+            filtered_original_indices.push_back(static_cast<int>(idx));
+        }
+
+        size_t removed_empty = total_points - filtered_points.size();
+        size_t removed_disconnected = 0;
+
+        // Step 2: Remove points with no valid transitions
+        auto has_valid_transition = [&](size_t prev_idx, size_t next_idx) -> bool {
+            if (prev_idx >= working_candidates.size() || next_idx >= working_candidates.size()) {
+                return false;
+            }
+            const Point_Candidates &prev_candidates = working_candidates[prev_idx];
+            const Point_Candidates &next_candidates = working_candidates[next_idx];
+            if (prev_candidates.empty() || next_candidates.empty()) {
+                return false;
+            }
+
+            const auto *prev_eps = (prev_idx < working_emissions.size())
+                                   ? &working_emissions[prev_idx]
+                                   : nullptr;
+            const auto *next_eps = (next_idx < working_emissions.size())
+                                   ? &working_emissions[next_idx]
+                                   : nullptr;
+
+            const CORE::Point &point_prev = filtered_points[prev_idx];
+            const CORE::Point &point_next = filtered_points[next_idx];
+            double eu_dist = boost::geometry::distance(point_prev, point_next);
+
+            for (size_t a = 0; a < prev_candidates.size(); ++a) {
+                double ep_a = (prev_eps && a < prev_eps->size()) ? (*prev_eps)[a] : 0.0;
+                if (ep_a <= 0.0 || !std::isfinite(ep_a)) {
+                    continue;
+                }
+                for (size_t b = 0; b < next_candidates.size(); ++b) {
+                    double ep_b = (next_eps && b < next_eps->size()) ? (*next_eps)[b] : 0.0;
+                    if (ep_b <= 0.0 || !std::isfinite(ep_b)) {
+                        continue;
+                    }
+                    double sp_dist = get_sp_dist(&prev_candidates[a], &next_candidates[b], config.reverse_tolerance);
+                    if (sp_dist < 0.0) {
+                        continue;
+                    }
+                    double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
+                    if (tp <= 0.0 || !std::isfinite(tp)) {
+                        continue;
+                    }
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        bool removed = true;
+        while (removed && working_candidates.size() > 1) {
+            removed = false;
+            for (size_t idx = 0; idx + 1 < working_candidates.size(); ) {
+                if (!has_valid_transition(idx, idx + 1)) {
+                    auto erase_offset = static_cast<std::ptrdiff_t>(idx + 1);
+                    working_candidates.erase(working_candidates.begin() + erase_offset);
+                    working_emissions.erase(working_emissions.begin() + erase_offset);
+                    filtered_points.erase(filtered_points.begin() + erase_offset);
+                    filtered_covariances.erase(filtered_covariances.begin() + erase_offset);
+                    filtered_protection_levels.erase(filtered_protection_levels.begin() + erase_offset);
+                    filtered_original_indices.erase(filtered_original_indices.begin() + erase_offset);
+                    if (has_timestamps) {
+                        filtered_timestamps.erase(filtered_timestamps.begin() + erase_offset);
+                    }
+                    ++removed_disconnected;
+                    removed = true;
+                    continue;
+                }
+                ++idx;
+            }
+        }
+
+        if (removed_empty > 0 || removed_disconnected > 0) {
+            SPDLOG_INFO("Trajectory {}: skipped {} empty epochs and {} disconnected epochs",
+                        traj.id, removed_empty, removed_disconnected);
+        }
+
+        // Build working trajectory from filtered data
+        for (const auto &point : filtered_points) {
+            working_traj.geom.add_point(point);
+        }
+        if (has_timestamps) {
+            working_traj.timestamps = std::move(filtered_timestamps);
+        }
+        working_traj.covariances = std::move(filtered_covariances);
+        working_traj.protection_levels = std::move(filtered_protection_levels);
+        working_original_indices = std::move(filtered_original_indices);
+    } else {
+        // Filtering disabled: use all points directly
+        const auto &points = traj.geom.get_geometry_const();
+        for (const auto &point : points) {
+            working_traj.geom.add_point(point);
+        }
+        working_candidates = std::move(candidates);
+        working_emissions = std::move(emission_probabilities);
+        // Generate original indices (identity mapping when no filtering)
+        working_original_indices.reserve(static_cast<size_t>(traj.geom.get_num_points()));
+        for (int i = 0; i < traj.geom.get_num_points(); ++i) {
+            working_original_indices.push_back(i);
+        }
+    }
+
+    if (filtered_traj != nullptr) {
+        *filtered_traj = working_traj;
+    }
+
+    const Traj_Candidates &tc = working_candidates;
+    const std::vector<std::vector<double>> &emission_probs = working_emissions;
+
+    if (tc.empty()) {
+        return MatchResult{};
+    }
 
     // Store lightweight emission info for optional debug output or Python bindings.
     std::vector<std::vector<CandidateEmission>> candidate_details(tc.size());
     for (size_t idx = 0; idx < tc.size(); ++idx) {
         const Point_Candidates &cand_list = tc[idx];
-        const std::vector<double> *prob_list = (idx < emission_probabilities.size())
-                                               ? &emission_probabilities[idx]
+        const std::vector<double> *prob_list = (idx < emission_probs.size())
+                                               ? &emission_probs[idx]
                                                : nullptr;
         candidate_details[idx].reserve(cand_list.size());
         for (size_t j = 0; j < cand_list.size(); ++j) {
@@ -891,14 +1128,14 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     }
 
     SPDLOG_DEBUG("Generate transition graph");
-    TransitionGraph tg(tc, emission_probabilities);
+    TransitionGraph tg(tc, emission_probs);
 
     // Populate transition costs and trustworthiness using the covariance-aware routine.
     SPDLOG_DEBUG("Update cost in transition graph using CMM");
-    update_tg_cmm(&tg, traj, config);
+    update_tg_cmm(&tg, working_traj, config);
 
     auto trustworthiness_results = compute_window_trustworthiness(
-        tc, emission_probabilities, traj, config);
+        tc, emission_probs, working_traj, config);
     const std::vector<double> &trust_margins = trustworthiness_results.first;
     std::vector<std::vector<double>> n_best_trust = std::move(trustworthiness_results.second);
 
@@ -908,8 +1145,29 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 
     MatchedCandidatePath matched_candidate_path;
     matched_candidate_path.reserve(tg_opath.size());
+    std::vector<double> sp_distances;
+    std::vector<double> eu_distances;
+    sp_distances.reserve(tg_opath.size());
+    eu_distances.reserve(tg_opath.size());
     for (size_t idx = 0; idx < tg_opath.size(); ++idx) {
         const TGNode *a = tg_opath[idx];
+        double sp_dist_value = -1.0;
+        double eu_dist_value = -1.0;
+        if (idx == 0) {
+            sp_dist_value = 0.0;
+            eu_dist_value = 0.0;
+        } else if (a->prev != nullptr) {
+            if (std::isfinite(a->sp_dist)) {
+                sp_dist_value = a->sp_dist;
+            }
+            if (idx < static_cast<size_t>(working_traj.geom.get_num_points())) {
+                CORE::Point point_prev = working_traj.geom.get_point(static_cast<int>(idx - 1));
+                CORE::Point point_cur = working_traj.geom.get_point(static_cast<int>(idx));
+                eu_dist_value = boost::geometry::distance(point_prev, point_cur);
+            }
+        }
+        sp_distances.push_back(sp_dist_value);
+        eu_distances.push_back(eu_dist_value);
         double trust_value = a->trustworthiness;
         if (config.margin_used_trustworthiness) {
             if (idx < trust_margins.size()) {
@@ -946,7 +1204,15 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
         traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
     match_result.nbest_trustworthiness = std::move(n_best_trust);
     match_result.candidate_details = std::move(candidate_details);
+    match_result.sp_distances = std::move(sp_distances);
+    match_result.eu_distances = std::move(eu_distances);
+    match_result.original_indices = std::move(working_original_indices);
     return match_result;
+}
+
+MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
+                                          const CovarianceMapMatchConfig &config) {
+    return match_traj(traj, config, nullptr);
 }
 
 // Compute the shortest-path distance between two candidates and allow limited reverse travel.
@@ -969,20 +1235,20 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
     auto *r = ubodt_->look_up(s, e);
     double sp_dist = r ? r->cost : -1;
     if (sp_dist < 0) {
-        // No path exists, try reverse direction
-        // When forward lookup fails, try to see if reverse travel is short enough to allow.
-        s = ca->edge->source;
-        e = cb->edge->target;
-        r = ubodt_->look_up(s, e);
-        sp_dist = r ? r->cost : -1;
-        if (sp_dist >= 0) {
-            // Path exists in reverse direction
-            double total_length = ca->edge->length + cb->edge->length;
-            double reverse_dist = total_length - ca->offset - cb->offset;
-            if (reverse_dist <= sp_dist * (1 + reverse_tolerance)) {
-                return reverse_dist;
-            }
-        }
+                // // No path exists, try reverse direction
+        // // When forward lookup fails, try to see if reverse travel is short enough to allow.
+        // s = ca->edge->source;
+        // e = cb->edge->target;
+        // r = ubodt_->look_up(s, e);
+        // sp_dist = r ? r->cost : -1;
+        // if (sp_dist >= 0) {
+        //     // Path exists in reverse direction
+        //     double total_length = ca->edge->length + cb->edge->length;
+        //     double reverse_dist = total_length - ca->offset - cb->offset;
+        //     if (reverse_dist <= sp_dist * (1 + reverse_tolerance)) {
+        //         return reverse_dist;
+        //     }
+        // }    
         return -1;
     } else {
         // Path exists in forward direction
@@ -1200,7 +1466,7 @@ std::string CovarianceMapMatch::match_gps_file(
     const FMM::CONFIG::GPSConfig &gps_config,
     const FMM::CONFIG::ResultConfig &result_config,
     const CovarianceMapMatchConfig &cmm_config,
-    bool convert_to_projected,
+    int input_epsg,
     bool use_omp) {
     std::ostringstream oss;
     std::string status;
@@ -1572,31 +1838,58 @@ std::string CovarianceMapMatch::match_gps_file(
     ifs.close();
 
     bool trajectories_reprojected = false;
-    // Align GPS observations with the network CRS if requested so the matcher
+    // Align GPS observations with the network CRS if needed so the matcher
     // can operate in a consistent coordinate system.
-    if (convert_to_projected) {
+    // Check if input CRS (input_epsg) differs from network CRS
+    bool need_reprojection = false;
+    if (network_.has_spatial_ref()) {
+        // Get network EPSG code from WKT
+        int network_epsg = 0;
+        OGRSpatialReference network_sr;
+        if (network_sr.importFromWkt(network_.get_spatial_ref_wkt().c_str()) == OGRERR_NONE) {
+            const char *auth_name = network_sr.GetAuthorityName(nullptr);
+            const char *auth_code = network_sr.GetAuthorityCode(nullptr);
+            if (auth_name && auth_code && std::string(auth_name) == "EPSG") {
+                network_epsg = std::stoi(auth_code);
+            }
+        }
+        need_reprojection = (input_epsg != network_epsg);
+        SPDLOG_INFO("Input EPSG: {}, Network EPSG: {}, Reprojection needed: {}",
+                     input_epsg, network_epsg, need_reprojection);
+    }
+
+    if (need_reprojection) {
         try {
-            trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, convert_to_projected);
+            // Create a reprojection function that uses the network's CRS
+            // Note: maybe_reproject_trajectories will be refactored to use input_epsg
+            trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, need_reprojection);
         } catch (const std::exception &ex) {
             SPDLOG_WARN("Trajectory reprojection failed: {}", ex.what());
         }
     }
 
-    // Prepare the CSV writer and the optional transformation back to geographic coordinates.
+    // Prepare the CSV writer and the optional transformation back to input CRS.
     FMM::IO::CSVMatchResultWriter writer(result_config.file, result_config.output_config);
     std::unique_ptr<OGRCoordinateTransformation, decltype(&OCTDestroyCoordinateTransformation)>
         output_transform(nullptr, OCTDestroyCoordinateTransformation);
-    if (convert_to_projected && network_.is_projected() && network_.has_spatial_ref()) {
-        OGRSpatialReference projected_sr;
-        if (projected_sr.importFromWkt(network_.get_spatial_ref_wkt().c_str()) == OGRERR_NONE) {
-            projected_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            OGRSpatialReference geographic_sr;
-            geographic_sr.SetWellKnownGeogCS("WGS84");
-            geographic_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
-            if (OGRCoordinateTransformation *ct = OGRCreateCoordinateTransformation(&projected_sr, &geographic_sr)) {
-                output_transform.reset(ct);
+
+    // Only transform back to input CRS if reprojection was performed
+    if (trajectories_reprojected && network_.has_spatial_ref()) {
+        // Create transformation from network CRS back to input EPSG
+        OGRSpatialReference network_sr;
+        if (network_sr.importFromWkt(network_.get_spatial_ref_wkt().c_str()) == OGRERR_NONE) {
+            network_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+            OGRSpatialReference input_sr;
+            if (input_sr.importFromEPSG(input_epsg) == OGRERR_NONE) {
+                input_sr.SetAxisMappingStrategy(OAMS_TRADITIONAL_GIS_ORDER);
+                if (OGRCoordinateTransformation *ct = OGRCreateCoordinateTransformation(&network_sr, &input_sr)) {
+                    output_transform.reset(ct);
+                    SPDLOG_INFO("Created output transformation from network CRS back to EPSG:{}", input_epsg);
+                } else {
+                    SPDLOG_WARN("Failed to create output coordinate transformation; results remain in network CRS.");
+                }
             } else {
-                SPDLOG_WARN("Failed to create output coordinate transformation; results remain in projected CRS.");
+                SPDLOG_WARN("Failed to create input CRS from EPSG:{}; results remain in network CRS.", input_epsg);
             }
         } else {
             SPDLOG_WARN("Failed to reconstruct network CRS for output transformation.");
@@ -1653,20 +1946,25 @@ std::string CovarianceMapMatch::match_gps_file(
     // Parallel execution path guarded by OpenMP when multiple trajectories exist.
     if (use_omp && trajectories.size() > 1) {
 #ifdef _OPENMP
+        // Buffer for storing results to maintain output order
+        std::vector<std::pair<CORE::Trajectory, MM::MatchResult>> result_buffer;
         const int trajectories_count = static_cast<int>(trajectories.size());
+        result_buffer.resize(trajectories_count);
         #pragma omp parallel for schedule(dynamic)
         for (int idx = 0; idx < trajectories_count; ++idx) {
             const CMMTrajectory &trajectory = trajectories[idx];
-            MM::MatchResult result = match_traj(trajectory, cmm_config);
-            CORE::Trajectory simple_traj{trajectory.id, trajectory.geom, trajectory.timestamps};
+            CMMTrajectory filtered_traj;
+            MM::MatchResult result = match_traj(trajectory, cmm_config, &filtered_traj);
+            filtered_traj.id = trajectory.id;
+            CORE::Trajectory simple_traj{filtered_traj.id, filtered_traj.geom, filtered_traj.timestamps};
             #pragma omp critical(writer_section)
             {
                 CORE::Trajectory output_traj = simple_traj;
                 MM::MatchResult output_result = result;
                 apply_output_transform(&output_traj, &output_result);
-                writer.write_result(output_traj, output_result);
+                result_buffer[idx] = std::make_pair(output_traj, output_result);
             }
-            const int points_in_tr = trajectory.geom.get_num_points();
+            const int points_in_tr = simple_traj.geom.get_num_points();
             #pragma omp critical(progress_section)
             {
                 ++progress;
@@ -1683,6 +1981,16 @@ std::string CovarianceMapMatch::match_gps_file(
                 }
             }
         }
+
+        // Sort results by trajectory ID and write in order
+        std::sort(result_buffer.begin(), result_buffer.end(),
+            [](const auto &a, const auto &b) {
+                return a.first.id < b.first.id;
+            });
+
+        for (const auto &item : result_buffer) {
+            writer.write_result(item.first, item.second);
+        }
 #else
         use_omp = false;
 #endif
@@ -1694,13 +2002,15 @@ std::string CovarianceMapMatch::match_gps_file(
             if (progress % step_size == 0) {
                 SPDLOG_INFO("Progress {}", progress);
             }
-            MM::MatchResult result = match_traj(trajectory, cmm_config);
-            CORE::Trajectory simple_traj{trajectory.id, trajectory.geom, trajectory.timestamps};
+            CMMTrajectory filtered_traj;
+            MM::MatchResult result = match_traj(trajectory, cmm_config, &filtered_traj);
+            filtered_traj.id = trajectory.id;
+            CORE::Trajectory simple_traj{filtered_traj.id, filtered_traj.geom, filtered_traj.timestamps};
             CORE::Trajectory output_traj = simple_traj;
             MM::MatchResult output_result = result;
             apply_output_transform(&output_traj, &output_result);
             writer.write_result(output_traj, output_result);
-            const int points_in_tr = trajectory.geom.get_num_points();
+            const int points_in_tr = simple_traj.geom.get_num_points();
             total_points += points_in_tr;
             ++total_trajs;
             if (!result.cpath.empty()) {

@@ -1,0 +1,60 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <input>
+    <network>
+      <!-- 按需替换为你的路网数据 -->
+      <file>input/map/hainan/edges.shp</file>
+      <!-- <id>fid</id> -->
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+
+    <ubodt>
+      <!-- 按需替换为你的 UBODT -->
+      <file>input/map/hainan_ubodt_indexed.bin</file>
+    </ubodt>
+
+    <gps>
+      <file>simulation/huge_sigma/raw_data/cmm_trajectory.csv</file>
+      <id>id</id>
+      <geom>geom</geom>
+      <timestamp>timestamps</timestamp>
+      <covariance>covariances</covariance>
+      <protection_level>protection_levels</protection_level>
+    </gps>
+  </input>
+
+  <output>
+    <file>simulation/huge_sigma/mm_result/cmm_result.csv</file>
+    <fields>
+      <cpath/>
+      <pgeom/>
+      <ep/>
+      <tp/>
+      <trustworthiness/>
+      <n_best_trustworthiness/>
+      <eu_dist/>
+      <sp_dist/>
+      <timestamp/>
+    </fields>
+  </output>
+
+  <parameters>
+    <k>16</k>
+    <min_candidates>1</min_candidates>
+    <protection_level_multiplier>1.0</protection_level_multiplier>
+    <reverse_tolerance>0.0</reverse_tolerance>
+    <normalized>true</normalized>
+    <use_mahalanobis>true</use_mahalanobis>
+    <window_length>10</window_length>
+  </parameters>
+
+  <other>
+    <log_level>2</log_level>
+    <use_omp>true</use_omp>
+    <step>500</step>
+    <convert_to_projected>true</convert_to_projected>
+    <margin_used_trustworthiness>true</margin_used_trustworthiness>
+  </other>
+</config>

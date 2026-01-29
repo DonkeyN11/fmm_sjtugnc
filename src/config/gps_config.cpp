@@ -15,6 +15,7 @@ void FMM::CONFIG::GPSConfig::print() const{
     SPDLOG_INFO("ID name: {} ",id);
     SPDLOG_INFO("Geom name: {} ",geom);
     SPDLOG_INFO("Timestamp name: {} ",timestamp);
+    SPDLOG_INFO("CRS: {} ", crs);
   } else {
     SPDLOG_INFO("GPS format: CSV point");
     SPDLOG_INFO("File name: {} ",file);
@@ -22,6 +23,7 @@ void FMM::CONFIG::GPSConfig::print() const{
     SPDLOG_INFO("x name: {} ",x);
     SPDLOG_INFO("y name: {} ",y);
     SPDLOG_INFO("Timestamp name: {} ",timestamp);
+    SPDLOG_INFO("CRS: {} ", crs);
   }
 };
 
@@ -34,6 +36,7 @@ std::string FMM::CONFIG::GPSConfig::to_string() const{
   oss << "x column : " << x << "\n";
   oss << "y column : " << y << "\n";
   oss << "GPS point : " << (gps_point?"true":"false") << "\n";
+  oss << "GPS CRS : " << crs << "\n";
   return oss.str();
 };
 
@@ -49,6 +52,7 @@ FMM::CONFIG::GPSConfig FMM::CONFIG::GPSConfig::load_from_xml(
   config.y = xml_data.get("config.input.gps.y", "y");
   config.gps_point = !(!xml_data.get_child_optional(
       "config.input.gps.gps_point"));
+  config.crs = xml_data.get("config.input.gps.crs", "");
   return config;
 };
 
@@ -63,6 +67,8 @@ FMM::CONFIG::GPSConfig FMM::CONFIG::GPSConfig::load_from_arg(
   config.y = arg_data["gps_y"].as<std::string>();
   if (arg_data.count("gps_point")>0)
     config.gps_point = true;
+  if (arg_data.count("gps_crs")>0)
+    config.crs = arg_data["gps_crs"].as<std::string>();
   return config;
 };
 
@@ -80,6 +86,8 @@ void FMM::CONFIG::GPSConfig::register_arg(cxxopts::Options &options){
   cxxopts::value<std::string>()->default_value("geom"))
   ("gps_timestamp",   "GPS file timestamp column name",
   cxxopts::value<std::string>()->default_value("timestamp"))
+  ("gps_crs", "GPS CRS for CSV input (e.g. EPSG:4326)",
+  cxxopts::value<std::string>()->default_value(""))
   ("gps_point","GPS point or not");
 };
 
@@ -91,6 +99,7 @@ void FMM::CONFIG::GPSConfig::register_help(std::ostringstream &oss){
   oss<<"--gps_timestamp (optional) <string>: "
     "GPS timestamp name (timestamp)\n";
   oss<<"--gps_geom (optional) <string>: GPS geometry name (geom)\n";
+  oss<<"--gps_crs (optional) <string>: GPS CRS for CSV input (EPSG:4326)\n";
   oss<<"--gps_point (optional): if specified read input data as gps point, "
     "otherwise (default) read input data as trajectory\n";
 };
@@ -104,7 +113,8 @@ int FMM::CONFIG::GPSConfig::get_gps_format() const {
     } else {
       return 1;
     }
-  } else if (fn_extension == "gpkg" || fn_extension == "shp") {
+  } else if (fn_extension == "gpkg" || fn_extension == "shp" ||
+             fn_extension == "geojson" || fn_extension == "fgb") {
     return 0;
   } else {
     SPDLOG_CRITICAL("GPS file extension {} unknown",fn_extension);

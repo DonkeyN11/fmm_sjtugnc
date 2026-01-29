@@ -74,6 +74,24 @@ namespace MM {
 
 /**
  * GNSS covariance matrix structure
+ *
+ * Represents the 3x3 covariance matrix for GNSS observations.
+ * Only 6 unique values are stored (matrix is symmetric).
+ *
+ * Component mapping for CSV input (JSON array per point):
+ * [values[0], values[1], values[2], values[3], values[4], values[5]]
+ * maps to:
+ * [sde, sdn, sdu, sdne, sdeu, sdun]
+ *
+ * Matrix layout (ENU coordinates):
+ * | sde^2   sdne    sdeu  |
+ * | sdne    sdn^2   sdun  |
+ * | sdeu    sdun    sdu^2 |
+ *
+ * For 2D map matching, only the horizontal components are used:
+ * - sde (East std)
+ * - sdn (North std)
+ * - sdne (North-East covariance)
  */
 struct CovarianceMatrix {
     // Units depending on the input data (usually lla)
@@ -114,7 +132,8 @@ struct CovarianceMapMatchConfig {
                            bool normalized_arg = true,
                            bool use_mahalanobis_candidates_arg = true,
                            int window_length_arg = 10,
-                           bool margin_used_trustworthiness_arg = true);
+                           bool margin_used_trustworthiness_arg = true,
+                           bool filtered_arg = true);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -124,6 +143,7 @@ struct CovarianceMapMatchConfig {
     bool use_mahalanobis_candidates;    /**< Whether to use Mahalanobis-based candidate search */
     int window_length;                  /**< Sliding window length for trustworthiness */
     bool margin_used_trustworthiness;   /**< If true, use margin (top1-top2); else use top1 */
+    bool filtered;                      /**< Whether to filter out points with no candidates/disconnected transitions */
 
     /**
      * Check if the configuration is valid or not
@@ -165,6 +185,23 @@ struct CovarianceMapMatchConfig {
 
 /**
  * Enhanced trajectory with covariance and protection level data
+ *
+ * CSV Input Format Specification:
+ * When reading from aggregated CSV format, each row should contain:
+ * - id: Trajectory ID (integer)
+ * - geom: WKT LINESTRING geometry
+ * - timestamps: JSON 1D array of timestamps [t1, t2, t3, ...]
+ * - covariances: JSON 2D array where each point has 6 values [sde, sdn, sdu, sdne, sdeu, sdun]
+ *               Example: [[0.68,0.69,0.81,0.033,0.0,0.0],[0.67,0.69,0.81,0.032,0.0,0.0],...]
+ * - protection_levels: JSON 1D array of protection levels [pl1, pl2, pl3, ...]
+ *
+ * Covariance Matrix Components (per point):
+ * - sde: East standard deviation
+ * - sdn: North standard deviation
+ * - sdu: Up standard deviation
+ * - sdne: North-East covariance
+ * - sdeu: East-Up covariance
+ * - sdun: Up-North covariance
  */
 struct CMMTrajectory {
     int id;                                          /**< Id of the trajectory */
@@ -224,12 +261,20 @@ public:
      */
     MatchResult match_traj(const CMMTrajectory &traj,
                          const CovarianceMapMatchConfig &config);
+    /**
+     * Match a trajectory while optionally returning the filtered trajectory
+     * after dropping epochs with no feasible candidates/transitions.
+     */
+    MatchResult match_traj(const CMMTrajectory &traj,
+                         const CovarianceMapMatchConfig &config,
+                         CMMTrajectory *filtered_traj);
 
     /**
      * Match GPS data stored in a file with covariance and protection level data
      * @param gps_config GPS configuration including covariance and protection level files
      * @param result_config result configuration
      * @param config map matching configuration
+     * @param input_epsg EPSG code of input trajectory CRS (e.g., 4326 for WGS84)
      * @param use_omp whether to use OpenMP
      * @return a string storing information about running time and statistics
      */
@@ -237,7 +282,7 @@ public:
         const FMM::CONFIG::GPSConfig &gps_config,
         const FMM::CONFIG::ResultConfig &result_config,
         const CovarianceMapMatchConfig &config,
-        bool convert_to_projected,
+        int input_epsg,
         bool use_omp = true);
 
 protected:
@@ -264,7 +309,8 @@ protected:
         const CORE::LineString &geom,
         const std::vector<CovarianceMatrix> &covariances,
         const std::vector<double> &protection_levels,
-        const CovarianceMapMatchConfig &config) const;
+        const CovarianceMapMatchConfig &config,
+        const std::string &traj_id) const;
 
     /**
      * Get shortest path distance between two candidates
