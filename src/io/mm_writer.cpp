@@ -629,6 +629,147 @@ void CSVMatchResultWriter::write_point_mode(
     const FMM::CORE::Trajectory &traj,
     const FMM::MM::MatchResult &result) {
   std::stringstream buf;
+
+  // Handle failed matching: when opt_candidate_path is empty, output original trajectory points
+  if (result.opt_candidate_path.empty()) {
+    int num_points = traj.geom.get_num_points();
+    for (int i = 0; i < num_points; ++i) {
+      buf << result.id;
+      buf << ";" << i; // seq field
+
+      // ogeom: Original GPS point
+      if (config_.write_ogeom) {
+        buf << ";";
+        const auto &orig_point = traj.geom.get_point(i);
+        buf << "POINT(" << boost::geometry::get<0>(orig_point) << " "
+            << boost::geometry::get<1>(orig_point) << ")";
+      }
+
+      // opath: empty (no matched edge)
+      if (config_.write_opath) {
+        buf << ";";
+      }
+
+      // error: -1 (no distance)
+      if (config_.write_error) {
+        buf << ";-1";
+      }
+
+      // offset: -1 (no offset)
+      if (config_.write_offset) {
+        buf << ";-1";
+      }
+
+      // spdist: -1 (no shortest path distance)
+      if (config_.write_spdist) {
+        buf << ";-1";
+      }
+
+      // sp_dist: -1 (no shortest path distance)
+      if (config_.write_sp_dist) {
+        buf << ";-1";
+      }
+
+      // eu_dist: calculate from original trajectory
+      if (config_.write_eu_dist) {
+        buf << ";";
+        if (i == 0) {
+          buf << "0.0";
+        } else if (i < traj.geom.get_num_points()) {
+          const auto &prev_p = traj.geom.get_point(i - 1);
+          const auto &curr_p = traj.geom.get_point(i);
+          buf << boost::geometry::distance(prev_p, curr_p);
+        }
+      }
+
+      // pgeom: empty (no matched point geometry)
+      if (config_.write_pgeom) {
+        buf << ";";
+      }
+
+      // cpath: empty (no complete path)
+      if (config_.write_cpath) {
+        buf << ";";
+      }
+
+      // tpath: empty (no trajectory path)
+      if (config_.write_tpath) {
+        buf << ";";
+      }
+
+      // mgeom: empty (no matched geometry)
+      if (config_.write_mgeom) {
+        buf << ";";
+      }
+
+      // ep: -1 (no emission probability)
+      if (config_.write_ep) {
+        buf << ";-1";
+      }
+
+      // tp: -1 (no transition probability)
+      if (config_.write_tp) {
+        buf << ";-1";
+      }
+
+      // trustworthiness: -999 (no trustworthiness score)
+      if (config_.write_trustworthiness) {
+        buf << ";-999";
+      }
+
+      // n_best_trustworthiness: empty list
+      if (config_.write_n_best_trustworthiness) {
+        buf << ";()";
+      }
+
+      // cumu_prob: -999 (no cumulative probability)
+      if (config_.write_cumu_prob) {
+        buf << ";-999";
+      }
+
+      // candidates: empty list
+      if (config_.write_candidates) {
+        buf << ";()";
+      }
+
+      // length: -1 (no edge length)
+      if (config_.write_length) {
+        buf << ";-1";
+      }
+
+      // duration: calculate from timestamps if available
+      if (config_.write_duration) {
+        buf << ";";
+        if (!traj.timestamps.empty() && i < static_cast<int>(traj.timestamps.size())) {
+          if (i == 0) {
+            buf << "0.0";
+          } else {
+            buf << (traj.timestamps[i] - traj.timestamps[i - 1]);
+          }
+        }
+      }
+
+      // speed: -1 (no speed calculated)
+      if (config_.write_speed) {
+        buf << ";-1";
+      }
+
+      // timestamp: output from trajectory if available
+      if (config_.write_timestamp) {
+        buf << ";";
+        if (!traj.timestamps.empty() && i < static_cast<int>(traj.timestamps.size())) {
+          buf << traj.timestamps[i];
+        }
+      }
+
+      buf << "\n";
+    }
+    #pragma omp critical
+    m_fstream << buf.rdbuf();
+    return;
+  }
+
+  // Normal case: when matching succeeded
   int N = result.opt_candidate_path.size();
   for (int i = 0; i < N; ++i) {
     const auto &mc = result.opt_candidate_path[i];
