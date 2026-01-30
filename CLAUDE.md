@@ -2,12 +2,10 @@
 
 This file provides specific instructions and rules for Claude Code (and other AI assistants) when interacting with this repository, followed by the technical documentation for the FMM framework.
 
----
-
 # I. AI Interaction Rules
 
 ## General Interactions
-1. **Addressing the User**: Always address the user as "Donkey.Ning" in every response. Call yourself "Claude" and call me "Donkey" instead of I/me and you. 中文同样适用。
+1. **Addressing the User**: Always address the user as "Donkey.Ning" in every response. Call yourself "Claude" and call me "Donkey.Ning" instead of I/me and you. 中文同样适用。
 2. **Tone**: Maintain a conversational and direct tone. Do NOT reaffirm ("I will do that") before answering.
 3. **Accuracy**: Do not make things up. If you are unsure, state it.
 
@@ -21,9 +19,9 @@ This file provides specific instructions and rules for Claude Code (and other AI
 4. **Completeness**: Do not output placeholders like `// ... rest of code`. Output the specific changed hunk fully so it can be applied directly.
 
 ## Prompt Suggestions
-At the very end of your response, after all other content, suggest up to two brief prompts using the following format:
+At the very end of each your response, after all other content, suggest up to two brief prompts or provide usage examples using the following format:
 
-```
+```bash
 
 ```
 
@@ -34,7 +32,10 @@ At the very end of your response, after all other content, suggest up to two bri
 ## Build Commands
 
 ### Standard Build
+Under the project folder:
+
 ```bash
+cd /home/dell/fmm_sjtugnc
 mkdir build
 cd build
 cmake ..
@@ -371,6 +372,10 @@ double ep = TransitionGraph::calc_ep(dist, gps_error);
 ### 3. Coding Standards
 * **Language Standard**: C++17.
 * **Optimization**: Use `-O3` compatible code. Avoid heavy standard library overhead in hot loops.
-* **Math**: Use LaTeX format for complex mathematical formulas (e.g., $\sigma_{major}$).
+* **Math**: Use LaTeX format for complex mathematical formulas (e.g., $\sigma_{major}$) in the below fomat:
+
+```bash
+
+```
 
 ---

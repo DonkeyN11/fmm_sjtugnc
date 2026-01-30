@@ -77,10 +77,10 @@ INPUT_CRS = "EPSG:4326"  # Default input CRS
 
 
 def parse_linestring(wkt: str, transform: bool = False) -> List[Coordinate]:
-    """Parse a WKT LINESTRING into a list of coordinate pairs.
+    """Parse a WKT LINESTRING or POINT into a list of coordinate pairs.
 
     Args:
-        wkt: Well-Known Text LINESTRING string
+        wkt: Well-Known Text LINESTRING or POINT string
         transform: If True, transform coordinates from input CRS to WGS84
 
     Returns coordinates in [x, y] format which can be:
@@ -91,30 +91,58 @@ def parse_linestring(wkt: str, transform: bool = False) -> List[Coordinate]:
     automatically transformed from the input CRS to WGS84 (EPSG:4326).
     """
     text = (wkt or "").strip()
-    if not text or not text.upper().startswith("LINESTRING"):
+    if not text:
         return []
+
+    text_upper = text.upper()
+    is_point = text_upper.startswith("POINT")
+    is_linestring = text_upper.startswith("LINESTRING")
+
+    if not is_point and not is_linestring:
+        return []
+
     open_idx = text.find("(")
     close_idx = text.rfind(")")
     if open_idx == -1 or close_idx == -1 or close_idx <= open_idx:
         return []
+
     body = text[open_idx + 1 : close_idx]
     coords: List[Coordinate] = []
-    for token in body.split(","):
-        parts = token.strip().split()
-        if len(parts) != 2:
-            continue
-        try:
-            x = float(parts[0])
-            y = float(parts[1])
-        except ValueError:
-            continue
-        # Transform to WGS84 if requested and input is in a projected CRS
-        if transform and USE_PROJECTED_CRS and COORD_TRANSFORMER is not None:
-            lon, lat = COORD_TRANSFORMER.transform(x, y)
-            coords.append((lon, lat))
-        else:
-            # Return coordinates as-is (in input CRS)
-            coords.append((x, y))
+
+    # POINT format: "POINT(x y)" - single coordinate
+    # LINESTRING format: "LINESTRING(x1 y1, x2 y2, ...)" - multiple coordinates
+    if is_point:
+        parts = body.strip().split()
+        if len(parts) == 2:
+            try:
+                x = float(parts[0])
+                y = float(parts[1])
+            except ValueError:
+                return []
+            # Transform to WGS84 if requested and input is in a projected CRS
+            if transform and USE_PROJECTED_CRS and COORD_TRANSFORMER is not None:
+                lon, lat = COORD_TRANSFORMER.transform(x, y)
+                coords.append((lon, lat))
+            else:
+                coords.append((x, y))
+    else:
+        # LINESTRING format
+        for token in body.split(","):
+            parts = token.strip().split()
+            if len(parts) != 2:
+                continue
+            try:
+                x = float(parts[0])
+                y = float(parts[1])
+            except ValueError:
+                continue
+            # Transform to WGS84 if requested and input is in a projected CRS
+            if transform and USE_PROJECTED_CRS and COORD_TRANSFORMER is not None:
+                lon, lat = COORD_TRANSFORMER.transform(x, y)
+                coords.append((lon, lat))
+            else:
+                # Return coordinates as-is (in input CRS)
+                coords.append((x, y))
     return coords
 
 
@@ -538,6 +566,14 @@ def collect_point_features(
     dataset_name: str,
     bounds: Bounds,
 ) -> Tuple[List[Dict], Bounds]:
+    """Collect point features from CMM/FMM result CSV files.
+
+    Supports two formats:
+    1. Line mode (old): One row per trajectory with comma-separated value lists
+    2. Point mode (new): One row per GPS point with scalar values
+
+    Auto-detects format by checking if 'pgeom' contains POINT (vs LINESTRING).
+    """
     features: List[Dict] = []
     updated_bounds = bounds
     id_set = {str(_id) for _id in selected_ids}
@@ -552,32 +588,28 @@ def collect_point_features(
             if traj_id is None or traj_id.strip() not in id_set:
                 continue
 
-            # Parse coordinates in original CRS (no transformation)
-            raw_coords = parse_linestring(row.get("pgeom", ""), transform=False)
-            if not raw_coords:
-                continue
+            pgeom = row.get("pgeom", "")
+            is_point_mode = pgeom.strip().upper().startswith("POINT")
 
-            # Transform to WGS84 for GeoJSON output
-            wgs84_coords = transform_coords(raw_coords)
+            if is_point_mode:
+                # Point mode format: one row per GPS point
+                # Fields: id;seq;timestamp;pgeom;cpath;ep;tp;trustworthiness;...
+                seq_raw = row.get("seq")
+                seq = int(seq_raw) if seq_raw and seq_raw.strip() else 0
 
-            trust_raw = row.get("trustworthiness")
-            if not trust_raw:
-                trust_raw = row.get("trustworthiness_prob", "")
+                # Parse coordinates in original CRS (no transformation)
+                raw_coords = parse_linestring(pgeom, transform=False)
+                if not raw_coords:
+                    continue
 
-            values_map: Dict[str, List[str]] = {
-                "timestamp": parse_value_list(row.get("timestamp", "")),
-                "ep": parse_value_list(row.get("ep", "")),
-                "tp": parse_value_list(row.get("tp", "")),
-                "trustworthiness": parse_value_list(trust_raw),
-                "error": parse_value_list(row.get("error", "")),
-            }
-
-            for idx, (lon, lat) in enumerate(wgs84_coords):
+                # Transform to WGS84 for GeoJSON output
+                wgs84_coords = transform_coords(raw_coords)
+                lon, lat = wgs84_coords[0]
                 updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
 
-                def get_value(key: str) -> Optional[str]:
-                    series = values_map.get(key, [])
-                    return series[idx] if idx < len(series) else None
+                trust_raw = row.get("trustworthiness")
+                if not trust_raw:
+                    trust_raw = row.get("trustworthiness_prob", "")
 
                 feature = {
                     "type": "Feature",
@@ -585,17 +617,17 @@ def collect_point_features(
                         "id": traj_id.strip(),
                         "source": dataset_name,
                         "kind": f"{dataset_name}_point",
-                        "seq": idx,
-                        "timestamp": to_float(get_value("timestamp")),
-                        "timestamp_raw": get_value("timestamp"),
-                        "ep": to_float(get_value("ep")),
-                        "ep_raw": get_value("ep"),
-                        "tp": to_float(get_value("tp")),
-                        "tp_raw": get_value("tp"),
-                        "trustworthiness": to_float(get_value("trustworthiness")),
-                        "trustworthiness_raw": get_value("trustworthiness"),
-                        "error": to_float(get_value("error")),
-                        "error_raw": get_value("error"),
+                        "seq": seq,
+                        "timestamp": to_float(row.get("timestamp")),
+                        "timestamp_raw": row.get("timestamp"),
+                        "ep": to_float(row.get("ep")),
+                        "ep_raw": row.get("ep"),
+                        "tp": to_float(row.get("tp")),
+                        "tp_raw": row.get("tp"),
+                        "trustworthiness": to_float(trust_raw),
+                        "trustworthiness_raw": trust_raw,
+                        "error": to_float(row.get("error")),
+                        "error_raw": row.get("error"),
                     },
                     "geometry": {
                         "type": "Point",
@@ -603,7 +635,226 @@ def collect_point_features(
                     },
                 }
                 features.append(feature)
+            else:
+                # Line mode format: one row per trajectory with comma-separated lists
+                # Parse coordinates in original CRS (no transformation)
+                raw_coords = parse_linestring(pgeom, transform=False)
+                if not raw_coords:
+                    continue
+
+                # Transform to WGS84 for GeoJSON output
+                wgs84_coords = transform_coords(raw_coords)
+
+                trust_raw = row.get("trustworthiness")
+                if not trust_raw:
+                    trust_raw = row.get("trustworthiness_prob", "")
+
+                values_map: Dict[str, List[str]] = {
+                    "timestamp": parse_value_list(row.get("timestamp", "")),
+                    "ep": parse_value_list(row.get("ep", "")),
+                    "tp": parse_value_list(row.get("tp", "")),
+                    "trustworthiness": parse_value_list(trust_raw),
+                    "error": parse_value_list(row.get("error", "")),
+                }
+
+                for idx, (lon, lat) in enumerate(wgs84_coords):
+                    updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
+
+                    def get_value(key: str) -> Optional[str]:
+                        series = values_map.get(key, [])
+                        return series[idx] if idx < len(series) else None
+
+                    feature = {
+                        "type": "Feature",
+                        "properties": {
+                            "id": traj_id.strip(),
+                            "source": dataset_name,
+                            "kind": f"{dataset_name}_point",
+                            "seq": idx,
+                            "timestamp": to_float(get_value("timestamp")),
+                            "timestamp_raw": get_value("timestamp"),
+                            "ep": to_float(get_value("ep")),
+                            "ep_raw": get_value("ep"),
+                            "tp": to_float(get_value("tp")),
+                            "tp_raw": get_value("tp"),
+                            "trustworthiness": to_float(get_value("trustworthiness")),
+                            "trustworthiness_raw": get_value("trustworthiness"),
+                            "error": to_float(get_value("error")),
+                            "error_raw": get_value("error"),
+                        },
+                        "geometry": {
+                            "type": "Point",
+                            "coordinates": [lon, lat],
+                        },
+                    }
+                    features.append(feature)
     return features, updated_bounds
+
+
+def collect_observation_features_from_points_csv(
+    path: Path,
+    selected_ids: Sequence[str],
+    bounds: Bounds,
+    highlight_map: Optional[Dict[str, Optional[Set[int]]]] = None,
+) -> Tuple[List[Dict], List[Dict], List[Dict], Bounds]:
+    """Collect observation features from CMM input points CSV format.
+
+    Expected format (semicolon-delimited):
+    id;timestamp;x;y;sde;sdn;sdu;sdne;sdeu;sdun;protection_level
+
+    Each row represents one GPS observation point with covariance and protection level.
+    """
+    point_features: List[Dict] = []
+    ellipse_features: List[Dict] = []
+    pl_circle_features: List[Dict] = []
+    updated_bounds = bounds
+    id_set = {str(_id) for _id in selected_ids}
+    highlight_map = highlight_map or {}
+    highlight_active = bool(highlight_map)
+
+    if not path or not path.exists():
+        return point_features, ellipse_features, pl_circle_features, updated_bounds
+
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id")
+            if traj_id is None:
+                continue
+            traj_id_str = traj_id.strip()
+            if traj_id_str not in id_set:
+                continue
+
+            # Parse coordinates from x/y columns
+            x_raw = row.get("x")
+            y_raw = row.get("y")
+            if not x_raw or not y_raw:
+                continue
+
+            try:
+                x = float(x_raw)
+                y = float(y_raw)
+            except ValueError:
+                continue
+
+            # Parse covariance values
+            sde = to_float(row.get("sde"))
+            sdn = to_float(row.get("sdn"))
+            sdne = to_float(row.get("sdne"))
+            if sde is None or sdn is None or sdne is None:
+                continue
+
+            # Parse timestamp
+            timestamp_val = to_float(row.get("timestamp"))
+            timestamp_raw = row.get("timestamp")
+
+            # Parse protection level
+            pl = to_float(row.get("protection_level"))
+
+            # Transform to WGS84 for GeoJSON output
+            lon, lat = transform_coordinate(x, y)
+
+            # Parse seq from row if available (we'll use row counting if not)
+            seq_raw = row.get("seq")
+            if seq_raw:
+                try:
+                    seq = int(seq_raw)
+                except ValueError:
+                    seq = 0
+            else:
+                seq = len([f for f in point_features if f["properties"]["id"] == traj_id_str])
+
+            # Center in original CRS for ellipse/circle calculations
+            center = (x, y)
+
+            # Use global CRS flag
+            if USE_PROJECTED_CRS:
+                metres_per_lat = 1.0
+                metres_per_lon = 1.0
+            else:
+                metres_per_lat = 111_320.0
+                metres_per_lon = max(math.cos(math.radians(lat)) * 111_320.0, 1e-6)
+
+            # Update bounds using WGS84 coordinates
+            updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
+
+            point_features.append(
+                {
+                    "type": "Feature",
+                    "properties": {
+                        "id": traj_id_str,
+                        "kind": "observation_point",
+                        "seq": seq,
+                        "timestamp": timestamp_val,
+                        "timestamp_raw": timestamp_raw,
+                        "pl": pl,
+                        "sdn": sdn,
+                        "sde": sde,
+                        "sdne": sdne,
+                    },
+                    "geometry": {"type": "Point", "coordinates": [lon, lat]},
+                }
+            )
+
+            # Determine if envelope should be shown
+            show_envelope = True
+            if highlight_active:
+                highlight_entry = highlight_map.get(traj_id_str)
+                has_highlight_for_id = traj_id_str in highlight_map
+                if not has_highlight_for_id:
+                    show_envelope = False
+                elif highlight_entry is not None:
+                    show_envelope = seq in highlight_entry
+
+            if show_envelope:
+                # Create covariance ellipse
+                cov_matrix = np.array([[sde * sde, sdne], [sdne, sdn * sdn]], dtype=float)
+                scaling = np.array([[metres_per_lon, 0.0], [0.0, metres_per_lat]], dtype=float)
+                cov_matrix_m = scaling @ cov_matrix @ scaling.T
+
+                ellipse_coords = covariance_ellipse(center, cov_matrix_m)
+                if ellipse_coords:
+                    updated_bounds = update_bounds(updated_bounds, ellipse_coords)
+                    ellipse_features.append(
+                        {
+                            "type": "Feature",
+                            "properties": {
+                                "id": traj_id_str,
+                                "kind": "observation_cov",
+                                "seq": seq,
+                                "timestamp": timestamp_val,
+                                "timestamp_raw": timestamp_raw,
+                                "pl": pl,
+                                "sdn": sdn,
+                                "sde": sde,
+                                "sdne": sdne,
+                            },
+                            "geometry": {"type": "Polygon", "coordinates": [ellipse_coords]},
+                        }
+                    )
+
+                # Create protection level circle
+                if pl is not None and pl > 0:
+                    radius_m = pl * metres_per_lat if not USE_PROJECTED_CRS else pl
+                    circle_coords = protection_level_circle(center, radius_m)
+                    if circle_coords:
+                        updated_bounds = update_bounds(updated_bounds, circle_coords)
+                        pl_circle_features.append(
+                            {
+                                "type": "Feature",
+                                "properties": {
+                                    "id": traj_id_str,
+                                    "kind": "pl_circle",
+                                    "seq": seq,
+                                    "timestamp": timestamp_val,
+                                    "timestamp_raw": timestamp_raw,
+                                    "pl": pl,
+                                },
+                                "geometry": {"type": "Polygon", "coordinates": [circle_coords]},
+                            }
+                        )
+
+    return point_features, ellipse_features, pl_circle_features, updated_bounds
 
 
 def requires_token(token: Optional[str]) -> str:
@@ -1387,12 +1638,16 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="Create an interactive Mapbox viewer for CMM/FMM results alongside ground truth."
     )
-    parser.add_argument("--cmm", default="dataset_hainan_06/1.1/mr/cmm_results.csv", help="CMM result CSV path.")
-    parser.add_argument("--fmm", default="dataset_hainan_06/1.1/mr/fmm_results.csv", help="FMM result CSV path.")
+    parser.add_argument("--cmm", default="dataset-hainan-06/mr/cmm_results_filtered.csv", help="CMM result CSV path.")
+    parser.add_argument("--fmm", default="dataset-hainan-06/mr/fmm_results_filtered.csv", help="FMM result CSV path.")
     parser.add_argument(
         "--cmm-trajectory",
         default=DEFAULT_CMM_TRAJECTORY_CSV,
         help="CMM trajectory CSV containing observation geometry, covariance, and protection levels.",
+    )
+    parser.add_argument(
+        "--cmm-input-points",
+        help="CMM input points CSV format (id;timestamp;x;y;sde;sdn;...)",
     )
     parser.add_argument(
         "--show-observation",
@@ -1450,9 +1705,15 @@ def main() -> None:
     if "__all__" in highlight_map:
         highlight_map = {str(_id): None for _id in selected_ids}
 
-    observation_point_features, observation_ellipse_features, pl_circle_features, bounds = collect_observation_features_from_cmm(
-        Path(args.cmm_trajectory), selected_ids, bounds, highlight_map
-    )
+    # Use cmm-input-points CSV if provided, otherwise fall back to cmm-trajectory
+    if args.cmm_input_points:
+        observation_point_features, observation_ellipse_features, pl_circle_features, bounds = collect_observation_features_from_points_csv(
+            Path(args.cmm_input_points), selected_ids, bounds, highlight_map
+        )
+    else:
+        observation_point_features, observation_ellipse_features, pl_circle_features, bounds = collect_observation_features_from_cmm(
+            Path(args.cmm_trajectory), selected_ids, bounds, highlight_map
+        )
     cmm_features, bounds = collect_point_features(cmm_path, selected_ids, "cmm", bounds)
     fmm_features, bounds = collect_point_features(Path(args.fmm), selected_ids, "fmm", bounds)
 
