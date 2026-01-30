@@ -30,10 +30,11 @@ struct GPSConfig {
             const std::string &x_arg="x",
             const std::string &y_arg="y",
             const std::string &timestamp_arg="timestamp",
+            const std::string &crs_arg="",
             bool gps_point_arg = false) :
     file(file_arg), id(id_arg), geom(geom_arg),
     x(x_arg),y(y_arg),timestamp(timestamp_arg),
-    gps_point(gps_point_arg)
+    crs(crs_arg), gps_point(gps_point_arg)
   {};
   std::string file; /**< filename */
   std::string id; /**< id field/column name */
@@ -41,6 +42,7 @@ struct GPSConfig {
   std::string x; /**< x field/column name */
   std::string y; /**< y field/column name */
   std::string timestamp; /**< timestamp field/column name */
+  std::string crs; /**< CRS for CSV inputs, e.g. EPSG:4326 */
   bool gps_point; /**< gps point stored or not */
   /**
    * Validate the GPS configuration for file existence, parameter validation

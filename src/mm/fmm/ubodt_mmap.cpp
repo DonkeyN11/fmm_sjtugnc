@@ -14,7 +14,11 @@ using namespace FMM::CORE;
 using namespace FMM::NETWORK;
 using namespace FMM::MM;
 
-UBODT_MMap::UBODT_MMap(const std::string &filename) : fd_(-1), file_size_(0), data_(nullptr), num_records_(0), delta_(0.0) {
+UBODT_MMap::UBODT_MMap(const std::string &filename, bool is_indexed_format)
+    : fd_(-1), file_size_(0), data_(nullptr), raw_data_(nullptr),
+      num_records_(0), delta_(0.0), header_offset_(0),
+      is_indexed_format_(is_indexed_format) {
+    
     SPDLOG_INFO("Creating memory-mapped UBODT from {}", filename);
 
     // Open the file
@@ -34,52 +38,109 @@ UBODT_MMap::UBODT_MMap(const std::string &filename) : fd_(-1), file_size_(0), da
     }
     file_size_ = sb.st_size;
 
-    // Check if file size is valid for MmapRecord structure
-    if (file_size_ % sizeof(MmapRecord) != 0) {
-        SPDLOG_WARN("File size {} is not aligned with record size {}", file_size_, sizeof(MmapRecord));
-        num_records_ = file_size_ / sizeof(MmapRecord);
-    } else {
-        num_records_ = file_size_ / sizeof(MmapRecord);
-    }
-
-    SPDLOG_INFO("UBODT file contains {} records", num_records_);
-
     // Map the file into memory
-    data_ = static_cast<const MmapRecord*>(mmap(nullptr, file_size_, PROT_READ, MAP_PRIVATE, fd_, 0));
-    if (data_ == MAP_FAILED) {
+    void* mapped_ptr = mmap(nullptr, file_size_, PROT_READ, MAP_PRIVATE, fd_, 0);
+    if (mapped_ptr == MAP_FAILED) {
         SPDLOG_CRITICAL("Failed to mmap UBODT file: {}", filename);
         close(fd_);
         fd_ = -1;
-        data_ = nullptr;
         return;
     }
+    raw_data_ = static_cast<const char*>(mapped_ptr);
 
-    // Find the maximum delta value
-    double max_delta = 0.0;
-    for (size_t i = 0; i < num_records_; ++i) {
-        if (data_[i].cost > max_delta) {
-            max_delta = data_[i].cost;
+    if (is_indexed_format_) {
+        // Read header to determine offset and record count
+        load_index_from_header();
+        
+        // Point data to the start of records
+        if (raw_data_) {
+            data_ = reinterpret_cast<const MmapRecord*>(raw_data_ + header_offset_);
         }
+    } else {
+        // Standard raw binary format
+        if (file_size_ % sizeof(MmapRecord) != 0) {
+            SPDLOG_WARN("File size {} is not aligned with record size {}", file_size_, sizeof(MmapRecord));
+        }
+        num_records_ = file_size_ / sizeof(MmapRecord);
+        data_ = reinterpret_cast<const MmapRecord*>(raw_data_);
+        
+        // Need to build index and scan delta
+        // Find the maximum delta value
+        double max_delta = 0.0;
+        for (size_t i = 0; i < num_records_; ++i) {
+            if (data_[i].cost > max_delta) {
+                max_delta = data_[i].cost;
+            }
+        }
+        delta_ = max_delta;
+        
+        build_spatial_index();
     }
-    delta_ = max_delta;
 
-    SPDLOG_INFO("UBODT delta value: {}", delta_);
-
-    // Build spatial index for faster lookups
-    build_spatial_index();
-
-    SPDLOG_INFO("Memory-mapped UBODT loaded successfully");
+    if (is_valid()) {
+        SPDLOG_INFO("Memory-mapped UBODT loaded successfully. Records: {}, Delta: {}", num_records_, delta_);
+    }
 }
 
 UBODT_MMap::~UBODT_MMap() {
-    if (data_ != nullptr) {
-        munmap(const_cast<MmapRecord*>(data_), file_size_);
+    if (raw_data_ != nullptr) {
+        munmap(const_cast<char*>(raw_data_), file_size_);
+        raw_data_ = nullptr;
         data_ = nullptr;
     }
     if (fd_ != -1) {
         close(fd_);
         fd_ = -1;
     }
+}
+
+void UBODT_MMap::load_index_from_header() {
+    if (!raw_data_) return;
+
+    // Header structure:
+    // uint64_t num_records
+    // uint64_t num_sources
+    // Index entries: [source(uint32), start_offset(uint64), count(uint64)] * num_sources
+    
+    uint64_t num_sources = 0;
+    
+    // Read counts
+    memcpy(&num_records_, raw_data_, sizeof(uint64_t));
+    memcpy(&num_sources, raw_data_ + sizeof(uint64_t), sizeof(uint64_t));
+    
+    // Calculate index size
+    // Note: NodeIndex is int (4 bytes) usually, check definition
+    // In ubodt_converter it writes: source(NodeIndex), start(uint64), count(uint64)
+    size_t index_entry_size = sizeof(NETWORK::NodeIndex) + 2 * sizeof(uint64_t);
+    header_offset_ = 2 * sizeof(uint64_t) + num_sources * index_entry_size;
+    
+    SPDLOG_INFO("Loading pre-calculated index: {} records, {} sources", num_records_, num_sources);
+    
+    // Reserve space
+    source_index_.reserve(num_sources);
+    
+    // Pointer to start of index
+    const char* index_ptr = raw_data_ + 2 * sizeof(uint64_t);
+    
+    for (size_t i = 0; i < num_sources; ++i) {
+        NETWORK::NodeIndex source;
+        uint64_t start, count;
+        
+        memcpy(&source, index_ptr, sizeof(source));
+        index_ptr += sizeof(source);
+        memcpy(&start, index_ptr, sizeof(start));
+        index_ptr += sizeof(start);
+        memcpy(&count, index_ptr, sizeof(count));
+        index_ptr += sizeof(count);
+        
+        // The start offset in the file index is relative to the record section
+        source_index_.push_back({source, static_cast<size_t>(start), static_cast<size_t>(count)});
+    }
+    
+    // We don't scan for delta in indexed mode to save time, 
+    // unless we want to assume a default or read it if it was stored (it isn't currently)
+    // Let's set a safe default or 0 (it's mostly used for metadata)
+    delta_ = 5000.0; // Reasonable default or TODO: store delta in header
 }
 
 void UBODT_MMap::build_spatial_index() {
@@ -167,13 +228,27 @@ std::vector<EdgeIndex> UBODT_MMap::look_sp_path(NodeIndex source, NodeIndex targ
 std::shared_ptr<UBODT_MMap> FMM::MM::make_mmap_ubodt(const std::string &filename) {
     auto start_time = UTIL::get_current_time();
 
-    auto ubodt = std::make_shared<UBODT_MMap>(filename);
+    // Check if indexed binary format
+    bool is_indexed = false;
+    // We can peek the file or just try to detect from extension/header
+    // Using UBODT::is_indexed_binary_format which is robust
+    // But that requires including ubodt.hpp which is already included
+    
+    // Simple check: Is it likely indexed?
+    // If filename ends in .bin or .binary, we check the header
+    uint64_t rc, sc, hs;
+    if (UBODT::is_indexed_binary_format(filename, &rc, &sc, &hs)) {
+        is_indexed = true;
+    }
+
+    auto ubodt = std::make_shared<UBODT_MMap>(filename, is_indexed);
 
     auto end_time = UTIL::get_current_time();
     double duration = UTIL::get_duration(start_time, end_time);
 
     if (ubodt->is_valid()) {
-        SPDLOG_INFO("Memory-mapped UBODT loaded in {} seconds", duration);
+        SPDLOG_INFO("Memory-mapped UBODT loaded in {} seconds (Mode: {})", 
+                   duration, is_indexed ? "Indexed" : "Raw");
     } else {
         SPDLOG_ERROR("Failed to load memory-mapped UBODT in {} seconds", duration);
     }

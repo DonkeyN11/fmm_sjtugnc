@@ -45,12 +45,14 @@ int main(int argc, char **argv) {
 
     try {
       auto result = options.parse(argc, argv);
+      std::cerr << "DEBUG: Parsed successfully, help count=" << result.count("help") << ", argc=" << argc << "\n";
       if (result.count("help") > 0 || argc == 1) {
         print_help_and_exit();
         return 0;
       }
       config = CMMAppConfig::load_from_arg(result);
       config_loaded = true;
+      std::cerr << "DEBUG: Config loaded successfully\n";
     } catch (const std::exception &ex) {
       std::cerr << "Failed to parse arguments: " << ex.what() << "\n";
       print_help_and_exit();

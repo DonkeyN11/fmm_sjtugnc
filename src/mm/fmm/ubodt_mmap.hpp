@@ -34,7 +34,7 @@ struct MmapRecord {
     NETWORK::NodeIndex prev_n;
     NETWORK::EdgeIndex next_e;
     double cost;
-} __attribute__((packed));
+} PACKED;
 
 /**
  * Memory-mapped UBODT reader for fast access
@@ -47,8 +47,9 @@ public:
     /**
      * Constructor - maps UBODT file into memory
      * @param filename Path to UBODT binary file
+     * @param is_indexed_format If true, treat as indexed binary format (use existing index)
      */
-    UBODT_MMap(const std::string &filename);
+    UBODT_MMap(const std::string &filename, bool is_indexed_format = false);
 
     ~UBODT_MMap();
 
@@ -93,11 +94,18 @@ private:
      */
     void build_spatial_index();
 
+    /**
+     * Load index from the file header (for indexed binary format)
+     */
+    void load_index_from_header();
+
     int fd_;                          // File descriptor
     size_t file_size_;                // File size in bytes
-    const MmapRecord *data_;          // Mapped data pointer
+    const MmapRecord *data_;          // Mapped data pointer (points to start of records)
+    const char *raw_data_;            // Raw mapped pointer
     size_t num_records_;              // Number of records
     double delta_;                     // Upperbound delta value
+    size_t header_offset_;            // Offset to records
 
     // Spatial indexing structure for faster lookups
     struct SourceIndex {
@@ -107,6 +115,7 @@ private:
     };
 
     std::vector<SourceIndex> source_index_;  // Index sorted by source node
+    bool is_indexed_format_;
 };
 
 /**
