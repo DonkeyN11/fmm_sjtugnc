@@ -247,7 +247,7 @@ void CSVMatchResultWriter::write_result(
           if (original_idx >= 0 && original_idx < total_points && i < result.opt_candidate_path.size()) {
             const FMM::CORE::Point &point = result.opt_candidate_path[i].c.point;
             std::stringstream ss;
-            ss << boost::geometry::get<0>(point) << " " << boost::geometry::get<1>(point);
+            ss << std::fixed << std::setprecision(8) << boost::geometry::get<0>(point) << " " << boost::geometry::get<1>(point);
             output_values[original_idx] = ss.str();
           }
         }
@@ -642,7 +642,7 @@ void CSVMatchResultWriter::write_point_mode(
       if (config_.write_ogeom) {
         buf << ";";
         const auto &orig_point = traj.geom.get_point(i);
-        buf << "POINT(" << boost::geometry::get<0>(orig_point) << " "
+        buf << "POINT(" << std::fixed << std::setprecision(8) << boost::geometry::get<0>(orig_point) << " "
             << boost::geometry::get<1>(orig_point) << ")";
       }
 
@@ -736,9 +736,17 @@ void CSVMatchResultWriter::write_point_mode(
         buf << ";-999";
       }
 
-      // candidates: empty list
+      // candidates: output from result.candidate_details if available
       if (config_.write_candidates) {
-        buf << ";()";
+        buf << ";(";
+        if (i < static_cast<int>(result.candidate_details.size())) {
+          const auto &list = result.candidate_details[i];
+          for (size_t j = 0; j < list.size(); ++j) {
+            buf << "(" << std::fixed << std::setprecision(8) << list[j].x << "," << list[j].y << "," << list[j].ep << ")"
+                << (j + 1 < list.size() ? "," : "");
+          }
+        }
+        buf << ")";
       }
 
       // length: -1 (no edge length)
@@ -784,7 +792,7 @@ void CSVMatchResultWriter::write_point_mode(
       buf << ";";
       if (original_idx >= 0 && original_idx < traj.geom.get_num_points()) {
         const auto &orig_point = traj.geom.get_point(original_idx);
-        buf << "POINT(" << boost::geometry::get<0>(orig_point) << " "
+        buf << "POINT(" << std::fixed << std::setprecision(8) << boost::geometry::get<0>(orig_point) << " "
             << boost::geometry::get<1>(orig_point) << ")";
       }
     }
@@ -841,7 +849,7 @@ void CSVMatchResultWriter::write_point_mode(
     }
 
     if (config_.write_pgeom) {
-      buf << ";POINT(" << boost::geometry::get<0>(mc.c.point) << " "
+      buf << ";POINT(" << std::fixed << std::setprecision(8) << boost::geometry::get<0>(mc.c.point) << " "
           << boost::geometry::get<1>(mc.c.point) << ")";
     }
 
@@ -876,7 +884,7 @@ void CSVMatchResultWriter::write_point_mode(
       buf << ";";
       if (i >= 0 && i < result.mgeom.get_num_points()) {
         const auto &point = result.mgeom.get_point(i);
-        buf << "POINT(" << boost::geometry::get<0>(point) << " "
+        buf << "POINT(" << std::fixed << std::setprecision(8) << boost::geometry::get<0>(point) << " "
             << boost::geometry::get<1>(point) << ")";
       }
     }
@@ -910,10 +918,10 @@ void CSVMatchResultWriter::write_point_mode(
 
     if (config_.write_candidates) {
       buf << ";(";
-      if (i < static_cast<int>(result.candidate_details.size())) {
-        const auto &list = result.candidate_details[i];
+      if (original_idx >= 0 && original_idx < static_cast<int>(result.candidate_details.size())) {
+        const auto &list = result.candidate_details[original_idx];
         for (size_t j = 0; j < list.size(); ++j) {
-          buf << "(" << list[j].x << "," << list[j].y << "," << list[j].ep << ")"
+          buf << "(" << std::fixed << std::setprecision(8) << list[j].x << "," << list[j].y << "," << list[j].ep << ")"
               << (j + 1 < list.size() ? "," : "");
         }
       }
