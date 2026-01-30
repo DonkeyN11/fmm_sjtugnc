@@ -779,7 +779,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                         candidate_pool.push_back(*edge_candidate);
                     }
 
-                    auto process_node = [&](NETWORK::NodeIndex node_idx, bool use_tar0get) {
+                    auto process_node = [&](NETWORK::NodeIndex node_idx, bool use_target) {
                         const CORE::Point &node_point = network_.get_vertex_point(node_idx);
                         double dx = obs_x - boost::geometry::get<0>(node_point);
                         double dy = obs_y - boost::geometry::get<1>(node_point);
