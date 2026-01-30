@@ -750,6 +750,13 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
                 Point_Candidates base_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
 
+                // Debug log for first 122 points of trajectory 11
+                // if (traj_id == "11" && i < 122) {
+                //     std::cerr << "[DEBUG] Traj " << traj_id << " Point " << i << ": kNN returned "
+                //               << base_candidates.size() << " candidates, search_radius="
+                //               << search_radius << " deg (" << (search_radius * 111000) << "m)\n" << std::flush;
+                // }
+
                 std::vector<NETWORK::Edge *> edges_to_consider;
                 edges_to_consider.reserve(base_candidates.size());
                 std::unordered_set<NETWORK::EdgeIndex> seen_edges;
@@ -772,7 +779,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                         candidate_pool.push_back(*edge_candidate);
                     }
 
-                    auto process_node = [&](NETWORK::NodeIndex node_idx, bool use_target) {
+                    auto process_node = [&](NETWORK::NodeIndex node_idx, bool use_tar0get) {
                         const CORE::Point &node_point = network_.get_vertex_point(node_idx);
                         double dx = obs_x - boost::geometry::get<0>(node_point);
                         double dy = obs_y - boost::geometry::get<1>(node_point);
@@ -823,6 +830,13 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                     raw_probabilities.push_back(probability);
                 }
 
+                // Debug log: after candidate collection
+                if (traj_id == "11" && i < 122) {
+                    std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": collected "
+                              << selected_candidates.size() << " candidates from "
+                              << edges_to_consider.size() << " edges\n" << std::flush;
+                }
+
                 if (selected_candidates.size() >= static_cast<size_t>(config.min_candidates) ||
                     edges_to_consider.empty() || radius_expanded) {
                     break;
@@ -833,10 +847,19 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             }
         } else {
             // Basic candidate search that directly relies on network_kNN results.
+            if (traj_id == "11" && i < 5) {
+                std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": using basic kNN search (use_mahalanobis=false)\n" << std::flush;
+            }
+
             CORE::LineString single_point_geom;
             single_point_geom.add_point(point);
             Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
             Point_Candidates point_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
+
+            if (traj_id == "11" && i < 5) {
+                std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": kNN returned "
+                          << point_candidates.size() << " candidates (basic mode)\n" << std::flush;
+            }
 
             selected_candidates.reserve(point_candidates.size());
             raw_probabilities.reserve(point_candidates.size());
@@ -876,7 +899,8 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                                                         });
                     if (!already_selected) {
                         selected_candidates.push_back(candidate);
-                        raw_probabilities.push_back(0.0);
+                        // Give small positive probability instead of 0 to avoid -infinity cumu_prob
+                        raw_probabilities.push_back(1e-10);
                     }
                 }
             }
@@ -906,8 +930,27 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             emission_probs = raw_probabilities;
         }
 
+        // Debug log: final result
+        if (traj_id == "11" && i < 122) {
+            std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": final - "
+                      << selected_candidates.size() << " candidates selected\n" << std::flush;
+        }
+
         SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
         result.candidates.push_back(std::move(selected_candidates));
+
+        // Debug logging for trajectory 11 points
+        if (traj_id == "11" && i < 10) {
+            std::stringstream ss;
+            ss << "Traj 11 Point " << i << " emission_probs: size=" << emission_probs.size() << " values=[";
+            for (size_t k = 0; k < std::min(size_t(3), emission_probs.size()); ++k) {
+                ss << emission_probs[k] << " ";
+            }
+            if (emission_probs.size() > 3) ss << "...";
+            ss << "]";
+            SPDLOG_INFO("{}", ss.str());
+        }
+
         result.emission_probabilities.push_back(std::move(emission_probs));
     }
 
@@ -936,6 +979,8 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
     std::vector<std::vector<double>> emission_probabilities = std::move(candidate_result.emission_probabilities);
 
     SPDLOG_DEBUG("Trajectory candidate {}", candidates);
+    SPDLOG_INFO("Trajectory {}: candidates.size={}, traj.geom.get_num_points()={}",
+                 traj.id, candidates.size(), traj.geom.get_num_points());
     if (candidates.empty()) {
         if (filtered_traj != nullptr) {
             *filtered_traj = CMMTrajectory{};
@@ -1127,8 +1172,14 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
         }
     }
 
-    SPDLOG_DEBUG("Generate transition graph");
+    SPDLOG_INFO("Generate transition graph: tc.size={}, traj.geom.get_num_points()={}, candidate_details.size()={}",
+                 tc.size(), traj.geom.get_num_points(), candidate_details.size());
+    SPDLOG_INFO("Emission probs size: {}", emission_probs.size());
     TransitionGraph tg(tc, emission_probs);
+    SPDLOG_INFO("TransitionGraph layers size: {}", tg.get_layers().size());
+    if (traj.id == 11 && !tg.get_layers().empty()) {
+        SPDLOG_INFO("Trajectory 11 first layer size: {}", tg.get_layers()[0].size());
+    }
 
     // Populate transition costs and trustworthiness using the covariance-aware routine.
     SPDLOG_DEBUG("Update cost in transition graph using CMM");
@@ -1141,6 +1192,10 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 
     SPDLOG_DEBUG("Optimal path inference");
     TGOpath tg_opath = tg.backtrack();
+    if (static_cast<int>(traj.id) == 11) {
+        SPDLOG_INFO("Trajectory {} backtrack: optimal_path_size={}, num_layers={}",
+                   traj.id, tg_opath.size(), tg.get_layers().size());
+    }
     SPDLOG_DEBUG("Optimal path size {}", tg_opath.size());
 
     MatchedCandidatePath matched_candidate_path;
@@ -1227,6 +1282,13 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
         if (reverse_tolerance > 0 && (ca->offset - cb->offset) < reverse_limit) {
             return 0.0;
         }
+        // Same edge but offset decreased beyond reverse tolerance
+        static int debug_count = 0;
+        if (debug_count < 5) {
+            SPDLOG_WARN("Same edge {} but reverse offset too large: offset_a={}, offset_b={}, reverse_limit={}",
+                       ca->edge->id, ca->offset, cb->offset, reverse_limit);
+            debug_count++;
+        }
     }
 
     // Otherwise rely on UBODT lookup for forward path between successive edges.
@@ -1234,6 +1296,13 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
     NodeIndex e = cb->edge->source;
     auto *r = ubodt_->look_up(s, e);
     double sp_dist = r ? r->cost : -1;
+
+    static int ubodt_miss_count = 0;
+    if (sp_dist < 0 && ubodt_miss_count < 20) {
+        SPDLOG_WARN("UBODT lookup failed: source edge {}->target={}, dest edge {}->source={}, s={}, e={}",
+                   ca->edge->id, ca->edge->target, cb->edge->id, cb->edge->source, s, e);
+        ubodt_miss_count++;
+    }
     if (sp_dist < 0) {
                 // // No path exists, try reverse direction
         // // When forward lookup fails, try to see if reverse travel is short enough to allow.
@@ -1269,6 +1338,17 @@ void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
     tg->reset_layer(&layers[0]);
     normalize_layer_trust(&layers[0]);
 
+    // Debug logging for trajectory 11
+    if (traj.id == 11 && !layers[0].empty()) {
+        SPDLOG_INFO("Traj 11 layer 0 after reset/normalize: size={}, first_trust={}, first_cumu={}, first_ep={}",
+                   layers[0].size(), layers[0][0].trustworthiness, layers[0][0].cumu_prob, layers[0][0].ep);
+        int positive_trust = 0;
+        for (const auto &node : layers[0]) {
+            if (node.trustworthiness > 0 && std::isfinite(node.cumu_prob)) positive_trust++;
+        }
+        SPDLOG_INFO("Traj 11 layer 0: {} nodes with positive trust and finite cumu_prob", positive_trust);
+    }
+
     // Sweep through each pair of consecutive layers to update transition likelihoods.
     for (int level = 0; level < N - 1; ++level) {
         TGLayer *la_ptr = &layers[level];
@@ -1299,28 +1379,50 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
     bool layer_connected = false;
     const size_t prev_candidate_count = la_ptr->size();
     const size_t next_candidate_count = lb_ptr->size();
+
+    // Debug log for trajectory 11 - log all levels where layer_connected becomes false
+    static bool last_was_connected = true;
+    bool should_log = false;
+    if (traj.id == 11) {
+        if (level < 10 || (level >= 120 && level <= 125)) {
+            should_log = true;  // Always log first 10 levels and levels 120-125
+        }
+    }
     std::vector<double> trust_contrib(next_candidate_count, 0.0);
     double trust_total = 0.0;
+
+    int skip_a_trust = 0, skip_b_ep = 0, skip_sp_dist = 0, skip_tp = 0, successful_transitions = 0;
+    int total_iterations = 0;
+
+    if (should_log) {
+        SPDLOG_INFO("Trajectory {} Level {}: prev={}, next={}, eu_dist={:.2f}m",
+                   traj.id, level, prev_candidate_count, next_candidate_count, eu_dist * 111000);
+    }
 
     for (auto &node_a : *la_ptr) {
         if (!(std::isfinite(node_a.trustworthiness) && node_a.trustworthiness > 0) ||
             !std::isfinite(node_a.cumu_prob)) {
+            skip_a_trust++;
             continue;
         }
 
         for (size_t b_idx = 0; b_idx < next_candidate_count; ++b_idx) {
+            total_iterations++;
             auto &node_b = (*lb_ptr)[b_idx];
             if (node_b.ep <= 0) {
+                skip_b_ep++;
                 continue;
             }
 
             double cur_sp_dist = get_sp_dist(node_a.c, node_b.c, reverse_tolerance);
             if (cur_sp_dist < 0) {
+                skip_sp_dist++;
                 continue;
             }
 
             double tp = TransitionGraph::calc_tp(cur_sp_dist, eu_dist);
             if (tp <= 0) {
+                skip_tp++;
                 continue;
             }
 
@@ -1335,14 +1437,19 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
                 node_b.tp = tp;
                 node_b.sp_dist = cur_sp_dist;
                 layer_connected = true;
+                successful_transitions++;
             }
         }
     }
 
     if (next_candidate_count > 0) {
         if (trust_total > 0) {
+            // Blend transition-based trust with emission probability to avoid zero trustworthiness
             for (size_t b_idx = 0; b_idx < next_candidate_count; ++b_idx) {
-                (*lb_ptr)[b_idx].trustworthiness = trust_contrib[b_idx] / trust_total;
+                double ep = (*lb_ptr)[b_idx].ep;
+                double trans_trust = trust_contrib[b_idx] / trust_total;
+                // Use 50% transition trust, 50% emission probability to prevent trust=0
+                (*lb_ptr)[b_idx].trustworthiness = 0.5 * trans_trust + 0.5 * ep;
             }
         } else {
             double ep_sum = 0.0;
@@ -1366,6 +1473,12 @@ void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *l
 
     if (connected != nullptr) {
         *connected = layer_connected;
+    }
+
+    // Debug logging for trajectory 11 levels - also log when skip_trust > 0
+    if (should_log || !layer_connected || (traj.id == 11 && skip_a_trust > 0)) {
+        SPDLOG_INFO("Traj {} Level {} stats: total_iter={}, skip_trust={}, skip_ep={}, skip_sp={}, skip_tp={}, success={}, connected={}",
+                   traj.id, level, total_iterations, skip_a_trust, skip_b_ep, skip_sp_dist, skip_tp, successful_transitions, layer_connected);
     }
 }
 

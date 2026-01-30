@@ -34,6 +34,7 @@
     <fields>
       <seq/>
       <timestamp/>
+      <ogeom/>
       <cpath/>
       <tpath/>
       <opath/>
@@ -44,7 +45,7 @@
       <tp/>
       <trustworthiness/>
       <n_best_trustworthiness/>
-      <!-- <candidates/> -->
+      <candidates/>
       <!-- <error/> -->
     </fields>
   </output>
@@ -52,7 +53,7 @@
   <parameters>
     <k>16</k>
     <min_candidates>1</min_candidates>
-    <protection_level_multiplier>10.0</protection_level_multiplier>
+    <protection_level_multiplier>10</protection_level_multiplier>
     <reverse_tolerance>0.1</reverse_tolerance>
     <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>

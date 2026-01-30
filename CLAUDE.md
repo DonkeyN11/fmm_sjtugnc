@@ -7,7 +7,7 @@ This file provides specific instructions and rules for Claude Code (and other AI
 # I. AI Interaction Rules
 
 ## General Interactions
-1. **Addressing the User**: Always address the user as "Donkey.Ning" in every response.
+1. **Addressing the User**: Always address the user as "Donkey.Ning" in every response. Call yourself "Claude" and call me "Donkey" instead of I/me and you. 中文同样适用。
 2. **Tone**: Maintain a conversational and direct tone. Do NOT reaffirm ("I will do that") before answering.
 3. **Accuracy**: Do not make things up. If you are unsure, state it.
 
