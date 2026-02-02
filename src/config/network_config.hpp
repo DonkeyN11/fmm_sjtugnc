@@ -26,6 +26,13 @@ struct NetworkConfig{
   std::string id; /**< id field/column name */
   std::string source; /**< source field/column name */
   std::string target; /**< target field/column name */
+  std::string cache; /**< optional network cache file */
+  bool has_bbox = false; /**< optional spatial filter */
+  bool bbox_valid = true; /**< parse status for bbox */
+  double bbox_minx = 0.0;
+  double bbox_miny = 0.0;
+  double bbox_maxx = 0.0;
+  double bbox_maxy = 0.0;
 
   /**
    * Check if the input is shapefile format

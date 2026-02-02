@@ -86,6 +86,19 @@ public:
                                          PredecessorMap *pmap,
                                          DistanceMap *dmap) const;
   /**
+   * Single source shortest path query with an upper bound using A* algorithm
+   * @param source source node queried
+   * @param delta upper bound to stop early
+   * @param pmap predecessor map updated to store the routing result
+   * @param dmap distance map updated to store the routing result
+   * @param target target node for heuristic calculation (use source if no specific target)
+   */
+  void single_source_upperbound_astar(NodeIndex source,
+                                      double delta,
+                                      PredecessorMap *pmap,
+                                      DistanceMap *dmap,
+                                      NodeIndex target = 0) const;
+  /**
    *  Find the edge index given a pair of nodes and its cost,
    *  if not found, return -1
    */

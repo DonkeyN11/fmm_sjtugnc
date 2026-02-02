@@ -715,6 +715,9 @@ def collect_observation_features_from_cmm(
                             active_transformer,
                         )
                         if circle_coords:
+                            
+
+                            
                             updated_bounds = update_bounds(updated_bounds, circle_coords)
                             pl_circle_features.append(
                                 {

@@ -156,6 +156,21 @@ class FastMapMatch {
   void update_layer(int level, TGLayer *la_ptr, TGLayer *lb_ptr,
                     double eu_dist, double reverse_tolerance,
                     bool *connected);
+  /**
+   * Preprocess trajectory and candidates: filter out points without candidates
+   * @param traj original trajectory
+   * @param tc candidates for all points from search
+   * @param filtered_tc output: filtered candidates (only points with candidates)
+   * @param filtered_traj output: filtered trajectory geometry
+   * @param original_indices output: mapping from filtered index to original index
+   * @return true if enough valid points remain (>=2)
+   */
+  static bool match_traj_preprocess(
+      const CORE::Trajectory &traj,
+      const Traj_Candidates &tc,
+      Traj_Candidates &filtered_tc,
+      CORE::Trajectory &filtered_traj,
+      std::vector<int> &original_indices);
  private:
   const NETWORK::Network &network_;
   const NETWORK::NetworkGraph &graph_;

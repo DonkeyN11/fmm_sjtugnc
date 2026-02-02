@@ -272,3 +272,61 @@ void NetworkGraph::single_source_upperbound_dijkstra(NodeIndex s,
     }
   }
 };
+
+void NetworkGraph::single_source_upperbound_astar(NodeIndex s,
+                                                   double delta,
+                                                   PredecessorMap *pmap,
+                                                   DistanceMap *dmap,
+                                                   NodeIndex target) const {
+  const std::vector<Point> &vertex_points = network.get_vertex_points();
+  Heap Q;
+  // Initialization
+  double h = calc_heuristic_dist(vertex_points[s], vertex_points[target]);
+  Q.push(s, h);
+  pmap->insert({s, s});
+  dmap->insert({s, 0});
+  OutEdgeIterator out_i, out_end;
+  double temp_dist = 0;
+  // A* search with upper bound
+  while (!Q.empty()) {
+    HeapNode node = Q.top();
+    Q.pop();
+    NodeIndex u = node.index;
+    double g_u = dmap->at(u);  // actual distance from source to u
+
+    // Stop if the actual distance exceeds delta
+    if (g_u > delta) break;
+
+    for (boost::tie(out_i, out_end) = boost::out_edges(u, g);
+         out_i != out_end; ++out_i) {
+      EdgeDescriptor e = *out_i;
+      NodeIndex v = boost::target(e, g);
+      temp_dist = g_u + g[e].length;  // g(v) = g(u) + cost(u,v)
+
+      auto iter = dmap->find(v);
+      if (iter != dmap->end()) {
+        // dmap contains node v
+        if (iter->second > temp_dist) {
+          // a smaller distance is found for v
+          (*pmap)[v] = u;
+          (*dmap)[v] = temp_dist;
+          h = calc_heuristic_dist(vertex_points[v], vertex_points[target]);
+          double f_v = temp_dist + h;
+          if (Q.contain_node(v)) {
+            Q.decrease_key(v, f_v);
+          } else {
+            Q.push(v, f_v);
+          }
+        };
+      } else {
+        if (temp_dist <= delta) {
+          h = calc_heuristic_dist(vertex_points[v], vertex_points[target]);
+          double f_v = temp_dist + h;
+          Q.push(v, f_v);
+          pmap->insert({v, u});
+          dmap->insert({v, temp_dist});
+        }
+      }
+    }
+  }
+};

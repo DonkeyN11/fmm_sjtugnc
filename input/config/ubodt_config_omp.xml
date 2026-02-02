@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+  <input>
+    <network>
+      <file>input/map/haikou/edges.shp</file>
+      <id>fid</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+  </input>
+  <parameters>
+    <delta>1</delta>
+  </parameters>
+  <output>
+    <file>input/map/haikou_ubodt.txt</file>
+  </output>
+  <other>
+    <log_level>2</log_level>
+    <use_omp/>
+  </other>
+</config>
