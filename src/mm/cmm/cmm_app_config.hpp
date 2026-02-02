@@ -35,10 +35,13 @@ struct CMMAppConfig {
     CovarianceMapMatchConfig cmm_config;
     std::string ubodt_file;
     bool use_omp;
+    bool use_memory_cache = true;  // If true, check memory cache for UBODT
     int log_level;
     int step;
-    bool convert_to_projected;
+    int input_epsg;  // EPSG code of input trajectory CRS (e.g., 4326 for WGS84, 326xx for UTM)
     bool help_specified;
+    bool network_bbox_from_gps = false;
+    double network_bbox_padding = 0.0;
 
     /**
      * Constructor

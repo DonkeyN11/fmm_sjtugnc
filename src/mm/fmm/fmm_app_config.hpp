@@ -68,7 +68,9 @@ class FMMAppConfig
   int log_level = 2;  /**< log level, 0-trace,1-debug,2-info,
                           3-warn,4-err,5-critical,6-off */
   int step = 100; /**< progress report step */
-  bool convert_to_projected = false; /**< Convert inputs to projected CRS when needed */
+  int input_epsg = 4326; /**< EPSG code of input trajectory CRS (default: 4326 for WGS84) */
+  bool network_bbox_from_gps = false; /**< Auto-crop network by GPS bounds */
+  double network_bbox_padding = 0.0; /**< Padding for GPS-derived bbox */
 }; // FMMAppConfig
 }
 }

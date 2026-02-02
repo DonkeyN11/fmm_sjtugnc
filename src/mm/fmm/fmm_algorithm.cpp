@@ -81,6 +81,51 @@ bool FastMapMatchConfig::validate() const {
   return true;
 }
 
+bool FastMapMatch::match_traj_preprocess(
+    const CORE::Trajectory &traj,
+    const Traj_Candidates &tc,
+    Traj_Candidates &filtered_tc,
+    CORE::Trajectory &filtered_traj,
+    std::vector<int> &original_indices) {
+
+  filtered_tc.clear();
+  original_indices.clear();
+  CORE::LineString filtered_geom;
+  std::vector<double> filtered_timestamps;
+
+  // Filter out points without candidates
+  for (size_t i = 0; i < tc.size(); ++i) {
+    if (!tc[i].empty()) {
+      original_indices.push_back(i);
+      filtered_tc.push_back(tc[i]);
+      filtered_geom.add_point(traj.geom.get_point(i));
+      if (!traj.timestamps.empty() && i < traj.timestamps.size()) {
+        filtered_timestamps.push_back(traj.timestamps[i]);
+      }
+    }
+  }
+
+  // Build filtered trajectory
+  filtered_traj.id = traj.id;
+  filtered_traj.geom = filtered_geom;
+  filtered_traj.timestamps = filtered_timestamps;
+
+  // At least 2 points are needed for map matching
+  if (filtered_tc.size() < 2) {
+    SPDLOG_WARN("Traj {} filtered from {} to {} points (need at least 2)",
+                traj.id, tc.size(), filtered_tc.size());
+    return false;
+  }
+
+  if (filtered_tc.size() < tc.size()) {
+    SPDLOG_INFO("Traj {} filtered: {} -> {} points ({} removed, no candidates)",
+                traj.id, tc.size(), filtered_tc.size(),
+                tc.size() - filtered_tc.size());
+  }
+
+  return true;
+}
+
 MatchResult FastMapMatch::match_traj(const Trajectory &traj,
                                      const FastMapMatchConfig &config) {
   SPDLOG_DEBUG("Count of points in trajectory {}", traj.geom.get_num_points());
@@ -89,9 +134,18 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
     traj.geom, config.k, config.radius);
   SPDLOG_DEBUG("Trajectory candidate {}", tc);
   if (tc.empty()) return MatchResult{};
-  std::vector<std::vector<CandidateEmission>> candidate_details(tc.size());
-  for (size_t idx = 0; idx < tc.size(); ++idx) {
-    const Point_Candidates &cand_list = tc[idx];
+
+  // Preprocess: filter out points without candidates
+  Traj_Candidates filtered_tc;
+  CORE::Trajectory filtered_traj;
+  std::vector<int> original_indices;
+  if (!match_traj_preprocess(traj, tc, filtered_tc, filtered_traj, original_indices)) {
+    return MatchResult{};
+  }
+
+  std::vector<std::vector<CandidateEmission>> candidate_details(filtered_tc.size());
+  for (size_t idx = 0; idx < filtered_tc.size(); ++idx) {
+    const Point_Candidates &cand_list = filtered_tc[idx];
     candidate_details[idx].reserve(cand_list.size());
     for (const Candidate &cand : cand_list) {
       CandidateEmission ce;
@@ -102,10 +156,10 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
     }
   }
   SPDLOG_DEBUG("Generate transition graph");
-  TransitionGraph tg(tc, config.gps_error);
+  TransitionGraph tg(filtered_tc, config.gps_error);
   SPDLOG_DEBUG("Update cost in transition graph");
   // The network will be used internally to update transition graph
-  update_tg(&tg, traj, config.reverse_tolerance);
+  update_tg(&tg, filtered_traj, config.reverse_tolerance);
   SPDLOG_DEBUG("Optimal path inference");
   TGOpath tg_opath = tg.backtrack();
   SPDLOG_DEBUG("Optimal path size {}", tg_opath.size());
@@ -132,10 +186,11 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   SPDLOG_DEBUG("Indices is {}", indices);
   SPDLOG_DEBUG("Complete path is {}", cpath);
   LineString mgeom = network_.complete_path_to_geometry(
-    traj.geom, cpath);
+    filtered_traj.geom, cpath);
   MatchResult match_result{
     traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
   match_result.candidate_details = std::move(candidate_details);
+  match_result.original_indices = std::move(original_indices);
   return match_result;
 }
 

@@ -271,10 +271,29 @@ public:
   inline std::vector<FMM::CORE::Trajectory> read_all_trajectories() {
     return reader->read_all_trajectories();
   };
+  inline void close() {
+    reader->close();
+  }
 private:
   std::shared_ptr<ITrajectoryReader> reader;
   int mode; /**< Mode marking the type of GPS data stored in the file */
 };
+
+struct GPSBounds {
+  bool valid = false;
+  double minx = 0.0;
+  double miny = 0.0;
+  double maxx = 0.0;
+  double maxy = 0.0;
+  bool has_spatial_ref = false;
+  std::string spatial_ref_wkt;
+};
+
+GPSBounds compute_gps_bounds(const FMM::CONFIG::GPSConfig &config);
+GPSBounds compute_gps_bounds_in_network_crs(
+    const FMM::CONFIG::GPSConfig &gps_config,
+    const std::string &network_file,
+    int input_epsg);  // EPSG code of input trajectory CRS
 
 } // IO
 } // FMM

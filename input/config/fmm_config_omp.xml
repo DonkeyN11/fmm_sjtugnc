@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+  <input>
+    <ubodt>
+      <file>input/map/hainan_ubodt_indexed.bin</file>
+    </ubodt>
+    <network>
+      <file>input/map/hainan/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+    <gps>
+      <file>dataset-hainan-06/cmm_input_points.csv</file>
+      <gps_point/>
+      <id>id</id>
+      <x>x</x>
+      <y>y</y>
+      <timestamp>timestamp</timestamp>
+    </gps>
+  </input>
+  <parameters>
+    <k>16</k>
+    <r>0.003</r>
+    <pf>0</pf>
+    <gps_error>0.001</gps_error>
+  </parameters>
+  <output>
+    <fields>
+      <cpath/>
+      <pgeom/>
+      <ep/>
+      <tp/>
+      <trustworthiness/>
+      <!-- <n_best_trustworthiness/> -->
+      <!-- <eu_dist/> -->
+      <!-- <sp_dist/> -->
+      <timestamp/>
+    </fields>
+    <file>dataset-hainan-06/mr/fmm_results_filtered.csv</file>
+  </output> 
+
+  <other>
+    <use_omp/>
+    <input_epsg>4326</input_epsg>
+  </other>
+</config>
