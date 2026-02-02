@@ -811,30 +811,36 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         CovarianceMatrix cov = covariances[i];
         
         // FIX: Enforce a minimum standard deviation to prevent probability underflow
+        // while preserving anisotropy by scaling all components proportionally
         // The input data has sigma ~ 6e-6 (0.6m) which is too small/confident.
-        // If the point is 10m away, the probability becomes 0.
-        // We enforce min sigma ~ 5e-5 (approx 5 meters)
-        constexpr double MIN_SIGMA = 5.0e-5; 
+        // We enforce min sigma ~ 5e-5 (approx 5 meters) while maintaining the original ratio
+        constexpr double MIN_SIGMA = 5.0e-5;
         double scale_factor = 1.0;
-        
-        if (cov.sde < MIN_SIGMA || cov.sdn < MIN_SIGMA) {
-            double max_sigma = std::max(cov.sde, cov.sdn);
-            if (max_sigma > 0) {
-                scale_factor = MIN_SIGMA / max_sigma;
-            } else {
-                scale_factor = 1.0; // Should not happen if data is valid
-                cov.sde = MIN_SIGMA;
-                cov.sdn = MIN_SIGMA;
-            }
+
+        // Find the smaller of sde and sdn
+        double min_sigma = std::min(cov.sde, cov.sdn);
+
+        if (min_sigma < MIN_SIGMA && min_sigma > 0) {
+            // Scale factor needed to bring min_sigma to MIN_SIGMA
+            // This preserves the original anisotropy ratio between sde and sdn
+            scale_factor = MIN_SIGMA / min_sigma;
+        } else if (min_sigma <= 0) {
+            // Invalid data, set to minimum isotropic covariance
+            cov.sde = MIN_SIGMA;
+            cov.sdn = MIN_SIGMA;
+            cov.sdne = 0.0;
         }
-        
+
         if (scale_factor > 1.0) {
-             cov.sde *= scale_factor;
-             cov.sdn *= scale_factor;
-             cov.sdne *= (scale_factor * scale_factor); // Covariance scales with square
-             cov.sdeu *= (scale_factor * scale_factor);
-             cov.sdun *= (scale_factor * scale_factor);
-             cov.sdu *= scale_factor;
+            // Scale all covariance components proportionally to preserve anisotropy
+            // Standard deviations scale linearly
+            cov.sde *= scale_factor;
+            cov.sdn *= scale_factor;
+            cov.sdu *= scale_factor;
+            // Covariances scale with square of scale factor (Var(aX) = a²Var(X))
+            cov.sdne *= (scale_factor * scale_factor);
+            cov.sdeu *= (scale_factor * scale_factor);
+            cov.sdun *= (scale_factor * scale_factor);
         }
 
         double protection_level = protection_levels[i];
