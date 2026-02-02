@@ -2,20 +2,27 @@
 <config>
   <input>
     <network>
-      <file>input/map/haikou/edges.shp</file>
-      <id>fid</id>
+      <file>input/map/hainan/edges.shp</file>
+      <id>key</id>
       <source>u</source>
       <target>v</target>
     </network>
   </input>
   <parameters>
-    <delta>1</delta>
+    <delta>0.05</delta>
   </parameters>
   <output>
-    <file>input/map/haikou_ubodt.txt</file>
+    <file>input/map/hainan_ubodt_indexed.bin</file>
   </output>
   <other>
     <log_level>2</log_level>
-    <use_omp/>
+    <use_omp>true</use_omp>
+    <!-- Chunking options for memory efficiency on large graphs -->
+    <!-- 
+    <use_chunking>true</use_chunking>
+    <chunk_rows>4</chunk_rows>
+    <chunk_cols>4</chunk_cols>
+    <chunk_threads>8</chunk_threads>
+    -->
   </other>
 </config>
