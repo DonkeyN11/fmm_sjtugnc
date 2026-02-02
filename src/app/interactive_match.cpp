@@ -322,8 +322,15 @@ private:
             
             CMMTrajectory cmm_traj(traj.id, traj.geom, traj.timestamps, covs, pls);
             
-            auto result = cmm_algo.match_traj(cmm_traj, config);
-            if (!result.cpath.empty()) {
+            auto results = cmm_algo.match_traj(cmm_traj, config);
+            bool any_matched = false;
+            for (const auto &result : results) {
+                if (!result.cpath.empty()) {
+                    any_matched = true;
+                    break;
+                }
+            }
+            if (any_matched) {
                 matched_ids.push_back(std::to_string(traj.id));
             }
         }

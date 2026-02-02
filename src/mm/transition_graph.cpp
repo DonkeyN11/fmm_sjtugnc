@@ -69,6 +69,49 @@ TransitionGraph::TransitionGraph(const Traj_Candidates &tc,
   }
 }
 
+TransitionGraph::TransitionGraph(const Traj_Candidates &tc,
+                                 const std::vector<std::vector<double>> &emission_probabilities,
+                                 bool is_log) {
+  layers.reserve(tc.size());
+  for (size_t i = 0; i < tc.size(); ++i) {
+    const Point_Candidates &point_candidates = tc[i];
+    const auto *probabilities = (i < emission_probabilities.size())
+                                ? &emission_probabilities[i]
+                                : nullptr;
+    TGLayer layer;
+    layer.reserve(point_candidates.size());
+    for (size_t j = 0; j < point_candidates.size(); ++j) {
+      double ep = -std::numeric_limits<double>::infinity();
+      if (probabilities && j < probabilities->size()) {
+        ep = (*probabilities)[j];
+      }
+      if (is_log) {
+          layer.push_back(TGNode{&point_candidates[j], nullptr, ep, 0,
+                                 -std::numeric_limits<double>::infinity(), 0, 0});
+      } else {
+          double linear_ep = std::max(0.0, ep);
+          layer.push_back(TGNode{&point_candidates[j], nullptr, linear_ep, 0,
+                                 -std::numeric_limits<double>::infinity(), 0, 0});
+      }
+    }
+    layers.push_back(layer);
+  }
+  if (!layers.empty()) {
+    if (is_log) {
+        // Manually reset for log-space
+        for (auto &node : layers[0]) {
+            node.cumu_prob = node.ep;
+            node.trustworthiness = std::exp(node.ep);
+            node.prev = nullptr;
+            node.tp = 1.0;
+            node.sp_dist = 0;
+        }
+    } else {
+        reset_layer(&(layers[0]));
+    }
+  }
+}
+
 double TransitionGraph::calc_tp(double sp_dist,double eu_dist){
   // if sp_dist is larger than eu_dist, we set tp to 1
   return eu_dist>=sp_dist ? 1.0 : eu_dist/sp_dist;

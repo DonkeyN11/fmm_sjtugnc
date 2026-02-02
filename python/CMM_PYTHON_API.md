@@ -210,16 +210,16 @@ cmm = CovarianceMapMatch(
 
 **方法：**
 
-#### 1. `match_traj(traj, config) -> MatchResult`
+#### 1. `match_traj(traj, config) -> list[MatchResult]`
 
-匹配单条轨迹。
+匹配单条轨迹。由于支持动态分段（Gap Splitting），该函数现在返回一个 `MatchResult` **列表**。
 
 **参数：**
 - `traj`: `CMMTrajectory` - 待匹配的轨迹
 - `config`: `CovarianceMapMatchConfig` - 算法配置
 
 **返回：**
-- `MatchResult`: 匹配结果
+- `list[MatchResult]`: 匹配结果列表
 
 **示例：**
 ```python
