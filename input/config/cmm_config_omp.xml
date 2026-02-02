@@ -9,7 +9,7 @@
     </network>
 
     <ubodt>
-      <file>input/map/hainan_ubodt_indexed.bin</file>
+      <file>input/map/hainan_ubodt_new.bin</file>
     </ubodt>
 
     <gps>
@@ -54,15 +54,15 @@
     <k>16</k>
     <min_candidates>1</min_candidates>
     <protection_level_multiplier>10</protection_level_multiplier>
-    <reverse_tolerance>0.1</reverse_tolerance>
+    <reverse_tolerance>5.0</reverse_tolerance>
     <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>
     <window_length>100</window_length>
-    <filtered>false</filtered>
+    <filtered>true</filtered>
   </parameters>
 
   <other>
-    <log_level>2</log_level>
+    <log_level>0</log_level>
     <use_omp>true</use_omp>
     <step>500</step>
     <convert_to_projected>false</convert_to_projected>

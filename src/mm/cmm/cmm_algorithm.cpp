@@ -117,6 +117,27 @@ void push_top_k(std::vector<double> *scores, double value, size_t k) {
     }
 }
 
+// LogSumExp utility for numerical stability in log-space calculations
+// Computes log(sum(exp(x_i))) as: max(x) + log(sum(exp(x_i - max(x))))
+// This prevents overflow/underflow when exponentiating large or small log values.
+double log_sum_exp(const std::vector<double> &log_vals) {
+    if (log_vals.empty()) {
+        return -std::numeric_limits<double>::infinity();
+    }
+    // Find maximum value
+    double max_val = *std::max_element(log_vals.begin(), log_vals.end());
+    if (max_val == -std::numeric_limits<double>::infinity()) {
+        return max_val;
+    }
+
+    // Compute sum of exp(x_i - max(x))
+    double sum = 0.0;
+    for (double v : log_vals) {
+        sum += std::exp(v - max_val);
+    }
+    return max_val + std::log(sum);
+}
+
 template <typename T>
 // Parse a JSON array (encoded inside a CSV field) into a numeric vector of type T.
 //
@@ -250,9 +271,9 @@ void normalize_layer_trust(TGLayer *layer) {
     if (positive_count == 0) {
         return;
     }
-    double uniform = 1.0 / positive_count;
+    // 没有正的trustworthiness，用emission probability代替
     for (auto &node : *layer) {
-        node.trustworthiness = (node.ep > 0) ? uniform : 0.0;
+        node.trustworthiness = (node.ep > 0) ? node.ep : 0.0;
     }
 }
 
@@ -565,27 +586,42 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
 // Keep configuration construction centralized so both XML and CLI share defaults.
 CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates_arg,
                                                    double protection_level_multiplier_arg,
-                                                   double reverse_tolerance,
+                                                   double reverse_tolerance_arg,
                                                    bool normalized_arg,
                                                    bool use_mahalanobis_candidates_arg,
                                                    int window_length_arg,
                                                    bool margin_used_trustworthiness_arg,
-                                                   bool filtered_arg)
+                                                   bool filtered_arg,
+                                                   bool enable_candidate_filter_arg,
+                                                   double candidate_filter_threshold_arg,
+                                                   bool enable_gap_bridging_arg,
+                                                   double max_gap_distance_arg,
+                                                   double min_gps_error_degrees_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
-      reverse_tolerance(reverse_tolerance),
+      reverse_tolerance(reverse_tolerance_arg),
       normalized(normalized_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
       window_length(window_length_arg),
       margin_used_trustworthiness(margin_used_trustworthiness_arg),
-      filtered(filtered_arg) {
+      filtered(filtered_arg),
+      enable_candidate_filter(enable_candidate_filter_arg),
+      candidate_filter_threshold(candidate_filter_threshold_arg),
+      enable_gap_bridging(enable_gap_bridging_arg),
+      max_gap_distance(max_gap_distance_arg),
+      min_gps_error_degrees(min_gps_error_degrees_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
-    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {} normalized {} use_mahalanobis {} window_length {} margin_used_trustworthiness {} filtered {}",
-                k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered);
+    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {}",
+                k, min_candidates, protection_level_multiplier, reverse_tolerance);
+    SPDLOG_INFO("normalized {} use_mahalanobis {} window_length {} margin_trust {} filtered {}",
+                normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered);
+    SPDLOG_INFO("enable_filter {} filter_threshold {} gap_bridging {} max_gap_distance {}",
+                enable_candidate_filter, candidate_filter_threshold, enable_gap_bridging, max_gap_distance);
+    SPDLOG_INFO("min_gps_error_degrees {}", min_gps_error_degrees);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -600,7 +636,21 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     int window_length = xml_data.get("config.parameters.window_length", 10);
     bool margin_used_trustworthiness = xml_data.get("config.other.margin_used_trustworthiness", true);
     bool filtered = xml_data.get("config.parameters.filtered", true);
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered};
+
+    // New parameters for log-space filtering and gap bridging
+    bool enable_candidate_filter = xml_data.get("config.parameters.enable_candidate_filter", true);
+    double candidate_filter_threshold = xml_data.get("config.parameters.candidate_filter_threshold", 15.0);
+    bool enable_gap_bridging = xml_data.get("config.parameters.enable_gap_bridging", true);
+    double max_gap_distance = xml_data.get("config.parameters.max_gap_distance", 2000.0);
+
+    // Minimum GPS error to prevent over-confidence
+    double min_gps_error_degrees = xml_data.get("config.parameters.min_gps_error_degrees", 1.0e-4);
+
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
+                                    normalized, use_mahalanobis_candidates, window_length,
+                                    margin_used_trustworthiness, filtered,
+                                    enable_candidate_filter, candidate_filter_threshold,
+                                    enable_gap_bridging, max_gap_distance, min_gps_error_degrees};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -615,7 +665,20 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     int window_length = arg_data["window_length"].as<int>();
     bool margin_used_trustworthiness = arg_data["margin_used_trustworthiness"].as<bool>();
     bool filtered = arg_data["filtered"].as<bool>();
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance, normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered};
+
+    // Check if new args exist (assuming they are registered) or use defaults
+    bool enable_filter = arg_data.count("enable_candidate_filter") ? arg_data["enable_candidate_filter"].as<bool>() : true;
+    double filter_thresh = arg_data.count("candidate_filter_threshold") ? arg_data["candidate_filter_threshold"].as<double>() : 15.0;
+    bool enable_gap = arg_data.count("enable_gap_bridging") ? arg_data["enable_gap_bridging"].as<bool>() : true;
+    double max_gap = arg_data.count("max_gap_distance") ? arg_data["max_gap_distance"].as<double>() : 2000.0;
+
+    // Minimum GPS error to prevent over-confidence
+    double min_gps_error = arg_data.count("min_gps_error_degrees") ? arg_data["min_gps_error_degrees"].as<double>() : 1.0e-4;
+
+    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
+                                    normalized, use_mahalanobis_candidates, window_length,
+                                    margin_used_trustworthiness, filtered,
+                                    enable_filter, filter_thresh, enable_gap, max_gap, min_gps_error};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -638,7 +701,17 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("margin_used_trustworthiness", "If true use margin (top1-top2) as trustworthiness, else use top1 score",
          cxxopts::value<bool>()->default_value("true"))
         ("filtered", "Filter out points with no candidates or disconnected transitions",
-         cxxopts::value<bool>()->default_value("true"));
+         cxxopts::value<bool>()->default_value("true"))
+        ("enable_candidate_filter", "Enable L2 candidate filtering based on relative log-probability",
+         cxxopts::value<bool>()->default_value("true"))
+        ("candidate_filter_threshold", "Log-probability threshold for filtering (default 15.0)",
+         cxxopts::value<double>()->default_value("15.0"))
+        ("enable_gap_bridging", "Enable trajectory gap bridging",
+         cxxopts::value<bool>()->default_value("true"))
+        ("max_gap_distance", "Max distance for gap bridging (meters)",
+         cxxopts::value<double>()->default_value("2000.0"))
+        ("min_gps_error_degrees", "Minimum GPS error in degrees to prevent over-confidence (default 1e-4 ≈ 11m)",
+         cxxopts::value<double>()->default_value("1.0e-4"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -652,27 +725,35 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--window_length (optional) <int>: sliding window length for trustworthiness (10)\n";
     oss << "--margin_used_trustworthiness (optional) <bool>: if true use margin (top1-top2), else use top1 score (true)\n";
     oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
+    oss << "--enable_candidate_filter (optional) <bool>: Enable L2 candidate filtering (true)\n";
+    oss << "--candidate_filter_threshold (optional) <double>: Log-probability threshold for filtering (15.0)\n";
+    oss << "--enable_gap_bridging (optional) <bool>: Enable trajectory gap bridging (true)\n";
+    oss << "--max_gap_distance (optional) <double>: Max distance for gap bridging in meters (2000.0)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
-        protection_level_multiplier <= 0 || reverse_tolerance < 0 || reverse_tolerance > 1 ||
-        window_length <= 0) {
+        protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
+        window_length <= 0 || candidate_filter_threshold < 0 || max_gap_distance < 0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
-                       "protection_level_multiplier {} reverse_tolerance {} window_length {}",
-                       k, min_candidates, protection_level_multiplier, reverse_tolerance, window_length);
+                       "protection_level_multiplier {} reverse_tolerance {} window_length {} "
+                       "filter_threshold {} max_gap_distance {}",
+                       k, min_candidates, protection_level_multiplier, reverse_tolerance,
+                       window_length, candidate_filter_threshold, max_gap_distance);
         return false;
     }
     return true;
 }
 
 // Implementation of CovarianceMapMatch
-// Evaluate emission probabilities by respecting each observation's covariance model.
-double CovarianceMapMatch::calculate_emission_probability(
+// Evaluate log emission probabilities by respecting each observation's covariance model.
+// Returns log(P) to prevent numerical underflow.
+double CovarianceMapMatch::calculate_emission_log_prob(
     const CORE::Point &point_observed,
     const CORE::Point &point_candidate,
-    const CovarianceMatrix &covariance) const {
+    const CovarianceMatrix &covariance,
+    const CovarianceMapMatchConfig &config) const {
 
     double obs_x = boost::geometry::get<0>(point_observed);
     double obs_y = boost::geometry::get<1>(point_observed);
@@ -683,18 +764,29 @@ double CovarianceMapMatch::calculate_emission_probability(
     double dy = obs_y - cand_y;
 
     Matrix2d cov = covariance.to_2d_matrix();
+
+    // Apply minimum GPS error to prevent over-confidence
+    // This ensures covariance matrix is not too small, which would cause
+    // extremely low emission probabilities for reasonable map-matching deviations
+    double min_var = config.min_gps_error_degrees * config.min_gps_error_degrees;
+    if (cov.m[0][0] < min_var) cov.m[0][0] = min_var;
+    if (cov.m[1][1] < min_var) cov.m[1][1] = min_var;
+
     Matrix2d cov_inv = cov.inverse();
     double det = cov.determinant();
-    if (det <= 0) {
-        return 0.0;
+
+    // Protection against singular matrices or extremely confident GPS
+    if (det <= 1e-50) {
+        return -std::numeric_limits<double>::infinity();
     }
 
     double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
                                  2 * cov_inv.m[0][1] * dx * dy +
                                  cov_inv.m[1][1] * dy * dy;
 
-    double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
-    return normalization * std::exp(-0.5 * mahalanobis_dist_sq);
+    // Log Gaussian: -0.5 * (log(2*pi) + log(det) + dist^2)
+    static const double log_2pi = std::log(2.0 * M_PI);
+    return -0.5 * (log_2pi + std::log(det) + mahalanobis_dist_sq);
 }
 
 // Enumerate candidate projections per point by respecting both covariance ellipses
@@ -703,8 +795,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
     const CORE::LineString &geom,
     const std::vector<CovarianceMatrix> &covariances,
     const std::vector<double> &protection_levels,
-    const CovarianceMapMatchConfig &config,
-    const std::string &traj_id) const {
+    const CovarianceMapMatchConfig &config) const {
 
     SPDLOG_DEBUG("Search candidates with protection level for {} points", geom.get_num_points());
 
@@ -716,7 +807,42 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
     for (int i = 0; i < num_points; ++i) {
         CORE::Point point = geom.get_point(i);
-        const CovarianceMatrix &cov = covariances[i];
+        // Create a copy to allow modification (scaling)
+        CovarianceMatrix cov = covariances[i];
+        
+        // FIX: Enforce a minimum standard deviation to prevent probability underflow
+        // while preserving anisotropy by scaling all components proportionally
+        // The input data has sigma ~ 6e-6 (0.6m) which is too small/confident.
+        // We enforce min sigma ~ 5e-5 (approx 5 meters) while maintaining the original ratio
+        constexpr double MIN_SIGMA = 5.0e-5;
+        double scale_factor = 1.0;
+
+        // Find the smaller of sde and sdn
+        double min_sigma = std::min(cov.sde, cov.sdn);
+
+        if (min_sigma < MIN_SIGMA && min_sigma > 0) {
+            // Scale factor needed to bring min_sigma to MIN_SIGMA
+            // This preserves the original anisotropy ratio between sde and sdn
+            scale_factor = MIN_SIGMA / min_sigma;
+        } else if (min_sigma <= 0) {
+            // Invalid data, set to minimum isotropic covariance
+            cov.sde = MIN_SIGMA;
+            cov.sdn = MIN_SIGMA;
+            cov.sdne = 0.0;
+        }
+
+        if (scale_factor > 1.0) {
+            // Scale all covariance components proportionally to preserve anisotropy
+            // Standard deviations scale linearly
+            cov.sde *= scale_factor;
+            cov.sdn *= scale_factor;
+            cov.sdu *= scale_factor;
+            // Covariances scale with square of scale factor (Var(aX) = a²Var(X))
+            cov.sdne *= (scale_factor * scale_factor);
+            cov.sdeu *= (scale_factor * scale_factor);
+            cov.sdun *= (scale_factor * scale_factor);
+        }
+
         double protection_level = protection_levels[i];
 
         // double uncertainty = cov.get_2d_uncertainty();
@@ -823,19 +949,31 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                     if (valid_covariance) {
                         double dx = obs_x - boost::geometry::get<0>(entry.candidate.point);
                         double dy = obs_y - boost::geometry::get<1>(entry.candidate.point);
-                        double mahal_sq = compute_mahalanobis_sq(cov_inv, dx, dy);
-                        double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
-                        probability = normalization * std::exp(-0.5 * mahal_sq);
+
+                        // Apply minimum GPS error to prevent over-confidence
+                        double sde_eff = std::max(cov.sde, config.min_gps_error_degrees);
+                        double sdn_eff = std::max(cov.sdn, config.min_gps_error_degrees);
+
+                        // Recompute covariance matrix with minimum error
+                        Matrix2d cov_eff;
+                        cov_eff.m[0][0] = sde_eff * sde_eff;
+                        cov_eff.m[1][1] = sdn_eff * sdn_eff;
+                        cov_eff.m[0][1] = cov_eff.m[1][0] = cov.sdne;
+
+                        double det_eff = cov_eff.determinant();
+                        if (det_eff > 0) {
+                            Matrix2d cov_inv_eff = cov_eff.inverse();
+                            double mahal_sq = cov_inv_eff.m[0][0] * dx * dx +
+                                             2 * cov_inv_eff.m[0][1] * dx * dy +
+                                             cov_inv_eff.m[1][1] * dy * dy;
+                            double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det_eff));
+                            probability = normalization * std::exp(-0.5 * mahal_sq);
+                        }
                     }
                     raw_probabilities.push_back(probability);
                 }
 
-                // Debug log: after candidate collection
-                if (traj_id == "11" && i < 122) {
-                    std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": collected "
-                              << selected_candidates.size() << " candidates from "
-                              << edges_to_consider.size() << " edges\n" << std::flush;
-                }
+                // Note: Removed debug logging for trajectory 11 as traj_id parameter was removed
 
                 if (selected_candidates.size() >= static_cast<size_t>(config.min_candidates) ||
                     edges_to_consider.empty() || radius_expanded) {
@@ -847,19 +985,12 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             }
         } else {
             // Basic candidate search that directly relies on network_kNN results.
-            if (traj_id == "11" && i < 5) {
-                std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": using basic kNN search (use_mahalanobis=false)\n" << std::flush;
-            }
+            // Note: Removed debug logging for trajectory 11 as traj_id parameter was removed
 
             CORE::LineString single_point_geom;
             single_point_geom.add_point(point);
             Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
             Point_Candidates point_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
-
-            if (traj_id == "11" && i < 5) {
-                std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": kNN returned "
-                          << point_candidates.size() << " candidates (basic mode)\n" << std::flush;
-            }
 
             selected_candidates.reserve(point_candidates.size());
             raw_probabilities.reserve(point_candidates.size());
@@ -872,9 +1003,25 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
                 double probability = 0.0;
                 if (valid_covariance) {
-                    double mahalanobis_dist_sq = compute_mahalanobis_sq(cov_inv, dx, dy);
-                    double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det));
-                    probability = normalization * std::exp(-0.5 * mahalanobis_dist_sq);
+                    // Apply minimum GPS error to prevent over-confidence
+                    double sde_eff = std::max(cov.sde, config.min_gps_error_degrees);
+                    double sdn_eff = std::max(cov.sdn, config.min_gps_error_degrees);
+
+                    // Recompute covariance matrix with minimum error
+                    Matrix2d cov_eff;
+                    cov_eff.m[0][0] = sde_eff * sde_eff;
+                    cov_eff.m[1][1] = sdn_eff * sdn_eff;
+                    cov_eff.m[0][1] = cov_eff.m[1][0] = cov.sdne;
+
+                    double det_eff = cov_eff.determinant();
+                    if (det_eff > 0) {
+                        Matrix2d cov_inv_eff = cov_eff.inverse();
+                        double mahalanobis_dist_sq = cov_inv_eff.m[0][0] * dx * dx +
+                                                      2 * cov_inv_eff.m[0][1] * dx * dy +
+                                                      cov_inv_eff.m[1][1] * dy * dy;
+                        double normalization = 1.0 / (2.0 * M_PI * std::sqrt(det_eff));
+                        probability = normalization * std::exp(-0.5 * mahalanobis_dist_sq);
+                    }
                 }
 
                 selected_candidates.push_back(cand);
@@ -920,9 +1067,9 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 double uniform_prob = 1.0 / raw_probabilities.size();
                 normalized_probabilities.assign(raw_probabilities.size(), uniform_prob);
                 if (!valid_covariance) {
-                    SPDLOG_WARN("Trajectory {} Point {}: covariance determinant non-positive, using uniform emission", traj_id, i);
+                    SPDLOG_WARN("Point {}: covariance determinant non-positive, using uniform emission", i);
                 } else {
-                    SPDLOG_WARN("Trajectory {} Point {}: no valid candidates within PL, using uniform emission", traj_id, i);
+                    SPDLOG_WARN("Point {}: no valid candidates within PL, using uniform emission", i);
                 }
             }
             emission_probs = std::move(normalized_probabilities);
@@ -930,32 +1077,50 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             emission_probs = raw_probabilities;
         }
 
-        // Debug log: final result
-        if (traj_id == "11" && i < 122) {
-            std::cout << "[DEBUG] Traj " << traj_id << " Point " << i << ": final - "
-                      << selected_candidates.size() << " candidates selected\n" << std::flush;
-        }
-
         SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
         result.candidates.push_back(std::move(selected_candidates));
 
-        // Debug logging for trajectory 11 points
-        if (traj_id == "11" && i < 10) {
-            std::stringstream ss;
-            ss << "Traj 11 Point " << i << " emission_probs: size=" << emission_probs.size() << " values=[";
-            for (size_t k = 0; k < std::min(size_t(3), emission_probs.size()); ++k) {
-                ss << emission_probs[k] << " ";
-            }
-            if (emission_probs.size() > 3) ss << "...";
-            ss << "]";
-            SPDLOG_INFO("{}", ss.str());
-        }
-
+        // Note: Removed debug logging for trajectory 11 as traj_id parameter was removed
         result.emission_probabilities.push_back(std::move(emission_probs));
     }
 
     SPDLOG_DEBUG("Candidate search completed");
     return result;
+}
+
+// Slice a CMMTrajectory into a sub-segment [start_idx, end_idx)
+CMMTrajectory CovarianceMapMatch::slice_trajectory(const CMMTrajectory &traj, int start_idx, int end_idx) const {
+    if (start_idx < 0 || end_idx > traj.geom.get_num_points() || start_idx >= end_idx) {
+        return CMMTrajectory();
+    }
+
+    CMMTrajectory sub_traj;
+    sub_traj.id = traj.id;  // Keep same ID, caller can modify if needed
+
+    // Copy geometry
+    for (int i = start_idx; i < end_idx; ++i) {
+        sub_traj.geom.add_point(traj.geom.get_point(i));
+    }
+
+    // Copy timestamps if present
+    if (!traj.timestamps.empty()) {
+        sub_traj.timestamps.assign(traj.timestamps.begin() + start_idx,
+                                   traj.timestamps.begin() + end_idx);
+    }
+
+    // Copy covariances
+    if (!traj.covariances.empty()) {
+        sub_traj.covariances.assign(traj.covariances.begin() + start_idx,
+                                     traj.covariances.begin() + end_idx);
+    }
+
+    // Copy protection levels
+    if (!traj.protection_levels.empty()) {
+        sub_traj.protection_levels.assign(traj.protection_levels.begin() + start_idx,
+                                          traj.protection_levels.begin() + end_idx);
+    }
+
+    return sub_traj;
 }
 
 // Execute the full map-matching pipeline for a single trajectory using covariance-aware search.
@@ -973,7 +1138,7 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 
     SPDLOG_DEBUG("Search candidates with protection level");
     CandidateSearchResult candidate_result = search_candidates_with_protection_level(
-        traj.geom, traj.covariances, traj.protection_levels, config, std::to_string(traj.id));
+        traj.geom, traj.covariances, traj.protection_levels, config);
 
     Traj_Candidates candidates = std::move(candidate_result.candidates);
     std::vector<std::vector<double>> emission_probabilities = std::move(candidate_result.emission_probabilities);
@@ -1273,6 +1438,11 @@ MatchResult CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
 // Compute the shortest-path distance between two candidates and allow limited reverse travel.
 double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
                                       double reverse_tolerance) {
+    // Check for null candidates
+    if (ca == nullptr || cb == nullptr || ca->edge == nullptr || cb->edge == nullptr) {
+        return -1;
+    }
+
     // Handle transitions along the same edge directly, consistent with FMM logic.
     if (ca->edge->id == cb->edge->id) {
         if (ca->offset <= cb->offset) {
@@ -1326,6 +1496,47 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
     }
 }
 
+// Initialize the first layer with Top-K normalization in log-space
+void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const CovarianceMapMatchConfig &config) {
+    if (!layer || layer->empty()) {
+        return;
+    }
+
+    // Collect log emission probabilities (convert from linear to log)
+    std::vector<double> log_eps;
+    log_eps.reserve(layer->size());
+    for (const auto &node : *layer) {
+        if (node.ep > 0) {
+            log_eps.push_back(std::log(node.ep));  // Convert linear prob to log-space
+        } else {
+            log_eps.push_back(-std::numeric_limits<double>::infinity());
+        }
+    }
+
+    // Apply Top-K normalization
+    size_t k = std::min(log_eps.size(), static_cast<size_t>(config.k));
+    std::vector<double> top_k_eps = log_eps;
+    std::partial_sort(top_k_eps.begin(), top_k_eps.begin() + k, top_k_eps.end(), std::greater<double>());
+    top_k_eps.resize(k);
+
+    // Calculate log normalization factor
+    double log_norm_factor = log_sum_exp(top_k_eps);
+
+    // Initialize cumu_prob as normalized emission probability in log-space
+    for (size_t i = 0; i < layer->size(); ++i) {
+        auto &node = (*layer)[i];
+        if (node.ep > 0) {
+            node.cumu_prob = log_eps[i] - log_norm_factor;  // Log-space: subtract normalization factor
+            node.trustworthiness = node.ep;  // Keep linear ep for trustworthiness
+        } else {
+            node.cumu_prob = -std::numeric_limits<double>::infinity();
+            node.trustworthiness = 0;
+        }
+        node.tp = 1.0;  // No transition probability for first layer (store as linear 1.0)
+        node.prev = nullptr;
+    }
+}
+
 // Recompute emission normalization, transition penalties, and layer trust for each point pair.
 void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
                                        const CMMTrajectory &traj,
@@ -1334,20 +1545,8 @@ void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
     int N = layers.size();
     if (N == 0) return;
 
-    // Reset first layer
-    tg->reset_layer(&layers[0]);
-    normalize_layer_trust(&layers[0]);
-
-    // Debug logging for trajectory 11
-    if (traj.id == 11 && !layers[0].empty()) {
-        SPDLOG_INFO("Traj 11 layer 0 after reset/normalize: size={}, first_trust={}, first_cumu={}, first_ep={}",
-                   layers[0].size(), layers[0][0].trustworthiness, layers[0][0].cumu_prob, layers[0][0].ep);
-        int positive_trust = 0;
-        for (const auto &node : layers[0]) {
-            if (node.trustworthiness > 0 && std::isfinite(node.cumu_prob)) positive_trust++;
-        }
-        SPDLOG_INFO("Traj 11 layer 0: {} nodes with positive trust and finite cumu_prob", positive_trust);
-    }
+    // Initialize first layer with Top-K normalization in log-space
+    initialize_first_layer(&layers[0], config);
 
     // Sweep through each pair of consecutive layers to update transition likelihoods.
     for (int level = 0; level < N - 1; ++level) {
@@ -1359,126 +1558,145 @@ void CovarianceMapMatch::update_tg_cmm(TransitionGraph *tg,
         CORE::Point point_b = traj.geom.get_point(level + 1);
         double eu_dist = boost::geometry::distance(point_a, point_b);
 
-        bool connected = true;
-        update_layer_cmm(level, la_ptr, lb_ptr, eu_dist, config.reverse_tolerance,
-                         &connected, traj, config);
+        bool connected = false;
+        update_layer_cmm(la_ptr, lb_ptr, eu_dist, &connected, config);
 
         if (!connected) {
-            SPDLOG_WARN("Trajectory disconnected at level {}", level);
+            SPDLOG_WARN("Trajectory {} disconnected at level {}", traj.id, level);
+            break;  // Stop processing this trajectory if disconnected
         }
     }
 }
 
 // Update all transitions between two consecutive layers based on path feasibility and
-// Mahalanobis-aware emission probabilities.
-void CovarianceMapMatch::update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *lb_ptr,
-                                          double eu_dist, double reverse_tolerance,
+// Mahalanobis-aware emission probabilities (LOG-SPACE with Two-Level Filtering)
+void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
+                                          double eu_dist,
                                           bool *connected,
-                                          const CMMTrajectory &traj,
                                           const CovarianceMapMatchConfig &config) {
-    bool layer_connected = false;
-    const size_t prev_candidate_count = la_ptr->size();
+    *connected = false;
     const size_t next_candidate_count = lb_ptr->size();
 
-    // Debug log for trajectory 11 - log all levels where layer_connected becomes false
-    static bool last_was_connected = true;
-    bool should_log = false;
-    if (traj.id == 11) {
-        if (level < 10 || (level >= 120 && level <= 125)) {
-            should_log = true;  // Always log first 10 levels and levels 120-125
-        }
-    }
-    std::vector<double> trust_contrib(next_candidate_count, 0.0);
-    double trust_total = 0.0;
+    // Vector to store unnormalized log posterior scores for each candidate in next layer
+    std::vector<double> raw_scores(next_candidate_count, -std::numeric_limits<double>::infinity());
 
-    int skip_a_trust = 0, skip_b_ep = 0, skip_sp_dist = 0, skip_tp = 0, successful_transitions = 0;
-    int total_iterations = 0;
+    // 1. Viterbi Recursion: Calculate max log score for each candidate in next layer
+    for (size_t b = 0; b < next_candidate_count; ++b) {
+        TGNode &node_b = (*lb_ptr)[b];
 
-    if (should_log) {
-        SPDLOG_INFO("Trajectory {} Level {}: prev={}, next={}, eu_dist={:.2f}m",
-                   traj.id, level, prev_candidate_count, next_candidate_count, eu_dist * 111000);
-    }
-
-    for (auto &node_a : *la_ptr) {
-        if (!(std::isfinite(node_a.trustworthiness) && node_a.trustworthiness > 0) ||
-            !std::isfinite(node_a.cumu_prob)) {
-            skip_a_trust++;
+        // Check for null candidate pointer
+        if (node_b.c == nullptr) {
+            raw_scores[b] = -std::numeric_limits<double>::infinity();
             continue;
         }
 
-        for (size_t b_idx = 0; b_idx < next_candidate_count; ++b_idx) {
-            total_iterations++;
-            auto &node_b = (*lb_ptr)[b_idx];
-            if (node_b.ep <= 0) {
-                skip_b_ep++;
+        // Convert linear ep to log-space
+        double log_ep = (node_b.ep > 0) ? std::log(node_b.ep) : -std::numeric_limits<double>::infinity();
+
+        double max_prev_score = -std::numeric_limits<double>::infinity();
+        TGNode *best_prev = nullptr;
+        double best_log_tp = -std::numeric_limits<double>::infinity();
+        double best_sp_dist = 0.0;
+
+        for (auto &node_a : *la_ptr) {
+            if (node_a.cumu_prob == -std::numeric_limits<double>::infinity()) {
+                continue;  // Skip invalid previous states
+            }
+
+            // Check for null candidate pointer
+            if (node_a.c == nullptr) {
                 continue;
             }
 
-            double cur_sp_dist = get_sp_dist(node_a.c, node_b.c, reverse_tolerance);
-            if (cur_sp_dist < 0) {
-                skip_sp_dist++;
-                continue;
+            // Calculate shortest path distance
+            double sp_dist = get_sp_dist(node_a.c, node_b.c, config.reverse_tolerance);
+            double log_tp = -std::numeric_limits<double>::infinity();
+
+            if (sp_dist >= 0) {
+                // Calculate transition probability in log space
+                double linear_tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
+                if (linear_tp > 0) {
+                    log_tp = std::log(linear_tp);
+                }
             }
 
-            double tp = TransitionGraph::calc_tp(cur_sp_dist, eu_dist);
-            if (tp <= 0) {
-                skip_tp++;
-                continue;
-            }
+            // Viterbi: max(prev.cumu_prob + log(tp)) + log(ep)
+            double score = node_a.cumu_prob + log_tp;
 
-            double trust_val = node_a.trustworthiness * node_b.ep * tp;
-            trust_contrib[b_idx] += trust_val;
-            trust_total += trust_val;
-
-            double temp = node_a.cumu_prob + std::log(tp) + std::log(node_b.ep);
-            if (temp > node_b.cumu_prob) {
-                node_b.cumu_prob = temp;
-                node_b.prev = &node_a;
-                node_b.tp = tp;
-                node_b.sp_dist = cur_sp_dist;
-                layer_connected = true;
-                successful_transitions++;
+            if (score > max_prev_score) {
+                max_prev_score = score;
+                best_prev = &node_a;
+                best_log_tp = log_tp;
+                best_sp_dist = sp_dist;
             }
+        }
+
+        if (best_prev != nullptr) {
+            node_b.prev = best_prev;
+            node_b.tp = std::exp(best_log_tp);  // Store linear tp, not log
+            node_b.sp_dist = best_sp_dist;
+            raw_scores[b] = max_prev_score + log_ep;  // Unnormalized posterior
         }
     }
 
-    if (next_candidate_count > 0) {
-        if (trust_total > 0) {
-            // Blend transition-based trust with emission probability to avoid zero trustworthiness
-            for (size_t b_idx = 0; b_idx < next_candidate_count; ++b_idx) {
-                double ep = (*lb_ptr)[b_idx].ep;
-                double trans_trust = trust_contrib[b_idx] / trust_total;
-                // Use 50% transition trust, 50% emission probability to prevent trust=0
-                (*lb_ptr)[b_idx].trustworthiness = 0.5 * trans_trust + 0.5 * ep;
-            }
-        } else {
-            double ep_sum = 0.0;
-            for (auto &node_b : *lb_ptr) {
-                if (node_b.ep > 0) {
-                    ep_sum += node_b.ep;
-                }
-            }
-            if (ep_sum > 0) {
-                for (auto &node_b : *lb_ptr) {
-                    node_b.trustworthiness = (node_b.ep > 0) ? node_b.ep / ep_sum : 0.0;
-                }
-            } else {
-                double uniform = next_candidate_count > 0 ? 1.0 / next_candidate_count : 0.0;
-                for (auto &node_b : *lb_ptr) {
-                    node_b.trustworthiness = uniform;
-                }
-            }
+    // 2. Two-Level Filtering
+    if (raw_scores.empty()) {
+        return;
+    }
+    double max_score_in_layer = *std::max_element(raw_scores.begin(), raw_scores.end());
+
+    // L1 Filter: Check if layer is connected (has at least one valid path)
+    if (max_score_in_layer == -std::numeric_limits<double>::infinity()) {
+        return;  // Layer disconnected
+    }
+
+    std::vector<int> kept_indices;
+    std::vector<double> scores_to_normalize;
+
+    // L2 Filter: Filter candidates with relatively low probability
+    for (size_t b = 0; b < next_candidate_count; ++b) {
+        double score = raw_scores[b];
+
+        // Skip null candidates
+        if ((*lb_ptr)[b].c == nullptr) {
+            (*lb_ptr)[b].cumu_prob = -std::numeric_limits<double>::infinity();
+            continue;
+        }
+
+        // L2 Candidate filtering: drop if score is too far from max
+        // DISABLED FOR DEBUGGING
+        // if (config.enable_candidate_filter &&
+        //     (score < max_score_in_layer - config.candidate_filter_threshold)) {
+        //     (*lb_ptr)[b].cumu_prob = -std::numeric_limits<double>::infinity();
+        //     continue;
+        // }
+
+        if (score > -std::numeric_limits<double>::infinity()) {
+            kept_indices.push_back(static_cast<int>(b));
+            scores_to_normalize.push_back(score);
         }
     }
 
-    if (connected != nullptr) {
-        *connected = layer_connected;
+    // Check if all candidates were filtered out
+    if (kept_indices.empty()) {
+        return;  // All filtered, layer disconnected
     }
 
-    // Debug logging for trajectory 11 levels - also log when skip_trust > 0
-    if (should_log || !layer_connected || (traj.id == 11 && skip_a_trust > 0)) {
-        SPDLOG_INFO("Traj {} Level {} stats: total_iter={}, skip_trust={}, skip_ep={}, skip_sp={}, skip_tp={}, success={}, connected={}",
-                   traj.id, level, total_iterations, skip_a_trust, skip_b_ep, skip_sp_dist, skip_tp, successful_transitions, layer_connected);
+    *connected = true;
+
+    // 3. Simple Normalization in Log-Space (not Top-K)
+    // TEMPORARILY DISABLE Top-K TO DEBUG
+    // std::vector<double> top_k_scores = scores_to_normalize;
+    // size_t k = std::min(top_k_scores.size(), static_cast<size_t>(config.k));
+    // std::partial_sort(top_k_scores.begin(), top_k_scores.begin() + k, top_k_scores.end(), std::greater<double>());
+    // top_k_scores.resize(k);
+
+    // Calculate log normalization factor from ALL scores (not just top K)
+    double log_norm = log_sum_exp(scores_to_normalize);
+
+    // Normalize cumu_prob (log-space: subtract normalization factor)
+    for (int idx : kept_indices) {
+        (*lb_ptr)[idx].cumu_prob = raw_scores[idx] - log_norm;
     }
 }
 
