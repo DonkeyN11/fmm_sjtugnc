@@ -76,6 +76,16 @@ public:
                   const std::vector<std::vector<double>> &emission_probabilities);
 
   /**
+   * Transition graph constructor with option for log-space emission probabilities.
+   * @param tc trajectory candidates
+   * @param emission_probabilities emission probabilities
+   * @param is_log whether the emission probabilities are already in log-space
+   */
+  TransitionGraph(const Traj_Candidates &tc,
+                  const std::vector<std::vector<double>> &emission_probabilities,
+                  bool is_log);
+
+  /**
    * Calculate transition probability
    * @param  sp_dist Shortest path distance between two candidates
    * @param  eu_dist Euclidean distance between two candidates
