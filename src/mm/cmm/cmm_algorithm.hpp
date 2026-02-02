@@ -271,18 +271,19 @@ public:
      * Match a trajectory to the road network
      * @param traj input trajectory data with covariance and protection levels
      * @param config configuration of map matching algorithm
-     * @return map matching result
+     * @return a vector of map matching results (one for each split segment)
      */
-    MatchResult match_traj(const CMMTrajectory &traj,
-                         const CovarianceMapMatchConfig &config);
+    std::vector<MatchResult> match_traj(const CMMTrajectory &traj,
+                                      const CovarianceMapMatchConfig &config);
 
     /**
      * Match a trajectory while optionally returning the filtered trajectory
      * after dropping epochs with no feasible candidates/transitions.
+     * @return a vector of map matching results
      */
-    MatchResult match_traj(const CMMTrajectory &traj,
-                         const CovarianceMapMatchConfig &config,
-                         CMMTrajectory *filtered_traj);
+    std::vector<MatchResult> match_traj(const CMMTrajectory &traj,
+                                      const CovarianceMapMatchConfig &config,
+                                      CMMTrajectory *filtered_traj);
 
     /**
      * Match GPS data stored in a file with covariance and protection level data

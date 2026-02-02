@@ -68,6 +68,7 @@ using namespace FMM::CONFIG;
 %template(CovarianceMatrixVector) std::vector<FMM::MM::CovarianceMatrix>;
 %template(IntVectorVector) std::vector<std::vector<int>>;
 %template(MatchedCandidatePath) std::vector<FMM::MM::MatchedCandidate>;
+%template(MatchResultVector) std::vector<FMM::MM::MatchResult>;
 // %template(DoubleVVector) vector<vector<double> >;
 // %template(DoubleVVVector) vector<vector<vector<double> > >;
 // %template(IntSet) set<int>;
