@@ -133,7 +133,12 @@ struct CovarianceMapMatchConfig {
                            bool use_mahalanobis_candidates_arg = true,
                            int window_length_arg = 10,
                            bool margin_used_trustworthiness_arg = true,
-                           bool filtered_arg = true);
+                           bool filtered_arg = true,
+                           bool enable_candidate_filter_arg = true,
+                           double candidate_filter_threshold_arg = 15.0,
+                           bool enable_gap_bridging_arg = true,
+                           double max_gap_distance_arg = 2000.0,
+                           double min_gps_error_degrees_arg = 1.0e-4);  // Default: ~11m at equator
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -144,6 +149,15 @@ struct CovarianceMapMatchConfig {
     int window_length;                  /**< Sliding window length for trustworthiness */
     bool margin_used_trustworthiness;   /**< If true, use margin (top1-top2); else use top1 */
     bool filtered;                      /**< Whether to filter out points with no candidates/disconnected transitions */
+
+    // --- New Parameters for Log-Space Filtering & Gap Handling ---
+    bool enable_candidate_filter;       /**< Enable L2 candidate filtering based on relative log-probability */
+    double candidate_filter_threshold;  /**< Log-probability threshold for filtering (default 15.0 -> exp(-15) ≈ 3e-7) */
+    bool enable_gap_bridging;           /**< Enable skipping invalid points to bridge gaps */
+    double max_gap_distance;            /**< Maximum physical distance (meters) to attempt bridging */
+
+    // --- Minimum GPS Error for Emission Probability ---
+    double min_gps_error_degrees;       /**< Minimum GPS error in degrees to prevent over-confidence (default 1e-5 ≈ 1.1m) */
 
     /**
      * Check if the configuration is valid or not
@@ -261,6 +275,7 @@ public:
      */
     MatchResult match_traj(const CMMTrajectory &traj,
                          const CovarianceMapMatchConfig &config);
+
     /**
      * Match a trajectory while optionally returning the filtered trajectory
      * after dropping epochs with no feasible candidates/transitions.
@@ -287,15 +302,18 @@ public:
 
 protected:
     /**
-     * Calculate emission probability using covariance matrix
+     * Calculate emission probability using covariance matrix (LOG-SPACE)
+     * Returns the log of emission probability to prevent numerical underflow.
      * @param point_observed observed GPS point
      * @param point_candidate candidate point on road network
      * @param covariance covariance matrix of GPS observation
-     * @return emission probability
+     * @param config CMM configuration containing min_gps_error_degrees
+     * @return log emission probability
      */
-    double calculate_emission_probability(const CORE::Point &point_observed,
-                                        const CORE::Point &point_candidate,
-                                        const CovarianceMatrix &covariance) const;
+    double calculate_emission_log_prob(const CORE::Point &point_observed,
+                                       const CORE::Point &point_candidate,
+                                       const CovarianceMatrix &covariance,
+                                       const CovarianceMapMatchConfig &config) const;
 
     /**
      * Search candidates based on protection level
@@ -303,14 +321,13 @@ protected:
      * @param covariances covariance matrices for each point
      * @param protection_levels protection levels for each point
      * @param config CMM configuration
-     * @return trajectory candidates
+     * @return trajectory candidates with log-space emission probabilities
      */
     CandidateSearchResult search_candidates_with_protection_level(
         const CORE::LineString &geom,
         const std::vector<CovarianceMatrix> &covariances,
         const std::vector<double> &protection_levels,
-        const CovarianceMapMatchConfig &config,
-        const std::string &traj_id) const;
+        const CovarianceMapMatchConfig &config) const;
 
     /**
      * Get shortest path distance between two candidates
@@ -320,6 +337,27 @@ protected:
      * @return shortest path value
      */
     double get_sp_dist(const Candidate *ca, const Candidate *cb, double reverse_tolerance);
+
+    /**
+     * Initialize the first layer probabilities (Log-Space Top-K Normalization)
+     * @param layer first layer to initialize
+     * @param config CMM configuration
+     */
+    void initialize_first_layer(TGLayer *layer, const CovarianceMapMatchConfig &config);
+
+    /**
+     * Update probabilities between two layers in the transition graph (LOG-SPACE)
+     * Performs L2 filtering and Top-K Normalization in Log-Space.
+     * @param la_ptr layer a (previous layer)
+     * @param lb_ptr layer b (current layer)
+     * @param eu_dist Euclidean distance between two observed points
+     * @param connected set to false if the layer is not connected with the next layer
+     * @param config CMM configuration
+     */
+    void update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
+                         double eu_dist,
+                         bool *connected,
+                         const CovarianceMapMatchConfig &config);
 
     /**
      * Update probabilities in a transition graph using CMM emission probabilities
@@ -332,29 +370,23 @@ protected:
                       const CovarianceMapMatchConfig &config);
 
     /**
-     * Update probabilities between two layers a and b in the transition graph
-     * @param level the index of layer a
-     * @param la_ptr layer a
-     * @param lb_ptr layer b next to a
-     * @param eu_dist Euclidean distance between two observed points
-     * @param reverse_tolerance reverse movement tolerance
-     * @param connected set to false if the layer is not connected with the next layer
-     */
-    void update_layer_cmm(int level, TGLayer *la_ptr, TGLayer *lb_ptr,
-                         double eu_dist, double reverse_tolerance,
-                         bool *connected,
-                         const CMMTrajectory &traj,
-                         const CovarianceMapMatchConfig &config);
-
-    /**
      * Compute sliding-window trustworthiness scores and top-N paths.
      * @return pair of (trustworthiness margin per epoch, top-N log scores per epoch)
      */
     std::pair<std::vector<double>, std::vector<std::vector<double>>> compute_window_trustworthiness(
         const Traj_Candidates &tc,
-        const std::vector<std::vector<double>> &emission_probabilities,
+        const std::vector<std::vector<double>> &log_emission_probabilities,
         const CMMTrajectory &traj,
         const CovarianceMapMatchConfig &config);
+
+    /**
+     * Slice a CMMTrajectory into a sub-segment [start_idx, end_idx)
+     * @param traj original trajectory
+     * @param start_idx start index (inclusive)
+     * @param end_idx end index (exclusive)
+     * @return sub-trajectory
+     */
+    CMMTrajectory slice_trajectory(const CMMTrajectory &traj, int start_idx, int end_idx) const;
 
 private:
     const NETWORK::Network &network_;
