@@ -82,26 +82,30 @@ int main() {
 
     // 6. Perform map matching
     std::cout << "6. Performing covariance-based map matching..." << std::endl;
-    MatchResult result = cmm.match_traj(trajectory, cmm_config);
+    std::vector<MatchResult> results = cmm.match_traj(trajectory, cmm_config);
 
     // 7. Display results
     std::cout << "7. Map matching results:" << std::endl;
-    if (result.cpath.empty()) {
+    if (results.empty()) {
         std::cout << "   No matching path found!" << std::endl;
     } else {
-        std::cout << "   Matched trajectory ID: " << result.id << std::endl;
-        std::cout << "   Number of matched candidates: " << result.opt_candidate_path.size() << std::endl;
-        std::cout << "   Optimal path length: " << result.opath.size() << " edges" << std::endl;
-        std::cout << "   Complete path length: " << result.cpath.size() << " edges" << std::endl;
+        for (size_t seg_idx = 0; seg_idx < results.size(); ++seg_idx) {
+            const MatchResult& result = results[seg_idx];
+            std::cout << "\n   Segment " << seg_idx << ":" << std::endl;
+            std::cout << "     Matched trajectory ID: " << result.id << std::endl;
+            std::cout << "     Number of matched candidates: " << result.opt_candidate_path.size() << std::endl;
+            std::cout << "     Optimal path length: " << result.opath.size() << " edges" << std::endl;
+            std::cout << "     Complete path length: " << result.cpath.size() << " edges" << std::endl;
 
-        // Display matched candidates
-        std::cout << "\n   Matched candidates:" << std::endl;
-        for (size_t i = 0; i < result.opt_candidate_path.size(); ++i) {
-            const MatchedCandidate& mc = result.opt_candidate_path[i];
-            std::cout << "     Point " << i << ": Edge " << mc.c.edge->id
-                      << ", offset=" << mc.c.offset
-                      << ", emission_prob=" << mc.ep
-                      << ", transition_prob=" << mc.tp << std::endl;
+            // Display matched candidates
+            std::cout << "\n     Matched candidates:" << std::endl;
+            for (size_t i = 0; i < result.opt_candidate_path.size(); ++i) {
+                const MatchedCandidate& mc = result.opt_candidate_path[i];
+                std::cout << "       Point " << i << " (Original " << result.original_indices[i] << "): Edge " << mc.c.edge->id
+                          << ", offset=" << mc.c.offset
+                          << ", emission_prob=" << mc.ep
+                          << ", transition_prob=" << mc.tp << std::endl;
+            }
         }
     }
 
