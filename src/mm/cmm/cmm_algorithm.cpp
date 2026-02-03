@@ -1526,6 +1526,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     // Normalize cumu_prob (log-space: subtract normalization factor)
     for (int idx : kept_indices) {
         (*lb_ptr)[idx].cumu_prob = raw_scores[idx] - log_norm;
+        (*lb_ptr)[idx].trustworthiness = std::exp((*lb_ptr)[idx].cumu_prob);
     }
 }
 
@@ -1533,12 +1534,12 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 std::pair<std::vector<double>, std::vector<std::vector<double>>>
 CovarianceMapMatch::compute_window_trustworthiness(
     const Traj_Candidates &tc,
-    const std::vector<std::vector<double>> &emission_probabilities,
+    const std::vector<std::vector<double>> &log_emission_probabilities,
     const CMMTrajectory &traj,
     const CovarianceMapMatchConfig &config) {
 
     const size_t layer_count = tc.size();
-    std::vector<double> trust_margins(layer_count, std::numeric_limits<double>::quiet_NaN());
+    std::vector<double> trust_margins(layer_count, 0.0);
     std::vector<std::vector<double>> n_best(layer_count);
     if (layer_count == 0) {
         return {trust_margins, n_best};
@@ -1557,13 +1558,13 @@ CovarianceMapMatch::compute_window_trustworthiness(
         size_t start_idx = (end_idx + 1 > window_length) ? end_idx + 1 - window_length : 0;
 
         std::vector<std::vector<double>> prev_scores(tc[start_idx].size());
-        const auto *start_eps = (start_idx < emission_probabilities.size())
-                                    ? &emission_probabilities[start_idx]
+        const auto *start_eps = (start_idx < log_emission_probabilities.size())
+                                    ? &log_emission_probabilities[start_idx]
                                     : nullptr;
         for (size_t j = 0; j < tc[start_idx].size(); ++j) {
-            double ep = (start_eps && j < start_eps->size()) ? (*start_eps)[j] : 0.0;
-            if (ep > 0) {
-                push_top_k(&prev_scores[j], std::log(ep), k);
+            double log_ep = (start_eps && j < start_eps->size()) ? (*start_eps)[j] : -std::numeric_limits<double>::infinity();
+            if (log_ep > -std::numeric_limits<double>::infinity()) {
+                push_top_k(&prev_scores[j], log_ep, k);
             }
         }
 
@@ -1571,16 +1572,15 @@ CovarianceMapMatch::compute_window_trustworthiness(
             size_t prev_idx = cursor - 1;
             std::vector<std::vector<double>> cur_scores(tc[cursor].size());
             double eu_dist = (prev_idx < euclidean_distances.size()) ? euclidean_distances[prev_idx] : 0.0;
-            const auto *cur_eps = (cursor < emission_probabilities.size())
-                                      ? &emission_probabilities[cursor]
+            const auto *cur_eps = (cursor < log_emission_probabilities.size())
+                                      ? &log_emission_probabilities[cursor]
                                       : nullptr;
 
             for (size_t b = 0; b < tc[cursor].size(); ++b) {
-                double ep_b = (cur_eps && b < cur_eps->size()) ? (*cur_eps)[b] : 0.0;
-                if (ep_b <= 0) {
+                double log_ep_b = (cur_eps && b < cur_eps->size()) ? (*cur_eps)[b] : -std::numeric_limits<double>::infinity();
+                if (log_ep_b == -std::numeric_limits<double>::infinity()) {
                     continue;
                 }
-                double log_ep_b = std::log(ep_b);
                 for (size_t a = 0; a < tc[prev_idx].size(); ++a) {
                     const auto &paths_to_a = prev_scores[a];
                     if (paths_to_a.empty()) {
@@ -1609,10 +1609,21 @@ CovarianceMapMatch::compute_window_trustworthiness(
                 push_top_k(&combined, val, k);
             }
         }
-        n_best[end_idx] = combined;
-        if (combined.size() >= 2) {
-            trust_margins[end_idx] = combined[0] - combined[1];
-        } else if (combined.size() == 1) {
+
+        // Apply Top-K normalization to the window scores if they exist
+        if (!combined.empty()) {
+            double log_norm = log_sum_exp(combined);
+            for (double &val : combined) {
+                val = std::exp(val - log_norm); // Convert to linear probability [0, 1]
+            }
+            n_best[end_idx] = combined;
+            if (combined.size() >= 2) {
+                trust_margins[end_idx] = combined[0] - combined[1];
+            } else if (combined.size() == 1) {
+                trust_margins[end_idx] = combined[0];
+            }
+        } else {
+            n_best[end_idx] = {};
             trust_margins[end_idx] = 0.0;
         }
     }
