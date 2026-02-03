@@ -138,7 +138,7 @@ struct CovarianceMapMatchConfig {
                            double candidate_filter_threshold_arg = 15.0,
                            bool enable_gap_bridging_arg = true,
                            double max_gap_distance_arg = 2000.0,
-                           double min_gps_error_degrees_arg = 1.0e-4);  // Default: ~11m at equator
+                           double min_gps_error_degrees_arg = 1.0e-6);  // Default: ~11m at equator
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */

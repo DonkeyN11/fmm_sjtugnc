@@ -29,7 +29,7 @@
   </input>
 
   <output>
-    <file>dataset-hainan-06/mr/cmm_results_filtered.csv</file>
+    <file>dataset-hainan-06/mr/cmm_results.csv</file>
     <point_mode>true</point_mode>
     <fields>
       <seq/>
@@ -58,7 +58,7 @@
     <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>
     <window_length>100</window_length>
-    <filtered>true</filtered>
+    <filtered>false</filtered>
   </parameters>
 
   <other>
