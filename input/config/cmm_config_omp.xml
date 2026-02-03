@@ -29,7 +29,7 @@
   </input>
 
   <output>
-    <file>dataset-hainan-06/mr/cmm_results.csv</file>
+    <file>dataset-hainan-06/mr/cmm_results_6.csv</file>
     <point_mode>true</point_mode>
     <fields>
       <seq/>
