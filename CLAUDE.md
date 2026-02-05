@@ -2,14 +2,16 @@
 
 This file provides specific instructions and rules for Claude Code (and other AI assistants) when interacting with this repository, followed by the technical documentation for the FMM framework.
 
-# I. AI Interaction Rules
+## I. AI Interaction Rules
 
-## General Interactions
+### General Interactions
+
 1. **Addressing the User**: Always address the user as "Donkey.Ning" in every response. Call yourself "Claude" and call me "Donkey.Ning" instead of I/me and you. 中文同样适用。
 2. **Tone**: Maintain a conversational and direct tone. Do NOT reaffirm ("I will do that") before answering.
 3. **Accuracy**: Do not make things up. If you are unsure, state it.
 
-## Code & Diff Formatting
+### Code & Diff Formatting
+
 1. **Pathing**: Use **relative paths** from the project root for all file headers in diffs.
 2. **Diff Format**: Use standard Unified Format (`diff -u`).
    * **Context**: Include at least **3 lines of unchanged context** around every edit to ensure patches apply correctly.
@@ -18,7 +20,10 @@ This file provides specific instructions and rules for Claude Code (and other AI
 3. **Granularity**: Provide one code block per file modification.
 4. **Completeness**: Do not output placeholders like `// ... rest of code`. Output the specific changed hunk fully so it can be applied directly.
 
-## Prompt Suggestions
+5. **Verify & Commit**: After every code modification, you MUST perform (or instruct to perform) compilation and debugging. Upon success, you MUST proceed with git commit.
+
+### Prompt Suggestions
+
 At the very end of each your response, after all other content, suggest up to two brief prompts or provide usage examples using the following format:
 
 ```bash
@@ -27,11 +32,12 @@ At the very end of each your response, after all other content, suggest up to tw
 
 ---
 
-# II. Project Documentation
+## II. Project Documentation
 
-## Build Commands
+### Build Commands
 
-### Standard Build
+#### Standard Build
+
 Under the project folder:
 
 ```bash
@@ -43,7 +49,7 @@ make -j$(nproc)
 
 ```
 
-### Clean Build
+#### Clean Build
 
 ```bash
 cd build
@@ -53,21 +59,21 @@ make -j$(nproc)
 
 ```
 
-### Installation (Optional)
+#### Installation (Optional)
 
 ```bash
 sudo make install
 
 ```
 
-### Python Bindings
+#### Python Bindings
 
 Python bindings are built automatically with the main build. They are located in `build/python/`:
 
 * `fmm.py` - Python interface
 * `_fmm.so` - C++ extension
 
-## Testing
+### Testing
 
 Tests are currently disabled in the default build. To enable and run tests:
 
@@ -85,22 +91,21 @@ Individual test executables (when built):
 * `./build/network_test`
 * `./build/network_graph_test`
 
-## High-Level Architecture
+### High-Level Architecture
 
 FMM is a Fast Map Matching framework that implements Hidden Markov Model (HMM) based map matching algorithms with precomputation optimization.
 
-### Core Components
+#### Core Components
 
 **Data Flow Pipeline:**
 
-```
+```bash
 GPS Data → Trajectory → Candidates → HMM → MatchResult → Output
-
 ```
 
 **Module Hierarchy:**
 
-```
+```bash
 src/
 ├── core/           # Basic data types (Point, LineString, Trajectory)
 ├── network/        # Road network, graph algorithms, RTree indexing
@@ -119,20 +124,20 @@ src/
 
 ### Key Algorithms
 
-**1. FMM (Fast Map Matching)**
+* **1. FMM (Fast Map Matching)**
 
 * Uses UBODT (Upper Bounded Origin Destination Table) for precomputed shortest paths
 * Fastest for batch processing with precomputation
 * Best for small to medium networks
 
-**2. CMM (Covariance Map Matching)**
+* **2. CMM (Covariance Map Matching)**
 
 * Incorporates GNSS uncertainty through covariance matrices
 * Uses Mahalanobis distance for candidate selection
 * Requires: coordinates + covariance matrices + protection levels per point
 * More accurate but computationally expensive
 
-**3. STMatch**
+* **3. STMatch**
 
 * No precomputation required
 * Suitable for large-scale networks
@@ -350,26 +355,29 @@ double ep = TransitionGraph::calc_ep(dist, gps_error);
 * **SWIG**: Python bindings (build time only)
 * **H3**: Hexagonal indexing (optional, for h3mm)
 
-```
+```bash
 
 
 ```
 
-# III. Operational Constraints (Strict)
+## III. Operational Constraints (Strict)
 
 ### 1. Safety Protocols (CRITICAL)
+
 * **Destructive Commands**: 🚨 **ABSOLUTELY FORBIDDEN**: Do **NOT** generate scripts or commands containing `rm -rf`, `rm -r`, or unverified recursive deletion on directories.
 * **Cleanup**: If file cleanup is necessary, suggest deleting specific files explicitly (e.g., `rm build/CMakeCache.txt`) or ask the user to perform the cleanup manually.
 
 ### 2. Code & File Management
+
 * **Pathing**: ALWAYS use **relative paths** from the project root (e.g., `src/mm/fmm_algorithm.hpp`). Never use absolute paths.
 * **Test Placement**:
-    * 🚨 **STRICT RULE**: Do **NOT** create test scripts inside `src/` or `python/`.
-    * All C++ tests go into `tests/` (or `test/`).
-    * All Python tests go into `tests/python/`.
+  * 🚨 **STRICT RULE**: Do **NOT** create test scripts inside `src/` or `python/`.
+  * All C++ tests go into `tests/` (or `test/`).
+  * All Python tests go into `tests/python/`.
 * **Diff Format**: When suggesting changes, use standard Unified Format (`diff -u`) with at least **3 lines of context**.
 
 ### 3. Coding Standards
+
 * **Language Standard**: C++17.
 * **Optimization**: Use `-O3` compatible code. Avoid heavy standard library overhead in hot loops.
 * **Math**: Use LaTeX format for complex mathematical formulas (e.g., $\sigma_{major}$) in the below fomat:
