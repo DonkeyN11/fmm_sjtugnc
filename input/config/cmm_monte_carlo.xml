@@ -48,6 +48,8 @@
     <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>
     <window_length>10</window_length>
+    <max_interval>180.0</max_interval>
+    <trustworthiness_threshold>0.0</trustworthiness_threshold>
   </parameters>
 
   <other>
