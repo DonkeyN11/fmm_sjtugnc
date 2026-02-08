@@ -138,7 +138,9 @@ struct CovarianceMapMatchConfig {
                            double candidate_filter_threshold_arg = 15.0,
                            bool enable_gap_bridging_arg = true,
                            double max_gap_distance_arg = 2000.0,
-                           double min_gps_error_degrees_arg = 1.0e-6);  // Default: ~11m at equator
+                           double min_gps_error_degrees_arg = 1.0e-6,
+                           double max_interval_arg = 180.0,
+                           double trustworthiness_threshold_arg = 0.0);  // Default: ~11m at equator
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -158,6 +160,8 @@ struct CovarianceMapMatchConfig {
 
     // --- Minimum GPS Error for Emission Probability ---
     double min_gps_error_degrees;       /**< Minimum GPS error in degrees to prevent over-confidence (default 1e-5 ≈ 1.1m) */
+    double max_interval;                /**< Maximum time interval to split trajectory */
+    double trustworthiness_threshold;   /**< Threshold to filter out low-confidence matches */
 
     /**
      * Check if the configuration is valid or not

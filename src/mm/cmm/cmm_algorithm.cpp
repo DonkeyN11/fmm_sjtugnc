@@ -596,7 +596,9 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double candidate_filter_threshold_arg,
                                                    bool enable_gap_bridging_arg,
                                                    double max_gap_distance_arg,
-                                                   double min_gps_error_degrees_arg)
+                                                   double min_gps_error_degrees_arg,
+                                                   double max_interval_arg,
+                                                   double trustworthiness_threshold_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -609,7 +611,9 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       candidate_filter_threshold(candidate_filter_threshold_arg),
       enable_gap_bridging(enable_gap_bridging_arg),
       max_gap_distance(max_gap_distance_arg),
-      min_gps_error_degrees(min_gps_error_degrees_arg) {
+      min_gps_error_degrees(min_gps_error_degrees_arg),
+      max_interval(max_interval_arg),
+      trustworthiness_threshold(trustworthiness_threshold_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -621,7 +625,8 @@ void CovarianceMapMatchConfig::print() const {
                 normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered);
     SPDLOG_INFO("enable_filter {} filter_threshold {} gap_bridging {} max_gap_distance {}",
                 enable_candidate_filter, candidate_filter_threshold, enable_gap_bridging, max_gap_distance);
-    SPDLOG_INFO("min_gps_error_degrees {}", min_gps_error_degrees);
+    SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold",
+                min_gps_error_degrees, max_interval, trustworthiness_threshold);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -646,11 +651,15 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     // Minimum GPS error to prevent over-confidence
     double min_gps_error_degrees = xml_data.get("config.parameters.min_gps_error_degrees", 1.0e-4);
 
+    double max_interval = xml_data.get("config.parameters.max_interval", 180.0);
+    double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 0.0);
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
                                     enable_candidate_filter, candidate_filter_threshold,
-                                    enable_gap_bridging, max_gap_distance, min_gps_error_degrees};
+                                    enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
+                                    max_interval, trustworthiness_threshold};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -675,10 +684,14 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     // Minimum GPS error to prevent over-confidence
     double min_gps_error = arg_data.count("min_gps_error_degrees") ? arg_data["min_gps_error_degrees"].as<double>() : 1.0e-4;
 
+    double max_interval = arg_data.count("max_interval") ? arg_data["max_interval"].as<double>() : 180.0;
+    double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 0.0;
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
-                                    enable_filter, filter_thresh, enable_gap, max_gap, min_gps_error};
+                                    enable_filter, filter_thresh, enable_gap, max_gap, min_gps_error,
+                                    max_interval, trustworthiness_threshold};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -711,7 +724,11 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("max_gap_distance", "Max distance for gap bridging (meters)",
          cxxopts::value<double>()->default_value("2000.0"))
         ("min_gps_error_degrees", "Minimum GPS error in degrees to prevent over-confidence (default 1e-4 ≈ 11m)",
-         cxxopts::value<double>()->default_value("1.0e-4"));
+         cxxopts::value<double>()->default_value("1.0e-4"))
+        ("max_interval", "Maximum time interval (seconds) to split segments",
+         cxxopts::value<double>()->default_value("180.0"))
+        ("trustworthiness_threshold", "Threshold for filtering low-confidence matches",
+         cxxopts::value<double>()->default_value("0.0"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -729,6 +746,9 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--candidate_filter_threshold (optional) <double>: Log-probability threshold for filtering (15.0)\n";
     oss << "--enable_gap_bridging (optional) <bool>: Enable trajectory gap bridging (true)\n";
     oss << "--max_gap_distance (optional) <double>: Max distance for gap bridging in meters (2000.0)\n";
+    oss << "--min_gps_error_degrees (optional) <double>: Minimum GPS error in degrees to prevent over-confidence (1e-4 ≈ 11m)\n";
+    oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
+    oss << "--trustworthiness_threshold (optional) <double>: Threshold for filtering low-confidence matches (0.0)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -743,6 +763,7 @@ bool CovarianceMapMatchConfig::validate() const {
                        window_length, candidate_filter_threshold, max_gap_distance);
         return false;
     }
+    if (max_interval < 0) return false;
     return true;
 }
 
@@ -1146,82 +1167,93 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     const std::vector<std::vector<double>> &log_eps_raw = candidate_result.emission_probabilities;
 
     std::vector<int> valid_indices;
+    valid_indices.reserve(tc_raw.size());
     for (int i = 0; i < tc_raw.size(); ++i) {
         if (!tc_raw[i].empty()) {
             valid_indices.push_back(i);
         }
     }
 
-    if (valid_indices.empty()) {
+    if (valid_indices.size() < 3) {
         return {};
     }
 
     std::vector<MatchResult> final_results;
-    int idx_in_valid = 0;
 
-    while (idx_in_valid < valid_indices.size()) {
-        // --- Start of a new segment ---
-        int start_real_idx = valid_indices[idx_in_valid];
-        
+    // Split valid_indices into segments based on max_interval
+    std::vector<std::vector<int>> segments;
+    std::vector<int> current_segment;
+
+    for (size_t i = 0; i < valid_indices.size(); ++i) {
+        int curr_idx = valid_indices[i];
+        if (current_segment.empty()) {
+            current_segment.push_back(curr_idx);
+        } else {
+            int prev_idx = current_segment.back();
+            double time_diff = 0.0;
+            if (!traj.timestamps.empty() && traj.timestamps.size() > static_cast<size_t>(curr_idx) &&
+                traj.timestamps.size() > static_cast<size_t>(prev_idx)) {
+                time_diff = std::abs(traj.timestamps[curr_idx] - traj.timestamps[prev_idx]);
+            }
+
+            if (time_diff > config.max_interval) {
+                if (current_segment.size() >= 3) {
+                    segments.push_back(current_segment);
+                }
+                current_segment.clear();
+                current_segment.push_back(curr_idx);
+            } else {
+                current_segment.push_back(curr_idx);
+            }
+        }
+    }
+    if (current_segment.size() >= 3) {
+        segments.push_back(current_segment);
+    }
+
+    for (const auto& segment_indices : segments) {
+        int start_real_idx = segment_indices.front();
+        int end_real_idx = segment_indices.back();
+
         // Use a dummy empty trajectory to initialize TransitionGraph with just the first layer
         Traj_Candidates start_tc = {tc_raw[start_real_idx]};
         std::vector<std::vector<double>> start_log_eps = {log_eps_raw[start_real_idx]};
         TransitionGraph tg(start_tc, start_log_eps, true);
         initialize_first_layer(&tg.get_layers()[0], config);
 
-        int current_valid_ptr = idx_in_valid;
-        std::vector<int> segment_indices = {start_real_idx};
+        bool segment_failed = false;
+        // Process rest of the segment
+        for (size_t i = 1; i < segment_indices.size(); ++i) {
+            int prev_real = segment_indices[i-1];
+            int next_real = segment_indices[i];
 
-        // Try to extend segment
-        while (current_valid_ptr < valid_indices.size() - 1) {
-            int prev_real = valid_indices[current_valid_ptr];
-            bool bridge_success = false;
-            int next_valid_ptr = -1;
-            TGLayer best_next_layer;
+            double dist = boost::geometry::distance(traj.geom.get_point(prev_real),
+                                                   traj.geom.get_point(next_real));
 
-            // Try bridging gaps
-            for (int gap = 1; current_valid_ptr + gap < valid_indices.size(); ++gap) {
-                int next_real = valid_indices[current_valid_ptr + gap];
-                double dist = boost::geometry::distance(traj.geom.get_point(prev_real),
-                                                       traj.geom.get_point(next_real));
-
-                if (config.enable_gap_bridging && dist > config.max_gap_distance) {
-                    break; // Physical gap too large, split here
-                }
-
-                TGLayer next_layer;
-                for (size_t k=0; k<tc_raw[next_real].size(); ++k) {
-                    next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
-                                               -std::numeric_limits<double>::infinity(), 0, 0});
-                }
-
-                bool connected = false;
-                update_layer_cmm(&tg.get_layers().back(), &next_layer, dist, &connected, config);
-
-                if (connected) {
-                    bridge_success = true;
-                    next_valid_ptr = current_valid_ptr + gap;
-                    best_next_layer = std::move(next_layer);
-                    break; // Connected!
-                }
-
-                if (!config.enable_gap_bridging) break; // If bridging disabled, stop at first failure
+            // Build next layer
+            TGLayer next_layer;
+            for (size_t k=0; k<tc_raw[next_real].size(); ++k) {
+                next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
+                                           -std::numeric_limits<double>::infinity(), 0, 0});
             }
 
-            if (bridge_success) {
-                tg.get_layers().push_back(std::move(best_next_layer));
-                segment_indices.push_back(valid_indices[next_valid_ptr]);
-                current_valid_ptr = next_valid_ptr;
-            } else {
-                break; // Cannot extend further, end segment
+            bool connected = false;
+            update_layer_cmm(&tg.get_layers().back(), &next_layer, dist, &connected, config);
+
+            if (!connected) {
+                segment_failed = true;
+                break; // Disconnected, abort this segment
             }
+            tg.get_layers().push_back(std::move(next_layer));
         }
+
+        if (segment_failed) continue;
 
         // Backtrack and finalize segment result
         TGOpath tg_opath = tg.backtrack();
         if (!tg_opath.empty()) {
-            CMMTrajectory segment_traj = slice_trajectory(traj, segment_indices.front(), segment_indices.back() + 1);
-            
+            CMMTrajectory segment_traj = slice_trajectory(traj, start_real_idx, end_real_idx + 1);
+
             // Sub-candidates and sub-emissions for trustworthiness
             Traj_Candidates sub_tc;
             std::vector<std::vector<double>> sub_log_eps;
@@ -1235,42 +1267,24 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
             MatchedCandidatePath matched_candidate_path;
             matched_candidate_path.reserve(tg_opath.size());
+
+            // Filter vectors based on trustworthiness if filtering enabled
+            std::vector<MatchedCandidate> filtered_path;
+            std::vector<int> filtered_indices;
+            std::vector<double> filtered_sp_dist;
+            std::vector<double> filtered_eu_dist;
+            std::vector<double> filtered_trust;
+            std::vector<std::vector<CandidateEmission>> filtered_details;
+
             std::vector<double> sp_distances;
             std::vector<double> eu_distances;
-            for (size_t i = 0; i < tg_opath.size(); ++i) {
-                const TGNode *node = tg_opath[i];
-                double sp = (i == 0) ? 0.0 : node->sp_dist;
-                double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
-                
-                double trust = node->trustworthiness;
-                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
-                    trust = trustworthiness_results.first[i];
-                }
 
-                matched_candidate_path.push_back(
-                    MatchedCandidate{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust});
-                sp_distances.push_back(sp);
-                eu_distances.push_back(eu);
-            }
-
-            O_Path opath;
-            for (auto node : tg_opath) opath.push_back(node->c->edge->id);
-
-            std::vector<int> indices;
-            C_Path cpath = ubodt_->construct_complete_path(traj.id, tg_opath, network_.get_edges(), &indices, config.reverse_tolerance);
-            LineString mgeom = network_.complete_path_to_geometry(segment_traj.geom, cpath);
-
-            MatchResult res{traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
-            res.sp_distances = std::move(sp_distances);
-            res.eu_distances = std::move(eu_distances);
-            res.nbest_trustworthiness = std::move(trustworthiness_results.second);
-            res.original_indices = std::move(segment_indices);
-            
-            // Candidate details
-            res.candidate_details.resize(sub_tc.size());
+            // Prepare candidate details
+            std::vector<std::vector<CandidateEmission>> all_details;
+            all_details.resize(sub_tc.size());
             for (size_t i=0; i<sub_tc.size(); ++i) {
                 for (size_t j=0; j<sub_tc[i].size(); ++j) {
-                    res.candidate_details[i].push_back({
+                    all_details[i].push_back({
                         boost::geometry::get<0>(sub_tc[i][j].point),
                         boost::geometry::get<1>(sub_tc[i][j].point),
                         std::exp(sub_log_eps[i][j])
@@ -1278,16 +1292,75 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 }
             }
 
+            for (size_t i = 0; i < tg_opath.size(); ++i) {
+                const TGNode *node = tg_opath[i];
+                double sp = (i == 0) ? 0.0 : node->sp_dist;
+                double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
+
+                double trust = node->trustworthiness;
+                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
+                    trust = trustworthiness_results.first[i];
+                }
+
+                MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust};
+                matched_candidate_path.push_back(mc);
+                sp_distances.push_back(sp);
+                eu_distances.push_back(eu);
+
+                // Apply filtering logic
+                if (!config.filtered || trust >= config.trustworthiness_threshold) {
+                    filtered_path.push_back(mc);
+                    filtered_indices.push_back(segment_indices[i]);
+                    filtered_sp_dist.push_back(sp);
+                    filtered_eu_dist.push_back(eu);
+                    filtered_trust.push_back(trust);
+                    filtered_details.push_back(all_details[i]);
+                }
+            }
+
+            // If after filtering we have too few points, skip this result
+            if (filtered_path.empty()) continue;
+
+            O_Path opath;
+            for (const auto& mc : filtered_path) opath.push_back(mc.c.edge->id);
+
+            std::vector<int> indices;
+            // Note: construct_complete_path uses the full tg_opath (optimal path), not the filtered one,
+            // because cpath defines the route geometry. We use full path for geometry continuity.
+            C_Path cpath = ubodt_->construct_complete_path(traj.id, tg_opath, network_.get_edges(), &indices, config.reverse_tolerance);
+            LineString mgeom = network_.complete_path_to_geometry(segment_traj.geom, cpath);
+
+            MatchResult res{traj.id, filtered_path, opath, cpath, indices, mgeom};
+            res.sp_distances = std::move(filtered_sp_dist);
+            res.eu_distances = std::move(filtered_eu_dist);
+
+            // Filter nbest_trustworthiness
+            std::vector<std::vector<double>> filtered_nbest;
+            for (size_t i = 0; i < tg_opath.size(); ++i) {
+                const TGNode *node = tg_opath[i];
+                double trust = node->trustworthiness;
+                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
+                    trust = trustworthiness_results.first[i];
+                }
+                if (!config.filtered || trust >= config.trustworthiness_threshold) {
+                    if (i < trustworthiness_results.second.size()) {
+                        filtered_nbest.push_back(trustworthiness_results.second[i]);
+                    } else {
+                        filtered_nbest.push_back({});
+                    }
+                }
+            }
+            res.nbest_trustworthiness = std::move(filtered_nbest);
+            res.original_indices = std::move(filtered_indices);
+            res.candidate_details = std::move(filtered_details);
+
             final_results.push_back(std::move(res));
         }
-
-        idx_in_valid = current_valid_ptr + 1;
     }
 
     if (filtered_traj != nullptr && !final_results.empty()) {
         // For simplicity, if split, we just return the first segment as filtered_traj
-        // or we could merge them. Usually filtered_traj is for debugging.
-        *filtered_traj = slice_trajectory(traj, final_results[0].original_indices.front(), 
+        *filtered_traj = slice_trajectory(traj, final_results[0].original_indices.front(),
                                          final_results[0].original_indices.back() + 1);
     }
 
