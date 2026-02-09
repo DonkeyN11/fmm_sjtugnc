@@ -598,7 +598,9 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double max_gap_distance_arg,
                                                    double min_gps_error_degrees_arg,
                                                    double max_interval_arg,
-                                                   double trustworthiness_threshold_arg)
+                                                   double trustworthiness_threshold_arg,
+                                                   double map_error_std_arg,
+                                                   double background_log_prob_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -613,7 +615,9 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       max_gap_distance(max_gap_distance_arg),
       min_gps_error_degrees(min_gps_error_degrees_arg),
       max_interval(max_interval_arg),
-      trustworthiness_threshold(trustworthiness_threshold_arg) {
+      trustworthiness_threshold(trustworthiness_threshold_arg),
+      map_error_std(map_error_std_arg),
+      background_log_prob(background_log_prob_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -627,6 +631,7 @@ void CovarianceMapMatchConfig::print() const {
                 enable_candidate_filter, candidate_filter_threshold, enable_gap_bridging, max_gap_distance);
     SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold",
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
+    SPDLOG_INFO("map_error_std {} background_log_prob", map_error_std, background_log_prob);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -654,12 +659,17 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double max_interval = xml_data.get("config.parameters.max_interval", 180.0);
     double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 0.0);
 
+    // New parameters for additive map noise and background noise normalization
+    double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
+    double background_log_prob = xml_data.get("config.parameters.background_log_prob", -20.0);
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
                                     enable_candidate_filter, candidate_filter_threshold,
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
-                                    max_interval, trustworthiness_threshold};
+                                    max_interval, trustworthiness_threshold,
+                                    map_error_std, background_log_prob};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -687,11 +697,16 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double max_interval = arg_data.count("max_interval") ? arg_data["max_interval"].as<double>() : 180.0;
     double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 0.0;
 
+    // New parameters for additive map noise and background noise normalization
+    double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
+    double background_log_prob = arg_data.count("background_log_prob") ? arg_data["background_log_prob"].as<double>() : -20.0;
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
                                     enable_filter, filter_thresh, enable_gap, max_gap, min_gps_error,
-                                    max_interval, trustworthiness_threshold};
+                                    max_interval, trustworthiness_threshold,
+                                    map_error_std, background_log_prob};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -728,7 +743,11 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("max_interval", "Maximum time interval (seconds) to split segments",
          cxxopts::value<double>()->default_value("180.0"))
         ("trustworthiness_threshold", "Threshold for filtering low-confidence matches",
-         cxxopts::value<double>()->default_value("0.0"));
+         cxxopts::value<double>()->default_value("0.0"))
+        ("map_error_std", "Map error standard deviation in degrees for additive noise (default 5e-5 ≈ 5m)",
+         cxxopts::value<double>()->default_value("5.0e-5"))
+        ("background_log_prob", "Background noise log probability for normalization (default -20.0)",
+         cxxopts::value<double>()->default_value("-20.0"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -749,18 +768,21 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--min_gps_error_degrees (optional) <double>: Minimum GPS error in degrees to prevent over-confidence (1e-4 ≈ 11m)\n";
     oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
     oss << "--trustworthiness_threshold (optional) <double>: Threshold for filtering low-confidence matches (0.0)\n";
+    oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
+    oss << "--background_log_prob (optional) <double>: Background noise log probability for normalization (-20.0)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
-        window_length <= 0 || candidate_filter_threshold < 0 || max_gap_distance < 0) {
+        window_length <= 0 || candidate_filter_threshold < 0 || max_gap_distance < 0 ||
+        map_error_std < 0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
                        "protection_level_multiplier {} reverse_tolerance {} window_length {} "
-                       "filter_threshold {} max_gap_distance {}",
+                       "filter_threshold {} max_gap_distance {} map_error_std {}",
                        k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                       window_length, candidate_filter_threshold, max_gap_distance);
+                       window_length, candidate_filter_threshold, max_gap_distance, map_error_std);
         return false;
     }
     if (max_interval < 0) return false;
@@ -971,18 +993,21 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                         double dx = obs_x - boost::geometry::get<0>(entry.candidate.point);
                         double dy = obs_y - boost::geometry::get<1>(entry.candidate.point);
 
-                        // Apply minimum GPS error to prevent over-confidence
-                        double sde_eff = std::max(cov.sde, config.min_gps_error_degrees);
-                        double sdn_eff = std::max(cov.sdn, config.min_gps_error_degrees);
+                        // Apply additive map noise: add map error variance to GPS variance
+                        // This smooths the effect of small GPS errors and preserves anisotropy
+                        double map_var = config.map_error_std * config.map_error_std;
+                        double var_e_total = cov.sde * cov.sde + map_var;
+                        double var_n_total = cov.sdn * cov.sdn + map_var;
 
-                        // Recompute covariance matrix with minimum error
+                        // Build effective covariance matrix with additive map noise
                         Matrix2d cov_eff;
-                        cov_eff.m[0][0] = sde_eff * sde_eff;
-                        cov_eff.m[1][1] = sdn_eff * sdn_eff;
+                        cov_eff.m[0][0] = var_e_total;
+                        cov_eff.m[1][1] = var_n_total;
+                        // Map error is assumed isotropic and independent, so covariance term remains unchanged
                         cov_eff.m[0][1] = cov_eff.m[1][0] = cov.sdne;
 
                         double det_eff = cov_eff.determinant();
-                        if (det_eff > 0) {
+                        if (det_eff > 1e-30) {
                             Matrix2d cov_inv_eff = cov_eff.inverse();
                             double mahal_sq = cov_inv_eff.m[0][0] * dx * dx +
                                              2 * cov_inv_eff.m[0][1] * dx * dy +
@@ -1024,18 +1049,21 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
                 double log_probability = -std::numeric_limits<double>::infinity();
                 if (valid_covariance) {
-                    // Apply minimum GPS error to prevent over-confidence
-                    double sde_eff = std::max(cov.sde, config.min_gps_error_degrees);
-                    double sdn_eff = std::max(cov.sdn, config.min_gps_error_degrees);
+                    // Apply additive map noise: add map error variance to GPS variance
+                    // This smooths the effect of small GPS errors and preserves anisotropy
+                    double map_var = config.map_error_std * config.map_error_std;
+                    double var_e_total = cov.sde * cov.sde + map_var;
+                    double var_n_total = cov.sdn * cov.sdn + map_var;
 
-                    // Recompute covariance matrix with minimum error
+                    // Build effective covariance matrix with additive map noise
                     Matrix2d cov_eff;
-                    cov_eff.m[0][0] = sde_eff * sde_eff;
-                    cov_eff.m[1][1] = sdn_eff * sdn_eff;
+                    cov_eff.m[0][0] = var_e_total;
+                    cov_eff.m[1][1] = var_n_total;
+                    // Map error is assumed isotropic and independent, so covariance term remains unchanged
                     cov_eff.m[0][1] = cov_eff.m[1][0] = cov.sdne;
 
                     double det_eff = cov_eff.determinant();
-                    if (det_eff > 0) {
+                    if (det_eff > 1e-30) {
                         Matrix2d cov_inv_eff = cov_eff.inverse();
                         double mahalanobis_dist_sq = cov_inv_eff.m[0][0] * dx * dx +
                                                       2 * cov_inv_eff.m[0][1] * dx * dy +
@@ -1075,13 +1103,21 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
         std::vector<double> log_emission_probs;
         if (config.normalized) {
-            // Top-K normalization in log-space
+            // Top-K normalization in log-space with background noise
             std::vector<double> top_k_scores = raw_probabilities;
             size_t k = std::min(top_k_scores.size(), static_cast<size_t>(config.k));
             std::partial_sort(top_k_scores.begin(), top_k_scores.begin() + k, top_k_scores.end(), std::greater<double>());
             top_k_scores.resize(k);
-            
-            double log_norm = log_sum_exp(top_k_scores);
+
+            // Calculate log sum of top-k candidates
+            double log_sum_candidates = log_sum_exp(top_k_scores);
+
+            // Include background noise in the normalization (represents "null hypothesis")
+            // This prevents "矮子里拔将军" (picking the best of poor candidates)
+            // LogSumExp: log(exp(log_sum_candidates) + exp(background_log_prob))
+            std::vector<double> norm_components = {log_sum_candidates, config.background_log_prob};
+            double log_norm = log_sum_exp(norm_components);
+
             log_emission_probs.reserve(raw_probabilities.size());
 
             if (log_norm > -std::numeric_limits<double>::infinity()) {
