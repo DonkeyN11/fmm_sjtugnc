@@ -140,7 +140,9 @@ struct CovarianceMapMatchConfig {
                            double max_gap_distance_arg = 2000.0,
                            double min_gps_error_degrees_arg = 1.0e-6,
                            double max_interval_arg = 180.0,
-                           double trustworthiness_threshold_arg = 0.0);  // Default: ~11m at equator
+                           double trustworthiness_threshold_arg = 0.0,
+                           double map_error_std_arg = 5.0e-5,
+                           double background_log_prob_arg = -20.0);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -162,6 +164,10 @@ struct CovarianceMapMatchConfig {
     double min_gps_error_degrees;       /**< Minimum GPS error in degrees to prevent over-confidence (default 1e-5 ≈ 1.1m) */
     double max_interval;                /**< Maximum time interval to split trajectory */
     double trustworthiness_threshold;   /**< Threshold to filter out low-confidence matches */
+
+    // --- New Parameters for Additive Map Noise and Background Noise ---
+    double map_error_std;               /**< Map error standard deviation in degrees (default 5e-5 ≈ 5m). Added to GPS variance. */
+    double background_log_prob;         /**< Background noise log probability (default -20.0). Used as "null hypothesis" in normalization. */
 
     /**
      * Check if the configuration is valid or not
