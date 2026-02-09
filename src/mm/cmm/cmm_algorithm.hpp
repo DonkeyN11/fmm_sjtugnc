@@ -137,11 +137,11 @@ struct CovarianceMapMatchConfig {
                            bool enable_candidate_filter_arg = true,
                            double candidate_filter_threshold_arg = 15.0,
                            bool enable_gap_bridging_arg = true,
-                           double max_gap_distance_arg = 2000.0,
-                           double min_gps_error_degrees_arg = 1.0e-6,
-                           double max_interval_arg = 180.0,
+                           double max_gap_distance_arg = 2000.0, /* in meters */
+                        //    double min_gps_error_degrees_arg = 1.0e-6,
+                           double max_interval_arg = 180.0, /* in seconds */
                            double trustworthiness_threshold_arg = 0.0,
-                           double map_error_std_arg = 5.0e-5,
+                           double map_error_std_arg = 5.0e-6, /* in degrees */
                            double background_log_prob_arg = -20.0);
 
     int k;                          /**< Number of candidates */
