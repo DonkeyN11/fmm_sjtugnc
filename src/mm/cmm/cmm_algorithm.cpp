@@ -1343,7 +1343,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 sp_distances.push_back(sp);
                 eu_distances.push_back(eu);
 
-                // Apply filtering logic
+                // Apply filtering logic，linear probability thresholding based on trustworthiness，default threshold is 0.0 which means only filter out points with non-positive trustworthiness
                 if (!config.filtered || trust >= config.trustworthiness_threshold) {
                     filtered_path.push_back(mc);
                     filtered_indices.push_back(segment_indices[i]);
