@@ -76,15 +76,18 @@ def main():
     os.makedirs("output", exist_ok=True)
     plt.savefig('output/final_error_dist.png')
 
-    # ROC Curve
-    print("Generating ROC curve...")
-    df_cmm_p['is_correct'] = (df_cmm_p['error'] < 10).astype(int)
+    # ROC Curve for FMM
+    print("Generating FMM ROC curve...")
+    # Add error to df_fmm using timestamp as key
+    df_fmm = df_fmm.reset_index(drop=True)
+    df_fmm_p = df_fmm_p.reset_index(drop=True)
+    df_fmm['error'] = df_fmm_p['error']
+    df_fmm['is_correct'] = (df_fmm['error'] < 10).astype(int)
     # Combining trustworthiness and ep for a single ranking score
     # Primary: trustworthiness, Secondary: ep
-    df_cmm_p = df_cmm_p.sort_values(by=['trustworthiness', 'ep'], ascending=[True, True])
-    df_cmm_p['score_rank'] = np.arange(len(df_cmm_p))
-    
-    fpr, tpr, _ = roc_curve(df_cmm_p['is_correct'], df_cmm_p['score_rank'])
+    df_fmm = df_fmm.sort_values(by=['trustworthiness', 'ep'], ascending=[True, True])
+    df_fmm['score_rank'] = np.arange(len(df_fmm))
+    fpr, tpr, _ = roc_curve(df_fmm['is_correct'], df_fmm['score_rank'])
     roc_auc = auc(fpr, tpr)
 
     plt.figure(figsize=(8, 8))
@@ -92,10 +95,10 @@ def main():
     plt.plot([0, 1], [0, 1], color='navy', lw=1, linestyle='--')
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
-    plt.title('CMM ROC Curve (Correctness: Error < 10m)')
+    plt.title('FMM ROC Curve (Correctness: Error < 10m)')
     plt.legend(loc="lower right")
     plt.grid(True, alpha=0.3)
-    plt.savefig('output/final_cmm_roc.png')
+    plt.savefig('output/final_fmm_roc.png')
 
     print("\n--- Final Statistics ---")
     print(f"FMM Mean Error: {df_fmm_p['error'].mean():.2f}m")

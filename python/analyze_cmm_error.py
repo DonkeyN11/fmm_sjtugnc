@@ -27,7 +27,7 @@ def calc_dist_m(lon1, lat1, lon2, lat2):
 
 def main():
     # File paths
-    cmm_res_path = "dataset-hainan-06/mr/cmm_results_filtered.csv"
+    cmm_res_path = "dataset-hainan-06/mr/cmm_results_trust.csv"
     fmm_res_path = "dataset-hainan-06/mr/fmm_results_filtered.csv"
     input_pts_path = "dataset-hainan-06/cmm_input_points.csv"
 
@@ -98,9 +98,9 @@ def main():
     plt.legend()
     plt.grid(True, linestyle='--', alpha=0.6)
     
-    os.makedirs("output", exist_ok=True)
-    plt.savefig('output/error_distribution.png')
-    print("Saved distribution plot to output/error_distribution.png")
+    os.makedirs("output_trust", exist_ok=True)
+    plt.savefig('output_trust/error_distribution.png')
+    print("Saved distribution plot to output_trust/error_distribution.png")
 
     # 5. ROC Curve for CMM
     # Correct if error < 10m
@@ -129,8 +129,8 @@ def main():
     plt.title('CMM ROC Curve (Correctness: Error < 10m)')
     plt.legend(loc="lower right")
     plt.grid(True, linestyle='--', alpha=0.6)
-    plt.savefig('output/cmm_roc_curve.png')
-    print("Saved ROC curve to output/cmm_roc_curve.png")
+    plt.savefig('output_trust/cmm_roc_curve.png')
+    print("Saved ROC curve to output_trust/cmm_roc_curve.png")
 
     # Summary Stats
     print("\n--- Summary Statistics ---")
