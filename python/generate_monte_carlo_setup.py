@@ -390,7 +390,7 @@ def main():
     # Prepare sigma ladder: 10 trajectories per sigma 1..10
     specs: List[TrajectorySpec] = []
     traj_id = 0
-    for sigma in range(1, 11):
+    for sigma in range(1, 13):
         for _ in range(10):
             specs.append(TrajectorySpec(traj_id=traj_id, sigma=float(sigma)))
             traj_id += 1

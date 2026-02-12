@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Advanced version: Plot positioning error statistics under different pseudorange noise (Sigma).
-Features:
-1. Upper part: Boxplot and mean line showing error norm statistical distribution.
-2. Lower part: 2D error covariance ellipses under each Sigma column showing spatial distribution characteristics.
+高级统计绘图脚本 (中文版)：
+展示不同伪距噪声(Sigma)下的定位误差。
+- 上半部分：误差模长的统计分布 (箱线图)。
+- 下半部分：误差的空间协方差椭圆，展示误差的方向性。
 """
 from __future__ import annotations
 
@@ -14,201 +14,201 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 from matplotlib.patches import Ellipse
+from matplotlib import rcParams
 
-# Keep original data reading logic references
-from plot_error_vectors import (
-    _compute_errors_for_trajs,
-    _load_sigma_map,
-    _read_csv_auto,
-)
+# 引入原有的数据读取逻辑
+try:
+    from plot_error_vectors import (
+        _compute_errors_for_trajs,
+        _load_sigma_map,
+        _read_csv_auto,
+    )
+except ImportError:
+    print("Error: Could not import from plot_error_vectors.py. Ensure it is available.")
+    exit(1)
+
+
+def _configure_chinese_font():
+    """配置 Matplotlib 以支持中文显示"""
+    # Linux 系统优先使用 Noto Sans CJK SC，回退到其他可用字体
+    rcParams['font.sans-serif'] = [
+        'Noto Sans CJK SC',
+        'Noto Serif CJK SC',
+        'AR PL UMing TW MBE',
+        'AR PL UKai CN',
+        'WenQuanYi Micro Hei',
+        'SimHei',
+        'Microsoft YaHei',
+        'sans-serif'
+    ]
+    rcParams['axes.unicode_minus'] = False  # 解决负号显示为方块的问题
 
 
 def _calc_covariance_ellipse(points_2d, n_std=2.0):
     """
-    Calculate covariance ellipse parameters for 2D point set.
-
+    计算2D点集的协方差椭圆参数。
     Args:
         points_2d: (N, 2) numpy array.
-        n_std: Standard deviation multiplier (2.0 ≈ 95% confidence interval).
-
+        n_std: 标准差倍数 (2.0 约等于 95% 置信区间).
     Returns:
-        width, height, angle_degrees (for matplotlib.patches.Ellipse)
+        width, height, angle_degrees
     """
     if len(points_2d) < 2:
         return 0, 0, 0
 
     cov = np.cov(points_2d, rowvar=False)
-
-    # Compute eigenvalues and eigenvectors
-    # Using eigh for symmetric matrices (covariance is always symmetric), more stable
     vals, vecs = np.linalg.eigh(cov)
 
-    # Sort eigenvalues, ensuring width corresponds to largest eigenvalue
+    # 排序特征值
     order = vals.argsort()[::-1]
     vals = vals[order]
     vecs = vecs[:, order]
 
-    # Calculate rotation angle (angle between max eigenvector and x-axis)
+    # 计算旋转角度 (最大特征向量与 x 轴的夹角)
     theta = np.degrees(np.arctan2(*vecs[:, 0][::-1]))
 
-    # Calculate ellipse axis lengths (std * n_std * 2 for full length)
-    # Ensure eigenvalues are non-negative (numerical errors may cause tiny negative values)
+    # 计算轴长
     vals = np.maximum(vals, 0)
     width, height = 2 * n_std * np.sqrt(vals)
-
     return width, height, theta
 
 
-def plot_advanced_stats(groups_2d: dict, output_path: Path, title: str, limit_percentile: float = 99.0):
+def plot_split_stats(groups_2d: dict, output_path: Path, title: str, limit_percentile: float = 99.0):
     """
-    Plot combined chart: Upper part boxplot, lower part covariance ellipses.
+    绘制上下分屏图：上图箱线图，下图协方差椭圆。
+    """
+    _configure_chinese_font()  # 启用中文支持
 
-    Args:
-        groups_2d: Dictionary {sigma_key: (N, 2) numpy array of 2D errors}
-    """
-    # 1. Data preparation
-    # Ensure sigma keys are numeric and sorted
+    # 1. 数据准备
+    # 按数值大小对 Sigma Key 进行排序
     sorted_sigmas_keys = sorted(groups_2d.keys(), key=lambda x: float(x))
 
-    # Prepare DataFrame for Seaborn boxplot (store norms)
-    plot_data_list = []
-    # Prepare list for drawing ellipses (store 2D vectors)
-    vectors_2d_list = []
+    plot_data_list = []  # 用于箱线图
+    ellipse_params = []  # 用于椭圆 [(w, h, angle), ...]
 
-    means = []
+    # 全局最大尺寸，用于计算缩放比例
+    max_ellipse_dim_m = 0.0
 
-    for sigma_key in sorted_sigmas_keys:
-        errors_2d = groups_2d[sigma_key]
+    for sigma in sorted_sigmas_keys:
+        errors_2d = groups_2d[sigma]
 
-        # Ensure it's (N, 2) array
-        if errors_2d.ndim != 2 or errors_2d.shape[1] < 2:
-            print(f"Warning: Data for sigma={sigma_key} is not 2D. Skipping ellipses.")
-            vectors_2d_list.append(np.zeros((0, 2)))
-            # If not 2D, assume it's 1D norm
-            errors_norm = errors_2d.flatten() if errors_2d.ndim > 1 else errors_2d
+        # 提取模长用于箱线图
+        if errors_2d.ndim > 1 and errors_2d.shape[1] >= 2:
+            vec = errors_2d[:, :2]  # 取前两列 (North, East)
+            norm = np.linalg.norm(vec, axis=1)
+
+            # 计算椭圆
+            w, h, ang = _calc_covariance_ellipse(vec, n_std=2.0)
+            ellipse_params.append((w, h, ang))
+            max_ellipse_dim_m = max(max_ellipse_dim_m, w, h)
         else:
-            vectors_2d_list.append(errors_2d[:, :2])  # Take first two columns (e.g., North, East)
-            errors_norm = np.linalg.norm(errors_2d[:, :2], axis=1)
+            norm = errors_2d
+            ellipse_params.append((0, 0, 0))  # 无效数据
 
-        means.append(np.mean(errors_norm))
-
-        # Add to DataFrame for boxplot
-        for err_val in errors_norm:
-            plot_data_list.append({'Sigma': str(sigma_key), 'Error Norm (m)': err_val})
+        for val in norm:
+            plot_data_list.append({'Sigma': str(sigma), 'Error': val})
 
     df = pd.DataFrame(plot_data_list)
 
-    # 2. Setup plotting environment
-    sns.set_theme(style="white", font_scale=1.1)
-    fig, ax = plt.subplots(figsize=(14, 9))
+    # [关键修复] 计算均值，并强制按照 sorted_sigmas_keys 的顺序重排
+    # 默认 groupby 会按字符串排序 (如 "10.0" 排在 "5.0" 前)，导致与图表不对应
+    means = df.groupby('Sigma')['Error'].mean().reindex([str(s) for s in sorted_sigmas_keys])
 
-    # ---------------------------------------------------------
-    # Upper part: Draw boxplot and trend line (Y > 0)
-    # ---------------------------------------------------------
-    # Use Seaborn to draw boxplot
-    # order parameter ensures boxplot follows our sorted sigma order
-    sns.boxplot(x="Sigma", y="Error Norm (m)", data=df, order=[str(s) for s in sorted_sigmas_keys],
-                ax=ax, width=0.5, linewidth=1.2, fliersize=2, palette="viridis", saturation=0.75)
+    # 2. 创建画布 (2行1列)
+    # hspace=0.05 大幅减少上下图之间的空白
+    fig, (ax_top, ax_bottom) = plt.subplots(
+        2, 1, figsize=(12, 10), sharex=True,
+        gridspec_kw={'height_ratios': [1.8, 1], 'hspace': 0.05}
+    )
 
-    # Draw mean trend line
-    # Seaborn's categorical X-axis is actually 0, 1, 2... coordinates
-    x_coords = np.arange(len(sorted_sigmas_keys))
-    ax.plot(x_coords, means, color='red', marker='o', linestyle='--',
-            linewidth=2, markersize=7, label='Mean Error Norm', zorder=10)
-
-    # Calculate Y-axis upper limit (for setting display range)
-    y_limit_upper = np.percentile(df['Error Norm (m)'], limit_percentile) * 1.2
-
-    # ---------------------------------------------------------
-    # Lower part: Draw covariance ellipses (Y < 0)
-    # ---------------------------------------------------------
-    # Define ellipse region parameters
-    ellipse_region_height = y_limit_upper * 0.6  # Lower region height is 60% of main plot
-    y_offset_baseline = -ellipse_region_height / 2.0  # Y-coordinate baseline for ellipse centers
-
-    # Draw separator line (Y=0)
-    ax.axhline(y=0, color='black', linewidth=1.5, linestyle='-')
-    ax.text(x_coords[-1] + 0.6, y_offset_baseline, "Spatial Covariance\n(2σ Ellipses)",
-            va='center', ha='left', fontsize=10, color='#333333', rotation=-90)
-
-    # Get color palette used by boxplot for consistency
+    # 设置颜色板
     palette = sns.color_palette("viridis", len(sorted_sigmas_keys))
 
-    # Scaling factor: To prevent large noise ellipses from overlapping, set max size limit
-    # We want the largest ellipse width to not exceed the distance between categories (i.e., 1.0)
-    max_possible_width = 0.0
-    temp_ellipse_params = []
-    for vec_2d in vectors_2d_list:
-        w, h, angle = _calc_covariance_ellipse(vec_2d, n_std=2.0)
-        temp_ellipse_params.append((w, h, angle))
-        max_possible_width = max(max_possible_width, w, h)
+    # ---------------------------------------------------------
+    # 上半部分：箱线图 (Boxplot)
+    # ---------------------------------------------------------
+    sns.boxplot(x="Sigma", y="Error", data=df, ax=ax_top,
+                order=[str(s) for s in sorted_sigmas_keys],
+                palette=palette, linewidth=1.2, fliersize=1, width=0.6)
 
-    # Calculate scaling factor so largest ellipse width is about 0.8 units (leave some gap)
-    scaling_factor = 0.8 / max_possible_width if max_possible_width > 0 else 1.0
+    # 叠加均值线
+    x_coords = np.arange(len(sorted_sigmas_keys))
+    ax_top.plot(x_coords, means.values, color='red', marker='o', linestyle='--',
+                linewidth=2, markersize=6, label='平均误差', zorder=10)
 
-    # Loop to draw ellipse for each Sigma
-    for i, (w, h, angle) in enumerate(temp_ellipse_params):
-        if w == 0 or h == 0:
+    # 设置上图 Y 轴限制
+    y_limit = np.percentile(df['Error'], limit_percentile) * 1.2
+    ax_top.set_ylim(0, y_limit)
+    ax_top.set_ylabel('定位误差模长 (m)', fontsize=12)
+    ax_top.grid(True, linestyle='--', alpha=0.5)
+    ax_top.legend(loc='upper left', frameon=True)
+    ax_top.set_title(title, fontsize=14, fontweight='bold', pad=15)
+
+    # ---------------------------------------------------------
+    # 下半部分：协方差椭圆 (Covariance Ellipses)
+    # ---------------------------------------------------------
+    # 计算缩放因子：我们需要把椭圆放入 X 轴的间隔中 (间隔为 1.0)
+    # 设定最大椭圆占据 0.8 的宽度
+    target_max_width_units = 0.8
+    scale_factor = target_max_width_units / max_ellipse_dim_m if max_ellipse_dim_m > 0 else 1.0
+
+    ax_bottom.axhline(0, color='grey', linestyle='-', linewidth=0.5, alpha=0.5)
+
+    for i, (w_m, h_m, angle) in enumerate(ellipse_params):
+        if w_m == 0:
             continue
 
-        # Key: Place ellipse at (x_coords[i], y_offset_baseline)
-        # and apply scaling factor
-        ellipse = Ellipse(xy=(x_coords[i], y_offset_baseline),
-                          width=w * scaling_factor,
-                          height=h * scaling_factor,
-                          angle=angle,
-                          edgecolor=palette[i],
-                          facecolor=palette[i],
-                          alpha=0.4, linewidth=1.5, zorder=5)
-        ax.add_patch(ellipse)
+        # 缩放后的尺寸 (Data Units)
+        w_plot = w_m * scale_factor
+        h_plot = h_m * scale_factor
 
-        # Optional: Draw a small center point
-        ax.scatter(x_coords[i], y_offset_baseline, color=palette[i], s=10, zorder=6)
+        # 绘制椭圆，中心在 (i, 0)
+        ell = Ellipse(xy=(i, 0), width=w_plot, height=h_plot, angle=angle,
+                      facecolor=palette[i], edgecolor='black', linewidth=1, alpha=0.6)
+        ax_bottom.add_patch(ell)
 
-    # ---------------------------------------------------------
-    # Global beautification and label settings
-    # ---------------------------------------------------------
-    ax.set_title(title, fontsize=16, fontweight='bold', pad=20)
-    ax.set_xlabel(r'Pseudorange Noise $\sigma_{pr}$ (m)', fontsize=13, labelpad=10)
-    # Remove default Y-axis label, we'll customize it
-    ax.set_ylabel('')
+        # 绘制中心点
+        ax_bottom.scatter(i, 0, color='black', s=10, zorder=5)
 
-    # Set final Y-axis range including negative region
-    ax.set_ylim(-ellipse_region_height * 1.1, y_limit_upper)
+    # 美化下图
+    ax_bottom.set_ylabel('空间分布形态\n(经缩放)', fontsize=12)
+    ax_bottom.set_xlabel(r'伪距噪声 $\sigma_{pr}$ (m)', fontsize=12)
 
-    # Customize Y-axis tick labels
-    # Get current ticks
-    yticks = ax.get_yticks()
-    # Filter out ticks <= 0, keep only positive ticks for showing norm in upper region
-    yticks_positive = [yt for yt in yticks if yt > 0]
-    ax.set_yticks(yticks_positive)
-    # Add main Y-axis label text
-    ax.text(-0.8, y_limit_upper / 2, 'Position Error Norm (m)\n(Statistical Distribution)',
-            rotation=90, va='center', ha='center', fontsize=12)
+    # 设置下图 Y 轴范围，保持对称
+    # 计算最大的绘图高度
+    max_plot_height = (max_ellipse_dim_m * scale_factor) / 2.0
+    y_margin = max_plot_height * 1.2
+    ax_bottom.set_ylim(-y_margin, y_margin)
 
-    # Add grid lines (only effective for upper region)
-    ax.grid(True, axis='y', which='major', linestyle='--', alpha=0.6)
-    # Can also manually add light grid for lower region
-    for yt in np.linspace(0, -ellipse_region_height, 5):
-        if yt != 0:
-            ax.axhline(y=yt, color='gray', linestyle=':', alpha=0.3)
+    # 隐藏下图的 Y 刻度，因为它们被缩放过了，直接读数没有物理意义
+    ax_bottom.set_yticks([])
 
-    ax.legend(loc='upper left', frameon=True)
+    # 添加比例尺 (Scale Bar)
+    # 我们画一个代表 N 米的线段
+    ref_meters = 5.0  # 参考长度 5米
+    ref_len_units = ref_meters * scale_factor
 
-    # Adjust layout to accommodate new elements
+    # 在左下角添加比例尺
+    rect_x = -0.4
+    rect_y = -y_margin * 0.8
+    ax_bottom.plot([rect_x, rect_x + ref_len_units], [rect_y, rect_y],
+                   color='black', linewidth=3)
+    ax_bottom.text(rect_x + ref_len_units / 2, rect_y - y_margin * 0.1, f'{ref_meters}米 参考尺',
+                   ha='center', va='top', fontsize=10)
+
+    # 强制下图保持 1:1 的视觉比例 (对于椭圆很重要)
+    ax_bottom.set_aspect('equal')
+
     plt.tight_layout()
-    # Extra space adjustment to prevent rightmost text from being cut off
-    plt.subplots_adjust(right=0.92)
-
-    # Save figure
     plt.savefig(output_path, dpi=300, bbox_inches='tight')
-    print(f"Generated advanced stats plot: {output_path}")
+    print(f"图表已保存: {output_path}")
     plt.close()
 
 
-def _plot_dataset_advanced(dataset_root: Path, output_dir: Path | None, limit_percentile: float) -> Path:
+def _plot_dataset(dataset_root: Path, output_dir: Path | None, limit_percentile: float) -> Path:
     points_path = dataset_root / "raw_data" / "observations.csv"
     truth_path = dataset_root / "raw_data" / "ground_truth_points.csv"
+    metadata_path = dataset_root / "raw_data" / "metadata.json"
 
     if not points_path.exists() or not truth_path.exists():
         print(f"Warning: Raw data files not found in {dataset_root}, skipping...")
@@ -218,65 +218,61 @@ def _plot_dataset_advanced(dataset_root: Path, output_dir: Path | None, limit_pe
     truth_all = _read_csv_auto(truth_path)
 
     try:
-        sigma_map = _load_sigma_map(dataset_root / "raw_data" / "metadata.json")
+        sigma_map = _load_sigma_map(metadata_path)
     except Exception:
         print(f"Warning: Could not load sigma map for {dataset_root}")
         return Path()
 
-    # Build sigma groups: mapping from sigma value to list of trajectory IDs
+    # 构建 sigma 分组：映射从 sigma 值到轨迹 ID 列表
     sigma_groups: dict[float, list[int]] = {}
     for traj_id, sigma in sigma_map.items():
-        # Convert traj_id to int if it's stored as string in sigma_map
+        # 如果 sigma_map 中的 traj_id 是字符串，转换为整数
         traj_id_int = int(traj_id) if isinstance(traj_id, str) else traj_id
         sigma_groups.setdefault(float(sigma), []).append(traj_id_int)
 
-    # Compute 2D error vectors for each sigma group
+    # 计算每个 sigma 组的 2D 误差向量
     groups_2d = {}
     for sigma, traj_ids in sigma_groups.items():
         errors = _compute_errors_for_trajs(points_all, truth_all, traj_ids)
         if errors.size > 0:
-            # errors is (N, 2) array with 2D error vectors
             groups_2d[sigma] = errors
 
     if not groups_2d:
-        print(f"No groups found for {dataset_root}")
         return Path()
 
-    title = f"Positioning Error Analysis: Statistical & Spatial ({dataset_root.name})"
+    title = f"定位误差-伪距误差分析"
     out_dir = output_dir if output_dir else (dataset_root / "statistic")
     out_dir.mkdir(parents=True, exist_ok=True)
-    output_path = out_dir / f"{dataset_root.name}_error_stats_advanced.png"
+    output_path = out_dir / f"{dataset_root.name}_error_stats_split.png"
 
-    # Call new advanced plotting function
-    plot_advanced_stats(groups_2d, output_path, title, limit_percentile)
-
+    plot_split_stats(groups_2d, output_path, title, limit_percentile)
     return output_path
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Plot advanced sigma error statistics with covariance ellipses")
+    parser = argparse.ArgumentParser(description="绘制分屏误差统计图 (箱线图 + 椭圆)")
     parser.add_argument(
         "--dataset_roots",
         nargs="+",
         required=True,
-        help="Dataset roots (each contains raw_data/observations.csv and metadata.json)",
+        help="数据集根目录 (每个目录需包含 raw_data/observations.csv 和 metadata.json)",
     )
     parser.add_argument(
         "--output_dir",
         default=None,
-        help="Output directory for sigma-group plots (default: <dataset_root>/statistic)",
+        help="输出目录 (默认: <dataset_root>/statistic)",
     )
     parser.add_argument(
         "--limit_percentile",
         type=float,
         default=98.0,
-        help="Y-axis limit percentile for boxplots",
+        help="Y轴限制的百分位数",
     )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir) if args.output_dir else None
     for dataset_root in [Path(p) for p in args.dataset_roots]:
-        _plot_dataset_advanced(dataset_root, output_dir, args.limit_percentile)
+        _plot_dataset(dataset_root, output_dir, args.limit_percentile)
 
 
 if __name__ == "__main__":
