@@ -213,6 +213,15 @@ def main():
     df_merged['error_x'] = df_merged['x_m_est'] - df_merged['x_m_true']
     df_merged['error_y'] = df_merged['y_m_est'] - df_merged['y_m_true']
 
+    # 检查是否为经纬度坐标 (如果是，则转换为米)
+    if df_merged['x_m_true'].abs().max() < 181 and df_merged['y_m_true'].abs().max() < 91:
+        print("检测到经纬度坐标，正在转换为米...")
+        avg_lat = df_merged['y_m_true'].mean()
+        lat_to_m = 111320.0
+        lon_to_m = 111320.0 * math.cos(math.radians(avg_lat))
+        df_merged['error_x'] *= lon_to_m
+        df_merged['error_y'] *= lat_to_m
+
     print(f"绘图 (共 {len(df_merged['sigma_m'].unique())} 组)...")
     plot_hexbin_grid(df_merged, Path(args.output))
 
