@@ -39,6 +39,30 @@ struct Record {
 } PACKED;
 
 /**
+ * Shared memory record type (uses index instead of pointer)
+ */
+struct ShmRecord {
+  NETWORK::NodeIndex source;
+  NETWORK::NodeIndex target;
+  NETWORK::NodeIndex first_n;
+  NETWORK::NodeIndex prev_n;
+  NETWORK::EdgeIndex next_e;
+  double cost;
+  int64_t next_idx; // Replacement for Record* next. -1 means end of list
+} PACKED;
+
+/**
+ * Shared memory file header
+ */
+struct ShmHeader {
+  uint64_t magic_number;  // 0x464D4D5F53484D01 (FMM_SHM1)
+  uint64_t num_rows;
+  uint64_t num_buckets;
+  int multiplier;
+  double delta;
+};
+
+/**
  * Upperbounded origin destination table
  */
 class UBODT {
@@ -112,6 +136,10 @@ class UBODT {
     return num_rows;
   };
 
+  inline int get_buckets() const {
+    return buckets;
+  }
+
   inline void update_delta(double value) {
     delta = value;
   }
@@ -163,6 +191,19 @@ class UBODT {
    */
   static std::shared_ptr<UBODT> read_ubodt_indexed_binary(const std::string &filename,
                                                           int multiplier = 50000);
+
+  /**
+   * Generate a baked shared-memory binary file
+   */
+  static void generate_shm_file(const std::string &input_file, 
+                               const std::string &output_shm_file, 
+                               int multiplier);
+
+  /**
+   * Load a baked shared-memory binary file (Zero-Copy)
+   */
+  static std::shared_ptr<UBODT> load_shm_file(const std::string &filename);
+
   /**
    * Estimate the number of rows in a file
    * @param  filename input file name
@@ -186,6 +227,8 @@ class UBODT {
                                        uint64_t *record_count = nullptr,
                                        uint64_t *source_count = nullptr,
                                        uint64_t *header_size = nullptr);
+  static bool is_shm_binary_format(const std::string &filename);
+
   constexpr static double LOAD_FACTOR = 2.0; /**< factor measuring the
                                               average number of elements in
                                               a bucket. */
@@ -198,6 +241,14 @@ class UBODT {
   double delta = 0.0;
   Record **hashtable;
   
+  // Shared Memory Mode Support
+  bool is_shm_mode = false;
+  void* shm_base = nullptr;
+  size_t shm_size = 0;
+  const ShmHeader* shm_header = nullptr;
+  const int64_t* shm_buckets = nullptr;
+  const ShmRecord* shm_records = nullptr;
+
   // Optional memory mapped reader
   std::shared_ptr<UBODT_MMap> ubodt_mmap_ = nullptr;
 };

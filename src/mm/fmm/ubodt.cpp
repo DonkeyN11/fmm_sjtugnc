@@ -25,12 +25,16 @@ using namespace FMM::CORE;
 using namespace FMM::NETWORK;
 using namespace FMM::MM;
 UBODT::UBODT(int buckets_arg, int multiplier_arg) :
-    buckets(buckets_arg), multiplier(multiplier_arg) {
+    multiplier(multiplier_arg), buckets(buckets_arg) {
   SPDLOG_TRACE("Intialization UBODT with buckets {} multiplier {}",
                buckets, multiplier);
-  hashtable = (Record **) malloc(sizeof(Record *) * buckets);
-  for (int i = 0; i < buckets; i++) {
-    hashtable[i] = nullptr;
+  if (buckets > 0) {
+    hashtable = (Record **) malloc(sizeof(Record *) * buckets);
+    for (int i = 0; i < buckets; i++) {
+      hashtable[i] = nullptr;
+    }
+  } else {
+    hashtable = nullptr;
   }
   SPDLOG_TRACE("Intialization UBODT finished");
 }
@@ -38,21 +42,50 @@ UBODT::UBODT(int buckets_arg, int multiplier_arg) :
 UBODT::~UBODT() {
   /* Clean hashtable */
   SPDLOG_TRACE("Clean UBODT");
-  int i;
-  for (i = 0; i < buckets; ++i) {
-    Record *head = hashtable[i];
-    Record *curr;
-    while ((curr = head) != nullptr) {
-      head = head->next;
-      free(curr);
+  if (is_shm_mode) {
+    if (shm_base != nullptr) {
+      munmap(shm_base, shm_size);
+      shm_base = nullptr;
     }
+  } else if (hashtable != nullptr) {
+    int i;
+    for (i = 0; i < buckets; ++i) {
+      Record *head = hashtable[i];
+      Record *curr;
+      while ((curr = head) != nullptr) {
+        head = head->next;
+        free(curr);
+      }
+    }
+    // Destory hash table pointer
+    free(hashtable);
   }
-  // Destory hash table pointer
-  free(hashtable);
   SPDLOG_TRACE("Clean UBODT finished");
 }
 
 Record *UBODT::look_up(NodeIndex source, NodeIndex target) const {
+  if (is_shm_mode) {
+    unsigned int h = cal_bucket_index(source, target);
+    int64_t idx = shm_buckets[h];
+    while (idx != -1) {
+      const ShmRecord& rec = shm_records[idx];
+      if (rec.source == source && rec.target == target) {
+        // Compatibility hack: return a thread-local Record pointer
+        static thread_local Record temp_ret;
+        temp_ret.source = rec.source;
+        temp_ret.target = rec.target;
+        temp_ret.first_n = rec.first_n;
+        temp_ret.prev_n = rec.prev_n;
+        temp_ret.next_e = rec.next_e;
+        temp_ret.cost = rec.cost;
+        temp_ret.next = nullptr;
+        return &temp_ret;
+      }
+      idx = rec.next_idx;
+    }
+    return nullptr;
+  }
+
   if (ubodt_mmap_) {
       // Delegate to mmap reader
       // Since Record is now packed, it matches the layout of MmapRecord for data fields.
@@ -207,6 +240,24 @@ std::shared_ptr<UBODT> UBODT::read_ubodt_file(const std::string &filename,
   std::shared_ptr<UBODT> ubodt = nullptr;
   auto start_time = UTIL::get_current_time();
 
+  // 1. Check if a SHM baked version exists or if this is a SHM file
+  std::string shm_filename = filename + ".shm_baked";
+  if (is_shm_binary_format(shm_filename)) {
+    SPDLOG_INFO("Found baked SHM file: {}. Using Zero-Copy loading.", shm_filename);
+    ubodt = load_shm_file(shm_filename);
+  } else if (is_shm_binary_format(filename)) {
+    SPDLOG_INFO("File {} is in SHM format. Using Zero-Copy loading.", filename);
+    ubodt = load_shm_file(filename);
+  }
+  
+  if (ubodt) {
+    auto end_time = UTIL::get_current_time();
+    double duration = UTIL::get_duration(start_time, end_time);
+    SPDLOG_INFO("Read UBODT file in {} seconds", duration);
+    return ubodt;
+  }
+
+  // 2. Fallback to existing formats
   // Check if it's a memory-mapped binary file by checking file content pattern
   if (UTIL::check_file_extension(filename,"bin")){
     uint64_t indexed_records = 0;
@@ -466,6 +517,109 @@ bool UBODT::is_mmap_binary_format(const std::string &filename) {
 
   // If first value is reasonable (not extremely large), likely mmap format
   return first_value < 1000000; // Reasonable upper bound for node indices
+}
+
+bool UBODT::is_shm_binary_format(const std::string &filename) {
+  std::ifstream ifs(filename, std::ios::binary);
+  if (!ifs.is_open()) return false;
+  uint64_t magic;
+  ifs.read(reinterpret_cast<char *>(&magic), sizeof(magic));
+  return magic == 0x464D4D5F53484D01;
+}
+
+void UBODT::generate_shm_file(const std::string &input_file,
+                             const std::string &output_shm_file,
+                             int multiplier) {
+  SPDLOG_INFO("Generating Shared Memory Binary from {}", input_file);
+
+  // 1. Load using existing logic (CSV/Binary)
+  auto temp_ubodt = read_ubodt_file(input_file, multiplier);
+
+  long long num_rows = temp_ubodt->get_num_rows();
+  int buckets = temp_ubodt->get_buckets();
+
+  // 2. Prepare flat structures
+  std::vector<int64_t> flat_buckets(buckets, -1);
+  std::vector<ShmRecord> flat_records;
+  flat_records.reserve(num_rows);
+
+  long long current_record_idx = 0;
+  for (int i = 0; i < buckets; ++i) {
+    Record* curr = temp_ubodt->hashtable[i];
+    while (curr != nullptr) {
+      ShmRecord rec;
+      rec.source = curr->source;
+      rec.target = curr->target;
+      rec.first_n = curr->first_n;
+      rec.prev_n = curr->prev_n;
+      rec.next_e = curr->next_e;
+      rec.cost = curr->cost;
+
+      rec.next_idx = flat_buckets[i];
+      flat_buckets[i] = current_record_idx;
+
+      flat_records.push_back(rec);
+      current_record_idx++;
+      curr = curr->next;
+    }
+  }
+
+  // 3. Write to file
+  std::ofstream ofs(output_shm_file, std::ios::binary);
+  ShmHeader header;
+  header.magic_number = 0x464D4D5F53484D01;
+  header.num_rows = num_rows;
+  header.num_buckets = buckets;
+  header.multiplier = multiplier;
+  header.delta = temp_ubodt->get_delta();
+
+  ofs.write(reinterpret_cast<const char*>(&header), sizeof(ShmHeader));
+  ofs.write(reinterpret_cast<const char*>(flat_buckets.data()), buckets * sizeof(int64_t));
+  ofs.write(reinterpret_cast<const char*>(flat_records.data()), num_rows * sizeof(ShmRecord));
+  ofs.close();
+
+  SPDLOG_INFO("SHM Binary generated: {} rows, {} MB", num_rows,
+              (sizeof(ShmHeader) + buckets * 8 + num_rows * sizeof(ShmRecord)) / 1024 / 1024);
+}
+
+std::shared_ptr<UBODT> UBODT::load_shm_file(const std::string &filename) {
+  int fd = open(filename.c_str(), O_RDONLY);
+  if (fd == -1) {
+    throw std::runtime_error("Could not open SHM file");
+  }
+
+  struct stat sb;
+  fstat(fd, &sb);
+  size_t file_size = sb.st_size;
+
+  void* map = mmap(NULL, file_size, PROT_READ, MAP_SHARED, fd, 0);
+  close(fd);
+
+  if (map == MAP_FAILED) {
+    throw std::runtime_error("mmap failed for SHM file");
+  }
+
+  const ShmHeader* header = reinterpret_cast<const ShmHeader*>(map);
+  if (header->magic_number != 0x464D4D5F53484D01) {
+    munmap(map, file_size);
+    throw std::runtime_error("Invalid SHM magic number");
+  }
+
+  // Use the actual number of buckets from the header
+  auto ubodt = std::make_shared<UBODT>(header->num_buckets, header->multiplier);
+  ubodt->is_shm_mode = true;
+  ubodt->shm_base = map;
+  ubodt->shm_size = file_size;
+  ubodt->shm_header = header;
+  ubodt->shm_buckets = reinterpret_cast<const int64_t*>(reinterpret_cast<const char*>(map) + sizeof(ShmHeader));
+  ubodt->shm_records = reinterpret_cast<const ShmRecord*>(reinterpret_cast<const char*>(ubodt->shm_buckets) +
+                                                       header->num_buckets * sizeof(int64_t));
+
+  ubodt->update_delta(header->delta);
+  ubodt->num_rows = header->num_rows;
+
+  SPDLOG_INFO("Loaded UBODT from SHM file (Zero-Copy mode) with {} rows", ubodt->num_rows);
+  return ubodt;
 }
 
 bool UBODT::is_indexed_binary_format(const std::string &filename,
