@@ -5,6 +5,7 @@ import matplotlib.pyplot as plt
 from sklearn.metrics import roc_curve, auc
 import re
 import os
+import argparse
 
 def parse_wkt_point(wkt):
     if pd.isna(wkt) or not isinstance(wkt, str):
@@ -26,6 +27,15 @@ def calc_dist_m(lon1, lat1, lon2, lat2):
     return np.sqrt(dx**2 + dy**2)
 
 def main():
+    parser = argparse.ArgumentParser(description='Analyze CMM error statistics')
+    parser.add_argument('--enable-filter', action='store_true',
+                        help='Enable filtering (ep >= 0.5, trustworthiness >= 0.999)')
+    parser.add_argument('--ep-threshold', type=float, default=0.5,
+                        help='Emission probability threshold (default: 0.5)')
+    parser.add_argument('--trust-threshold', type=float, default=0.999,
+                        help='Trustworthiness threshold (default: 0.999)')
+    args = parser.parse_args()
+
     # File paths
     cmm_res_path = "dataset-hainan-06/mr/cmm_results_trust.csv"
     fmm_res_path = "dataset-hainan-06/mr/fmm_results_filtered.csv"
@@ -75,11 +85,15 @@ def main():
     df_fmm_processed = pd.DataFrame(fmm_data)
 
     # 3. Filtering CMM
-    print("Filtering CMM results (ep >= 0.5, trustworthiness >= 0.999)...")
-    df_cmm_filtered = df_cmm_processed[
-        (df_cmm_processed['ep'] >= 0.5) & 
-        (df_cmm_processed['trustworthiness'] >= 0.999)
-    ].copy()
+    if args.enable_filter:
+        print(f"Filtering CMM results (ep >= {args.ep_threshold}, trustworthiness >= {args.trust_threshold})...")
+        df_cmm_filtered = df_cmm_processed[
+            (df_cmm_processed['ep'] >= args.ep_threshold) &
+            (df_cmm_processed['trustworthiness'] >= args.trust_threshold)
+        ].copy()
+    else:
+        print("Filtering disabled. Using all CMM results.")
+        df_cmm_filtered = df_cmm_processed.copy()
 
     # 4. Plotting Error Distributions
     print("Plotting error distributions...")

@@ -40,6 +40,10 @@ COLUMN_ALIASES: Dict[str, Sequence[str]] = {
 # Maximum distance (metres) to consider an estimated point as lying on the ground truth path.
 ON_PATH_TOLERANCE_M = 1.0
 
+# Distance threshold for point-based correctness (in degrees, approx 10m at this latitude)
+# 1 degree ≈ 111320m, so 10m ≈ 0.00009 degrees
+POINT_CORRECTNESS_THRESHOLD_DEG = 0.0001
+
 
 def parse_args(argv: Sequence[str] | None = None) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -137,12 +141,39 @@ def parse_edge_ids(value: object) -> List[str]:
     return []
 
 
+def parse_point(text: Optional[str]) -> Optional[Tuple[float, float]]:
+    """Parse a POINT WKT into a single coordinate tuple."""
+    if not text:
+        return None
+    text = text.strip()
+    if not text or not text.upper().startswith("POINT"):
+        return None
+    open_idx = text.find("(")
+    close_idx = text.rfind(")")
+    if open_idx == -1 or close_idx == -1 or close_idx <= open_idx:
+        return None
+    body = text[open_idx + 1 : close_idx].strip()
+    parts = body.split()
+    if len(parts) != 2:
+        return None
+    try:
+        return (float(parts[0]), float(parts[1]))
+    except ValueError:
+        return None
+
+
 def parse_linestring(text: Optional[str]) -> List[Tuple[float, float]]:
     """Parse a simple LINESTRING WKT into a list of points."""
     if not text:
         return []
     text = text.strip()
-    if not text or not text.upper().startswith("LINESTRING"):
+    if not text:
+        return []
+    # Support both POINT and LINESTRING
+    if text.upper().startswith("POINT"):
+        pt = parse_point(text)
+        return [pt] if pt else []
+    if not text.upper().startswith("LINESTRING"):
         return []
     open_idx = text.find("(")
     close_idx = text.rfind(")")
@@ -244,23 +275,47 @@ def prepare_metric_data(
 
 
 def load_ground_truth_data(path: Path) -> Dict[str, Dict[str, object]]:
-    """Load ground truth coordinates and edge ids per trajectory id."""
+    """Load ground truth coordinates and edge ids per trajectory id.
+
+    Supports two modes:
+    1. Trajectory mode: id + geom (LINESTRING)
+    2. Point mode: id/timestamp + x, y columns
+    """
     mapping: Dict[str, Dict[str, object]] = {}
     if not path.exists():
         raise FileNotFoundError(f"Ground truth file not found: {path}")
     with path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
-            traj_id = row.get("id")
+            traj_id = row.get("id") or row.get("timestamp")
             if not traj_id:
                 continue
-            coords = parse_linestring(row.get("geom"))
-            if not coords:
-                continue
-            mapping[str(traj_id).strip()] = {
-                "coords": coords,
-                "edge_ids": parse_edge_ids(row.get("edge_ids")),
-            }
+
+            # Try LINESTRING geom first (trajectory mode)
+            geom = row.get("geom")
+            if geom and "LINESTRING" in geom.upper():
+                coords = parse_linestring(geom)
+                if coords:
+                    mapping[str(traj_id).strip()] = {
+                        "coords": coords,
+                        "edge_ids": parse_edge_ids(row.get("edge_ids")),
+                    }
+                    continue
+
+            # Try point mode (x, y columns)
+            x_str = row.get("x")
+            y_str = row.get("y")
+            if x_str is not None and y_str is not None:
+                try:
+                    x = float(x_str)
+                    y = float(y_str)
+                    mapping[str(traj_id).strip()] = {
+                        "coords": [(x, y)],
+                        "edge_ids": [],
+                    }
+                except ValueError:
+                    continue
+
     return mapping
 
 
@@ -289,10 +344,11 @@ def compute_error_components_for_dataset(
     with result_path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
-            traj_id = row.get("id")
-            if not traj_id:
+            # Support both 'id' and 'timestamp' for matching
+            row_id = row.get("id") or row.get("timestamp")
+            if not row_id:
                 continue
-            traj_id = traj_id.strip()
+            traj_id = str(row_id).strip()
             truth_coords = ground_truth.get(traj_id)
             if not truth_coords:
                 continue
@@ -392,10 +448,11 @@ def compute_trust_error_pairs(
     with result_path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
-            traj_id = row.get("id")
-            if not traj_id:
+            # Support both 'id' and 'timestamp' for matching
+            row_id = row.get("id") or row.get("timestamp")
+            if not row_id:
                 continue
-            truth_coords = ground_truth.get(str(traj_id).strip())
+            truth_coords = ground_truth.get(str(row_id).strip())
             if not truth_coords:
                 continue
             estimate_coords = parse_linestring(row.get("pgeom"))
@@ -471,7 +528,8 @@ def compute_correctness_for_dataset(
     with result_path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
-            traj_id_raw = row.get("id")
+            # Support both 'id' and 'timestamp' for matching
+            traj_id_raw = row.get("id") or row.get("timestamp")
             if not traj_id_raw:
                 continue
             traj_id = str(traj_id_raw).strip()
@@ -491,10 +549,23 @@ def compute_correctness_for_dataset(
             if not trust_values_row:
                 continue
 
-            correct_row = [
-                int(point_on_polyline(est, truth_coords, ON_PATH_TOLERANCE_M))
-                for est in estimate_coords[:count]
-            ]
+            # For single-point ground truth, use distance threshold
+            # For polyline ground truth, use point_on_polyline
+            if len(truth_coords) == 1:
+                # Point mode: check distance
+                truth_x, truth_y = truth_coords[0]
+                correct_row = [
+                    1 if math.hypot(est_x - truth_x, est_y - truth_y) <= POINT_CORRECTNESS_THRESHOLD_DEG
+                    else 0
+                    for est_x, est_y in estimate_coords[:count]
+                ]
+            else:
+                # Trajectory mode: check if on polyline
+                correct_row = [
+                    int(point_on_polyline(est, truth_coords, ON_PATH_TOLERANCE_M))
+                    for est in estimate_coords[:count]
+                ]
+
             trust_values.extend(trust_values_row)
             correct_flags.extend(correct_row)
 

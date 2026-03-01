@@ -137,18 +137,23 @@ int run_daemon(const std::string &ubodt_file, int multiplier) {
     std::signal(SIGINT, signal_handler);
     std::signal(SIGTERM, signal_handler);
 
-    // Load UBODT
-    auto &manager = UBODTManager::getInstance();
-    manager.set_auto_release(false); // Keep UBODT in memory
+    std::string shm_file = ubodt_file + ".shm_baked";
+    
+    // Check if baked file exists
+    if (!UTIL::file_exists(shm_file)) {
+        SPDLOG_INFO("SHM baked file not found. Generating...");
+        UBODT::generate_shm_file(ubodt_file, shm_file, multiplier);
+    }
 
-    SPDLOG_INFO("Loading UBODT...");
+    // Load UBODT using Zero-Copy SHM mode
+    SPDLOG_INFO("Loading UBODT from SHM baked file...");
     auto start_time = UTIL::get_current_time();
-    auto ubodt = manager.get_ubodt(ubodt_file, multiplier, false);
+    auto ubodt = UBODT::load_shm_file(shm_file);
     auto end_time = UTIL::get_current_time();
     double duration = UTIL::get_duration(start_time, end_time);
 
     if (!ubodt) {
-        SPDLOG_ERROR("Failed to load UBODT from {}", ubodt_file);
+        SPDLOG_ERROR("Failed to load UBODT from {}", shm_file);
         return 1;
     }
 
@@ -169,12 +174,13 @@ int run_daemon(const std::string &ubodt_file, int multiplier) {
     // Keep running until signal received
     SPDLOG_INFO("Daemon is now running. Press Ctrl+C to stop.");
     std::cout << "\n========================================\n";
-    std::cout << "UBODT Daemon Started\n";
+    std::cout << "UBODT Daemon Started (SHM Optimized)\n";
     std::cout << "========================================\n";
     std::cout << "PID: " << getpid() << "\n";
     std::cout << "UBODT: " << ubodt_file << "\n";
+    std::cout << "SHM File: " << shm_file << "\n";
     std::cout << "Rows: " << num_rows << "\n";
-    std::cout << "Load time: " << std::fixed << std::setprecision(2) << duration << "s\n";
+    std::cout << "Load time: " << std::fixed << std::setprecision(4) << duration << "s\n";
     std::cout << "========================================\n\n";
 
     while (keep_running) {
@@ -187,7 +193,8 @@ int run_daemon(const std::string &ubodt_file, int multiplier) {
     SPDLOG_INFO("Shutting down daemon...");
     std::remove(PID_FILE.c_str());
     std::remove(STATUS_FILE.c_str());
-    manager.release_all();
+    // In SHM mode, the destructor handles munmap
+    ubodt.reset();
 
     SPDLOG_INFO("Daemon stopped.");
     return 0;

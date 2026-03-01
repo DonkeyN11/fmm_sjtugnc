@@ -58,14 +58,28 @@ bool UBODTManager::check_daemon_loaded(const std::string &filename) {
 
     // Check if process is running
     if (found_daemon && pid > 0 && kill(pid, 0) == 0) {
-        // Check if filenames match (simple string match)
-        // Normalize paths could be better but this is a basic check
-        if (is_loaded && daemon_file == filename) {
+        // Normalize: remove .shm_baked suffix for comparison if present
+        std::string norm_daemon = daemon_file;
+        std::string norm_input = filename;
+        
+        auto strip_suffix = [](std::string &s) {
+            std::string suffix = ".shm_baked";
+            if (s.size() > suffix.size() && 
+                s.compare(s.size() - suffix.size(), suffix.size(), suffix) == 0) {
+                s = s.substr(0, s.size() - suffix.size());
+            }
+        };
+        
+        strip_suffix(norm_daemon);
+        strip_suffix(norm_input);
+
+        if (is_loaded && norm_daemon == norm_input) {
             return true;
         }
-        // Also try to check if one is suffix of another to be more robust
-        if (is_loaded && (daemon_file.find(filename) != std::string::npos || 
-                          filename.find(daemon_file) != std::string::npos)) {
+        
+        // Robust suffix/substring check
+        if (is_loaded && (norm_daemon.find(norm_input) != std::string::npos || 
+                          norm_input.find(norm_daemon) != std::string::npos)) {
             return true;
         }
     }
