@@ -1101,41 +1101,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             }
         }
 
-        std::vector<double> log_emission_probs;
-        if (config.normalized) {
-            // Top-K normalization in log-space with background noise
-            std::vector<double> top_k_scores = raw_probabilities;
-            size_t k = std::min(top_k_scores.size(), static_cast<size_t>(config.k));
-            std::partial_sort(top_k_scores.begin(), top_k_scores.begin() + k, top_k_scores.end(), std::greater<double>());
-            top_k_scores.resize(k);
-
-            // Calculate log sum of top-k candidates
-            double log_sum_candidates = log_sum_exp(top_k_scores);
-
-            // Include background noise in the normalization (represents "null hypothesis")
-            // This prevents "矮子里拔将军" (picking the best of poor candidates)
-            // LogSumExp: log(exp(log_sum_candidates) + exp(background_log_prob))
-            std::vector<double> norm_components = {log_sum_candidates, config.background_log_prob};
-            double log_norm = log_sum_exp(norm_components);
-
-            log_emission_probs.reserve(raw_probabilities.size());
-
-            if (log_norm > -std::numeric_limits<double>::infinity()) {
-                for (double log_prob : raw_probabilities) {
-                    log_emission_probs.push_back(log_prob - log_norm);
-                }
-            } else if (!raw_probabilities.empty()) {
-                double uniform_log_prob = -std::log(static_cast<double>(raw_probabilities.size()));
-                log_emission_probs.assign(raw_probabilities.size(), uniform_log_prob);
-                if (!valid_covariance) {
-                    SPDLOG_WARN("Point {}: covariance determinant non-positive, using uniform emission", i);
-                } else {
-                    SPDLOG_WARN("Point {}: no valid candidates within PL, using uniform emission", i);
-                }
-            }
-        } else {
-            log_emission_probs = raw_probabilities;
-        }
+        std::vector<double> log_emission_probs = raw_probabilities;
 
         SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
         result.candidates.push_back(std::move(selected_candidates));
@@ -1482,24 +1448,15 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
         log_eps.push_back(node.ep); // ep here is already log-prob
     }
 
-    // Apply Top-K normalization
-    size_t k = std::min(log_eps.size(), static_cast<size_t>(config.k));
-    std::vector<double> top_k_eps = log_eps;
-    std::partial_sort(top_k_eps.begin(), top_k_eps.begin() + k, top_k_eps.end(), std::greater<double>());
-    top_k_eps.resize(k);
-
-    // Calculate log normalization factor
-    double log_norm_factor = log_sum_exp(top_k_eps);
-
-    // Initialize cumu_prob as normalized emission probability in log-space
+    // Initialize cumu_prob as raw emission probability in log-space
     for (size_t i = 0; i < layer->size(); ++i) {
         auto &node = (*layer)[i];
         if (log_eps[i] > -std::numeric_limits<double>::infinity()) {
-            node.cumu_prob = log_eps[i] - log_norm_factor;  // Log-space: subtract normalization factor
-            node.trustworthiness = std::exp(node.ep);  // Linear ep for trustworthiness
+            node.cumu_prob = log_eps[i];  // Assign directly without normalization
+            node.trustworthiness = 0.0;   // Set to 0.0 as window-based trust will override it
         } else {
             node.cumu_prob = -std::numeric_limits<double>::infinity();
-            node.trustworthiness = 0;
+            node.trustworthiness = 0.0;
         }
         node.tp = 1.0;  // No transition probability for first layer (store as linear 1.0)
         node.prev = nullptr;
@@ -1623,19 +1580,11 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
     *connected = true;
 
-    // 3. Top-K Normalization in Log-Space
-    std::vector<double> top_k_scores = scores_to_normalize;
-    size_t k = std::min(top_k_scores.size(), static_cast<size_t>(config.k));
-    std::partial_sort(top_k_scores.begin(), top_k_scores.begin() + k, top_k_scores.end(), std::greater<double>());
-    top_k_scores.resize(k);
-
-    // Calculate log normalization factor from Top-K scores
-    double log_norm = log_sum_exp(top_k_scores);
-
-    // Normalize cumu_prob (log-space: subtract normalization factor)
+    // 3. Max-Shift to prevent underflow (Mathematical distribution preserved, unnormalized)
+    // We shift by max_score_in_layer to keep scores near 0 in log-space, preventing double precision collapse.
     for (int idx : kept_indices) {
-        (*lb_ptr)[idx].cumu_prob = raw_scores[idx] - log_norm;
-        (*lb_ptr)[idx].trustworthiness = std::exp((*lb_ptr)[idx].cumu_prob);
+        (*lb_ptr)[idx].cumu_prob = raw_scores[idx] - max_score_in_layer;
+        (*lb_ptr)[idx].trustworthiness = 0.0; // Discard single-point linear trustworthiness
     }
 }
 
