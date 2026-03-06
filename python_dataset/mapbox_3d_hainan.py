@@ -617,12 +617,12 @@ def render_html(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cmm", default="dataset-hainan-06/mr/cmm_results_0303_only_trust_norm.csv")
+    parser.add_argument("--cmm", default="dataset-hainan-06/mr/cmm_PL=10.csv")
     parser.add_argument("--fmm", default="dataset-hainan-06/mr/fmm_results_filtered.csv")
     parser.add_argument("--input", default="dataset-hainan-06/cmm_input_points.csv")
     parser.add_argument("--edges", default="input/map/hainan/edges.shp")
     parser.add_argument("--ids", help="Comma separated trajectory IDs")
-    parser.add_argument("--output", default="python_dataset/mapbox_hainan_viewer.html")
+    parser.add_argument("--output", default="python_dataset/pl=10/mapbox_hainan_viewer.html")
     args = parser.parse_args()
 
     selected_ids = set(args.ids.split(",")) if args.ids else set()
