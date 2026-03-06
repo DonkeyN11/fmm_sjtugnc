@@ -57,9 +57,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     fiona = None
 
-MAPBOX_DEFAULT_TOKEN = (
-    "pk.eyJ1IjoiZG9ua2V5LW5pbmciLCJhIjoiY21kenJ5OTY5MGc5azJqb25hdTVtc2tvNiJ9.CgMc9ZNXaZ1HDrC4Zl2aMQ"
-)
+# Token from environment variable (DO NOT hardcode credentials in source code)
+MAPBOX_DEFAULT_TOKEN = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
 
 DEFAULT_CMM_TRAJECTORY_CSV = "dataset_hainan_06/1.1/trajectory.csv"
 ELLIPSE_SCALE = 2.0  # number of standard deviations for covariance ellipses

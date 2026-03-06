@@ -38,9 +38,8 @@ try:
 except ImportError:  # pragma: no cover - optional dependency
     fiona = None
 
-MAPBOX_DEFAULT_TOKEN = (
-    "pk.eyJ1IjoiZG9ua2V5LW5pbmciLCJhIjoiY21kenJ5OTY5MGc5azJqb25hdTVtc2tvNiJ9.CgMc9ZNXaZ1HDrC4Zl2aMQ"
-)
+# Token from environment variable (DO NOT hardcode credentials in source code)
+MAPBOX_DEFAULT_TOKEN = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
 
 DEFAULT_EDGES_SHP = "input/map/haikou/edges.shp"
 DEFAULT_CMM_TRAJECTORY_CSV = "input_cmm/cmm_trajectory.csv"
