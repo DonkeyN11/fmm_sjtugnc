@@ -1235,6 +1235,9 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         segments.push_back(current_segment);
     }
 
+    Traj_Candidates empty_tc;
+    std::vector<std::vector<double>> empty_log_eps;
+
     auto process_sub_segment = [&](TransitionGraph* tg_ptr, const std::vector<int>& sub_indices) {
         if (tg_ptr == nullptr || sub_indices.empty()) return;
         int start_real_idx = sub_indices.front();
@@ -1367,12 +1370,20 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         int start_real_idx = segment_indices.front();
         current_sub_indices.push_back(start_real_idx);
 
-        Traj_Candidates start_tc = {tc_raw[start_real_idx]};
-        std::vector<std::vector<double>> start_log_eps = {log_eps_raw[start_real_idx]};
-        
-        auto tg_ptr = std::make_unique<TransitionGraph>(start_tc, start_log_eps, true);
+        auto tg_ptr = std::make_unique<TransitionGraph>(empty_tc, empty_log_eps, true);
         // Pre-reserve layers to prevent reallocation which would invalidate pointers
         tg_ptr->get_layers().reserve(segment_indices.size() + 1); 
+
+        // Manually build the first layer to point to stable tc_raw data
+        TGLayer start_layer;
+        start_layer.reserve(tc_raw[start_real_idx].size());
+        for (size_t k = 0; k < tc_raw[start_real_idx].size(); ++k) {
+            start_layer.push_back(TGNode{
+                &tc_raw[start_real_idx][k], nullptr, log_eps_raw[start_real_idx][k], 0,
+                -std::numeric_limits<double>::infinity(), 0, 0
+            });
+        }
+        tg_ptr->get_layers().push_back(std::move(start_layer));
         initialize_first_layer(&tg_ptr->get_layers()[0], config);
 
         TGLayer* last_valid_layer = &tg_ptr->get_layers()[0];
@@ -1404,11 +1415,19 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
                 current_sub_indices.clear();
                 current_sub_indices.push_back(next_real);
-                Traj_Candidates new_start_tc = {tc_raw[next_real]};
-                std::vector<std::vector<double>> new_start_log_eps = {log_eps_raw[next_real]};
                 
-                tg_ptr = std::make_unique<TransitionGraph>(new_start_tc, new_start_log_eps, true);
+                tg_ptr = std::make_unique<TransitionGraph>(empty_tc, empty_log_eps, true);
                 tg_ptr->get_layers().reserve(segment_indices.size() + 1);
+                
+                TGLayer new_start_layer;
+                new_start_layer.reserve(tc_raw[next_real].size());
+                for (size_t k = 0; k < tc_raw[next_real].size(); ++k) {
+                    new_start_layer.push_back(TGNode{
+                        &tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
+                        -std::numeric_limits<double>::infinity(), 0, 0
+                    });
+                }
+                tg_ptr->get_layers().push_back(std::move(new_start_layer));
                 initialize_first_layer(&tg_ptr->get_layers()[0], config);
                 
                 last_valid_layer = &tg_ptr->get_layers()[0];

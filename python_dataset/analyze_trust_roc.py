@@ -79,11 +79,11 @@ def main():
     base_dir = Path(__file__).resolve().parent.parent
     data_dir = base_dir / "dataset-hainan-06"
     mr_dir = data_dir / "mr"
-    output_dir = base_dir / "python_dataset" / "output"
+    output_dir = base_dir / "python_dataset" / "output_PL=10"
     output_dir.mkdir(parents=True, exist_ok=True)
 
     input_csv = data_dir / "cmm_input_points.csv"
-    cmm_csv = mr_dir / "cmm_results_0303_only_trust_norm.csv"
+    cmm_csv = mr_dir / "cmm_PL=10.csv"
     fmm_csv = mr_dir / "fmm_results_filtered.csv"
 
     # --- 2. Initialize Transformer ---
