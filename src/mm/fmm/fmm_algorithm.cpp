@@ -208,6 +208,7 @@ PyMatchResult FastMapMatch::match_wkt(
   MatchResult result = match_traj(traj, config);
   PyMatchResult output;
   output.id = result.id;
+  output.status = static_cast<int>(result.status);
   output.opath = result.opath;
   output.cpath = result.cpath;
   output.mgeom = result.mgeom;
