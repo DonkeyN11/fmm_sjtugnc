@@ -130,7 +130,9 @@ MatchResult STMATCH::match_traj(const Trajectory &traj,
   Traj_Candidates tc = network_.search_tr_cs_knn(
     traj.geom, config.k, config.radius);
   SPDLOG_DEBUG("Trajectory candidate {}", tc);
-  if (tc.empty()) return MatchResult{};
+  if (tc.empty()) {
+    return MatchResult{traj.id, MatchStatus::FAILED_NO_CANDIDATE};
+  }
   std::vector<std::vector<CandidateEmission>> candidate_details(tc.size());
   for (size_t idx = 0; idx < tc.size(); ++idx) {
     const Point_Candidates &cand_list = tc[idx];
@@ -176,8 +178,12 @@ MatchResult STMATCH::match_traj(const Trajectory &traj,
   SPDLOG_DEBUG("Complete path is {}", cpath);
   LineString mgeom = network_.complete_path_to_geometry(
     traj.geom, cpath);
+  MatchStatus status = MatchStatus::SUCCESS;
+  if (tg_opath.size() < tc.size()) {
+    status = MatchStatus::PARTIAL;
+  }
   MatchResult match_result{
-    traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
+    traj.id, status, matched_candidate_path, opath, cpath, indices, mgeom};
   match_result.candidate_details = std::move(candidate_details);
   return match_result;
 }

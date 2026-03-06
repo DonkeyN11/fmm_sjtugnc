@@ -30,6 +30,7 @@ CSVMatchResultWriter::CSVMatchResultWriter(
 void CSVMatchResultWriter::write_header() {
   std::string header = "id";
   if (config_.point_mode) header += ";seq";
+  header += ";status";
   if (config_.write_ogeom) header += ";ogeom";
   if (config_.write_timestamp) header += ";timestamp";
   if (config_.write_opath) header += ";opath";
@@ -64,6 +65,16 @@ void CSVMatchResultWriter::write_result(
   }
   std::stringstream buf;
   buf << result.id;
+
+  // Output status string
+  switch (result.status) {
+    case FMM::MM::MatchStatus::SUCCESS: buf << ";SUCCESS"; break;
+    case FMM::MM::MatchStatus::PARTIAL: buf << ";PARTIAL"; break;
+    case FMM::MM::MatchStatus::FAILED_NO_CANDIDATE: buf << ";FAILED_NO_CANDIDATE"; break;
+    case FMM::MM::MatchStatus::FAILED_DISCONNECTED: buf << ";FAILED_DISCONNECTED"; break;
+    default: buf << ";UNKNOWN"; break;
+  }
+
   if (config_.write_opath) {
     buf << ";" << result.opath;
   }
@@ -631,12 +642,21 @@ void CSVMatchResultWriter::write_point_mode(
     const FMM::MM::MatchResult &result) {
   std::stringstream buf;
 
-  // Handle failed matching: when opt_candidate_path is empty, output original trajectory points
-  if (result.opt_candidate_path.empty()) {
+  // Handle failed matching: use MatchStatus to determine if matching succeeded
+  if (result.status != FMM::MM::MatchStatus::SUCCESS && result.status != FMM::MM::MatchStatus::PARTIAL) {
     int num_points = traj.geom.get_num_points();
     for (int i = 0; i < num_points; ++i) {
       buf << result.id;
       buf << ";" << i; // seq field
+
+      // Output status string
+      switch (result.status) {
+        case FMM::MM::MatchStatus::SUCCESS: buf << ";SUCCESS"; break;
+        case FMM::MM::MatchStatus::PARTIAL: buf << ";PARTIAL"; break;
+        case FMM::MM::MatchStatus::FAILED_NO_CANDIDATE: buf << ";FAILED_NO_CANDIDATE"; break;
+        case FMM::MM::MatchStatus::FAILED_DISCONNECTED: buf << ";FAILED_DISCONNECTED"; break;
+        default: buf << ";UNKNOWN"; break;
+      }
 
       // ogeom: Original GPS point
       if (config_.write_ogeom) {
@@ -786,6 +806,13 @@ void CSVMatchResultWriter::write_point_mode(
 
     buf << result.id;
     buf << ";" << i; // seq field
+
+    // Output status string
+    switch (result.status) {
+      case FMM::MM::MatchStatus::SUCCESS: buf << ";SUCCESS"; break;
+      case FMM::MM::MatchStatus::PARTIAL: buf << ";PARTIAL"; break;
+      default: buf << ";SUCCESS"; break; // Fallback for success
+    }
 
     // ogeom: Original GPS point
     if (config_.write_ogeom) {
