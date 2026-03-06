@@ -1235,139 +1235,220 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         segments.push_back(current_segment);
     }
 
-    for (const auto& segment_indices : segments) {
-        std::vector<int> current_sub_indices;
-        std::vector<int> skipped_indices;
-        std::unique_ptr<TransitionGraph> tg_ptr;
-        int last_valid_real = -1;
+    auto process_sub_segment = [&](TransitionGraph* tg_ptr, const std::vector<int>& sub_indices) {
+        if (tg_ptr == nullptr || sub_indices.empty()) return;
+        int start_real_idx = sub_indices.front();
+        int end_real_idx = sub_indices.back();
+        
+        TGOpath tg_opath = tg_ptr->backtrack();
+        
+        if (tg_opath.empty()) {
+            final_results.push_back(create_fallback_result(start_real_idx, end_real_idx, MatchStatus::FAILED_DISCONNECTED));
+            return;
+        }
 
-        auto finalize_sub_segment = [&](std::unique_ptr<TransitionGraph>& tg_p, 
-                                         const std::vector<int>& sub_indices) {
-            if (!tg_p || sub_indices.empty()) return;
-            TGOpath tg_opath = tg_p->backtrack();
-            if (tg_opath.empty()) {
-                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back(), MatchStatus::FAILED_DISCONNECTED));
-                tg_p.reset();
-                return;
+        // Build a continuous trajectory for the sub-segment to ensure correct distance calculations
+        CMMTrajectory segment_traj;
+        segment_traj.id = traj.id;
+        for (int idx : sub_indices) {
+            segment_traj.geom.add_point(traj.geom.get_point(idx));
+            if (!traj.timestamps.empty() && idx < static_cast<int>(traj.timestamps.size())) {
+                segment_traj.timestamps.push_back(traj.timestamps[idx]);
             }
-            CMMTrajectory sub_traj;
-            sub_traj.id = traj.id;
-            Traj_Candidates sub_tc;
-            std::vector<std::vector<double>> sub_log_eps;
-            std::vector<std::vector<CandidateEmission>> sub_all_details;
-            for (int idx : sub_indices) {
-                sub_traj.geom.add_point(traj.geom.get_point(idx));
-                if (!traj.timestamps.empty()) sub_traj.timestamps.push_back(traj.timestamps[idx]);
-                if (!traj.covariances.empty()) sub_traj.covariances.push_back(traj.covariances[idx]);
-                if (!traj.protection_levels.empty()) sub_traj.protection_levels.push_back(traj.protection_levels[idx]);
-                sub_tc.push_back(tc_raw[idx]);
-                sub_log_eps.push_back(log_eps_raw[idx]);
-                sub_all_details.push_back(global_candidate_details[idx]);
-            }
-            auto trustworthiness_results = compute_window_trustworthiness(sub_tc, sub_log_eps, sub_traj, config);
-            
-            MatchedCandidatePath matched_candidate_path;
-            matched_candidate_path.reserve(tg_opath.size());
-            std::vector<MatchedCandidate> filtered_path;
-            std::vector<int> filtered_indices;
-            std::vector<double> filtered_sp_dist;
-            std::vector<double> filtered_eu_dist;
-            std::vector<std::vector<CandidateEmission>> filtered_details;
-            
-            std::vector<int> indices_mapping;
-            C_Path cpath = ubodt_->construct_complete_path(traj.id, tg_opath, network_.get_edges(), &indices_mapping, config.reverse_tolerance);
+        }
 
-            O_Path opath;
-            std::vector<int> filtered_indices_mapping;
+        Traj_Candidates sub_tc;
+        std::vector<std::vector<double>> sub_log_eps;
+        for (int idx : sub_indices) {
+            sub_tc.push_back(tc_raw[idx]);
+            sub_log_eps.push_back(log_eps_raw[idx]);
+        }
+
+        auto trustworthiness_results = compute_window_trustworthiness(
+            sub_tc, sub_log_eps, segment_traj, config);
+
+        MatchedCandidatePath matched_candidate_path;
+        matched_candidate_path.reserve(tg_opath.size());
+
+        std::vector<MatchedCandidate> filtered_path;
+        std::vector<int> filtered_indices;
+        std::vector<double> filtered_sp_dist;
+        std::vector<double> filtered_eu_dist;
+        std::vector<std::vector<CandidateEmission>> filtered_details;
+
+        std::vector<std::vector<CandidateEmission>> all_details;
+        for (int idx : sub_indices) {
+            all_details.push_back(global_candidate_details[idx]);
+        }
+
+        for (size_t i = 0; i < tg_opath.size(); ++i) {
+            const TGNode *node = tg_opath[i];
+            double sp = (i == 0) ? 0.0 : node->sp_dist;
+            double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
+
+            double trust = node->trustworthiness;
+            if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
+                trust = trustworthiness_results.first[i];
+            }
+
+            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust};
+            matched_candidate_path.push_back(mc);
+
+            if (!config.filtered || trust >= config.trustworthiness_threshold) {
+                filtered_path.push_back(mc);
+                filtered_indices.push_back(sub_indices[i]);
+                filtered_sp_dist.push_back(sp);
+                filtered_eu_dist.push_back(eu);
+                filtered_details.push_back(all_details[i]);
+            }
+        }
+
+        if (filtered_path.empty()) {
+            final_results.push_back(create_fallback_result(start_real_idx, end_real_idx, MatchStatus::FAILED_NO_CANDIDATE));
+            return;
+        }
+
+        O_Path opath;
+        for (const auto& mc : filtered_path) opath.push_back(mc.c.edge->id);
+
+        std::vector<int> indices_mapping;
+        C_Path cpath = ubodt_->construct_complete_path(traj.id, tg_opath, network_.get_edges(), &indices_mapping, config.reverse_tolerance);
+        LineString mgeom = network_.complete_path_to_geometry(segment_traj.geom, cpath);
+
+        MatchResult res;
+        res.id = traj.id;
+        res.status = (sub_indices.size() == traj.geom.get_num_points()) ? MatchStatus::SUCCESS : MatchStatus::PARTIAL;
+        res.opt_candidate_path = std::move(filtered_path);
+        res.opath = std::move(opath);
+        res.cpath = std::move(cpath);
+        
+        // Filter indices_mapping for points that were not filtered by trustworthiness
+        std::vector<int> filtered_indices_mapping;
+        if (!indices_mapping.empty()) {
             for (size_t i = 0; i < tg_opath.size(); ++i) {
-                const TGNode *node = tg_opath[i];
-                double sp = (i == 0) ? 0.0 : node->sp_dist;
-                double eu = (i == 0) ? 0.0 : boost::geometry::distance(sub_traj.geom.get_point(i-1), sub_traj.geom.get_point(i));
-                double trust = node->trustworthiness;
-                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) trust = trustworthiness_results.first[i];
-                MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust};
-                matched_candidate_path.push_back(mc);
+                double trust = tg_opath[i]->trustworthiness;
+                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
+                    trust = trustworthiness_results.first[i];
+                }
                 if (!config.filtered || trust >= config.trustworthiness_threshold) {
-                    filtered_path.push_back(mc);
-                    opath.push_back(mc.c.edge->id);
-                    filtered_indices.push_back(sub_indices[i]);
-                    filtered_sp_dist.push_back(sp);
-                    filtered_eu_dist.push_back(eu);
-                    filtered_details.push_back(sub_all_details[i]);
                     if (i < indices_mapping.size()) filtered_indices_mapping.push_back(indices_mapping[i]);
                 }
             }
-            if (filtered_path.empty()) {
-                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back(), MatchStatus::FAILED_NO_CANDIDATE));
-                tg_p.reset();
-                return;
+        }
+        res.indices = std::move(filtered_indices_mapping);
+        res.mgeom = std::move(mgeom);
+        res.sp_distances = std::move(filtered_sp_dist);
+        res.eu_distances = std::move(filtered_eu_dist);
+
+        std::vector<std::vector<double>> filtered_nbest;
+        for (size_t i = 0; i < tg_opath.size(); ++i) {
+            const TGNode *node = tg_opath[i];
+            double trust = node->trustworthiness;
+            if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
+                trust = trustworthiness_results.first[i];
             }
-            LineString mgeom;
-            if (!cpath.empty()) {
-                mgeom = network_.complete_path_to_geometry(sub_traj.geom, cpath);
-            }
-            MatchResult res;
-            res.id = traj.id;
-            res.status = (sub_indices.size() == traj.geom.get_num_points()) ? MatchStatus::SUCCESS : MatchStatus::PARTIAL;
-            res.opt_candidate_path = std::move(filtered_path);
-            res.opath = std::move(opath);
-            res.cpath = std::move(cpath);
-            res.indices = std::move(filtered_indices_mapping);
-            res.mgeom = std::move(mgeom);
-            res.sp_distances = std::move(filtered_sp_dist);
-            res.eu_distances = std::move(filtered_eu_dist);
-            std::vector<std::vector<double>> filtered_nbest;
-            for (size_t i = 0; i < tg_opath.size(); ++i) {
-                double trust = tg_opath[i]->trustworthiness;
-                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) trust = trustworthiness_results.first[i];
-                if (!config.filtered || trust >= config.trustworthiness_threshold) {
-                    if (i < trustworthiness_results.second.size()) filtered_nbest.push_back(trustworthiness_results.second[i]);
-                    else filtered_nbest.push_back({});
+            if (!config.filtered || trust >= config.trustworthiness_threshold) {
+                if (i < trustworthiness_results.second.size()) {
+                    filtered_nbest.push_back(trustworthiness_results.second[i]);
+                } else {
+                    filtered_nbest.push_back({});
                 }
             }
-            res.nbest_trustworthiness = std::move(filtered_nbest);
-            res.original_indices = std::move(filtered_indices);
-            res.candidate_details = std::move(filtered_details);
-            final_results.push_back(std::move(res));
-            tg_p.reset();
-        };
+        }
+        res.nbest_trustworthiness = std::move(filtered_nbest);
+        res.original_indices = std::move(filtered_indices);
+        res.candidate_details = std::move(filtered_details);
 
-        for (size_t i = 0; i < segment_indices.size(); ++i) {
+        final_results.push_back(std::move(res));
+    };
+
+    for (const auto& segment_indices : segments) {
+        std::vector<int> current_sub_indices; 
+        int start_real_idx = segment_indices.front();
+        current_sub_indices.push_back(start_real_idx);
+
+        Traj_Candidates start_tc = {tc_raw[start_real_idx]};
+        std::vector<std::vector<double>> start_log_eps = {log_eps_raw[start_real_idx]};
+        
+        auto tg_ptr = std::make_unique<TransitionGraph>(start_tc, start_log_eps, true);
+        // Pre-reserve layers to prevent reallocation which would invalidate pointers
+        tg_ptr->get_layers().reserve(segment_indices.size() + 1); 
+        initialize_first_layer(&tg_ptr->get_layers()[0], config);
+
+        TGLayer* last_valid_layer = &tg_ptr->get_layers()[0];
+        int last_valid_real = start_real_idx;
+        std::vector<int> skipped_indices; 
+
+        for (size_t i = 1; i < segment_indices.size(); ++i) {
             int next_real = segment_indices[i];
-            double dist = (last_valid_real == -1) ? 0.0 : boost::geometry::distance(traj.geom.get_point(last_valid_real), traj.geom.get_point(next_real));
-            if (tg_ptr && config.enable_gap_bridging && dist > config.max_gap_distance) {
-                finalize_sub_segment(tg_ptr, current_sub_indices);
-                current_sub_indices.clear();
-                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx, MatchStatus::FAILED_DISCONNECTED));
-                skipped_indices.clear();
+
+            double dist = boost::geometry::distance(traj.geom.get_point(last_valid_real),
+                                                   traj.geom.get_point(next_real));
+
+            // Physical constraints: check speed and interval
+            double time_diff = 0.0;
+            if (!traj.timestamps.empty() && traj.timestamps.size() > static_cast<size_t>(next_real) && 
+                traj.timestamps.size() > static_cast<size_t>(last_valid_real)) {
+                time_diff = std::abs(traj.timestamps[next_real] - traj.timestamps[last_valid_real]);
             }
-            if (!tg_ptr) {
-                Traj_Candidates start_tc = {tc_raw[next_real]};
-                std::vector<std::vector<double>> start_log_eps = {log_eps_raw[next_real]};
-                tg_ptr = std::make_unique<TransitionGraph>(start_tc, start_log_eps, true);
-                initialize_first_layer(&tg_ptr->get_layers()[0], config);
+            double speed = (time_diff > 0) ? (dist / time_diff) : std::numeric_limits<double>::infinity();
+            constexpr double MAX_REASONABLE_SPEED = 40.0; // 144 km/h
+
+            if (config.enable_gap_bridging && (speed > MAX_REASONABLE_SPEED || time_diff > config.max_interval)) {
+                process_sub_segment(tg_ptr.get(), current_sub_indices);
+                
+                for (int skipped_idx : skipped_indices) {
+                    final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
+                }
+                skipped_indices.clear();
+
+                current_sub_indices.clear();
                 current_sub_indices.push_back(next_real);
+                Traj_Candidates new_start_tc = {tc_raw[next_real]};
+                std::vector<std::vector<double>> new_start_log_eps = {log_eps_raw[next_real]};
+                
+                tg_ptr = std::make_unique<TransitionGraph>(new_start_tc, new_start_log_eps, true);
+                tg_ptr->get_layers().reserve(segment_indices.size() + 1);
+                initialize_first_layer(&tg_ptr->get_layers()[0], config);
+                
+                last_valid_layer = &tg_ptr->get_layers()[0];
                 last_valid_real = next_real;
                 continue;
             }
+
             TGLayer next_layer;
             for (size_t k=0; k<tc_raw[next_real].size(); ++k) {
-                next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0, -std::numeric_limits<double>::infinity(), 0, 0});
+                next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
+                                           -std::numeric_limits<double>::infinity(), 0, 0});
             }
+
             bool connected = false;
-            update_layer_cmm(&tg_ptr->get_layers().back(), &next_layer, dist, &connected, config);
+            update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config);
+
             if (!connected) {
                 skipped_indices.push_back(next_real);
             } else {
-                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx, MatchStatus::FAILED_DISCONNECTED));
+                for (int skipped_idx : skipped_indices) {
+                    final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
+                }
                 skipped_indices.clear();
+
                 tg_ptr->get_layers().push_back(std::move(next_layer));
                 current_sub_indices.push_back(next_real);
+                
+                // CRITICAL: Get new pointer after push_back because it might have moved
+                // though we called reserve, it is safer to update it.
+                last_valid_layer = &tg_ptr->get_layers().back();
                 last_valid_real = next_real;
             }
         }
-        finalize_sub_segment(tg_ptr, current_sub_indices);
-        for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx, MatchStatus::FAILED_DISCONNECTED));
+
+        if (!current_sub_indices.empty()) {
+            process_sub_segment(tg_ptr.get(), current_sub_indices);
+        }
+        for (int skipped_idx : skipped_indices) {
+            final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
+        }
     }
 
     if (filtered_traj != nullptr && !final_results.empty()) {
@@ -2172,20 +2253,23 @@ std::string CovarianceMapMatch::match_gps_file(
         std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
         
         for (auto &result : results) {
-            // Build a trajectory subset containing ONLY the points represented in result.original_indices.
-            CORE::Trajectory segment_traj;
-            segment_traj.id = result.id;
-            for (int orig_idx : result.original_indices) {
-                segment_traj.geom.add_point(trajectory.geom.get_point(orig_idx));
-                if (!trajectory.timestamps.empty()) segment_traj.timestamps.push_back(trajectory.timestamps[orig_idx]);
-            }
+            if (result.original_indices.empty()) continue;
+            
+            // CRITICAL: Do NOT slice the trajectory. 
+            // The writer uses result.original_indices to align fields to the original GPS points.
+            // If we slice it, result.original_indices (which contains absolute indices) 
+            // will cause out-of-bounds access.
+            CORE::Trajectory full_traj;
+            full_traj.id = result.id;
+            full_traj.geom = trajectory.geom;
+            full_traj.timestamps = trajectory.timestamps;
             
             // Protect coordinate transformation and file writing
             #pragma omp critical(writer_section)
             {
-                apply_output_transform(&segment_traj, &result);
-                writer.write_result(segment_traj, result);
-                points_matched += segment_traj.geom.get_num_points();
+                apply_output_transform(&full_traj, &result);
+                writer.write_result(full_traj, result);
+                points_matched += result.original_indices.size();
             }
         }
 

@@ -38,6 +38,7 @@ struct PyCandidate{
  */
 struct PyMatchResult {
   int id; /**< id of a trajectory */
+  int status; /**< status of matching (0: SUCCESS, 1: PARTIAL, etc.) */
   MM::O_Path opath; /**< Edge ID matched for each point of the trajectory  */
   MM::C_Path cpath; /**< Edge ID traversed by the matched path */
   std::vector<PyCandidate> candidates; /**< Candidate matched to each point */
