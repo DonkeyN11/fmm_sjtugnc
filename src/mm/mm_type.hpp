@@ -79,8 +79,16 @@ typedef std::vector<MatchedCandidate> MatchedCandidatePath;
 /**
  * Map matched result representation
  */
+enum class MatchStatus {
+  SUCCESS = 0,             /**< Matching succeeded for the entire trajectory */
+  PARTIAL = 1,             /**< Matching succeeded for some points, but others were skipped or disconnected */
+  FAILED_NO_CANDIDATE = 2, /**< No candidates found for critical points */
+  FAILED_DISCONNECTED = 3  /**< Graph connectivity failed between consecutive points */
+};
+
 struct MatchResult {
   int id; /**< id of the trajectory to be matched */
+  MatchStatus status = MatchStatus::SUCCESS; /**< Status of the matching process */
   MatchedCandidatePath opt_candidate_path; /**< A vector of candidate matched
   to each point of a trajectory. It is stored in order to export more
   detailed map matching information. */

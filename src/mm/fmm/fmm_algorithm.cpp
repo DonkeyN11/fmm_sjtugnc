@@ -133,14 +133,16 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   Traj_Candidates tc = network_.search_tr_cs_knn(
     traj.geom, config.k, config.radius);
   SPDLOG_DEBUG("Trajectory candidate {}", tc);
-  if (tc.empty()) return MatchResult{};
+  if (tc.empty()) {
+    return MatchResult{traj.id, MatchStatus::FAILED_NO_CANDIDATE};
+  }
 
   // Preprocess: filter out points without candidates
   Traj_Candidates filtered_tc;
   CORE::Trajectory filtered_traj;
   std::vector<int> original_indices;
   if (!match_traj_preprocess(traj, tc, filtered_tc, filtered_traj, original_indices)) {
-    return MatchResult{};
+    return MatchResult{traj.id, MatchStatus::FAILED_NO_CANDIDATE};
   }
 
   std::vector<std::vector<CandidateEmission>> candidate_details(filtered_tc.size());
@@ -187,8 +189,12 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   SPDLOG_DEBUG("Complete path is {}", cpath);
   LineString mgeom = network_.complete_path_to_geometry(
     filtered_traj.geom, cpath);
+  MatchStatus status = MatchStatus::SUCCESS;
+  if (filtered_tc.size() < tc.size()) {
+    status = MatchStatus::PARTIAL;
+  }
   MatchResult match_result{
-    traj.id, matched_candidate_path, opath, cpath, indices, mgeom};
+    traj.id, status, matched_candidate_path, opath, cpath, indices, mgeom};
   match_result.candidate_details = std::move(candidate_details);
   match_result.original_indices = std::move(original_indices);
   return match_result;

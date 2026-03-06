@@ -819,6 +819,7 @@ double CovarianceMapMatch::calculate_emission_log_prob(
     double det = cov.determinant();
 
     // Protection against singular matrices or extremely confident GPS
+    // Add a small regularization term to determinant for numerical stability
     if (det <= 1e-50) {
         return -std::numeric_limits<double>::infinity();
     }
@@ -827,9 +828,9 @@ double CovarianceMapMatch::calculate_emission_log_prob(
                                  2 * cov_inv.m[0][1] * dx * dy +
                                  cov_inv.m[1][1] * dy * dy;
 
-    // Log Gaussian: -0.5 * (log(2*pi) + log(det) + dist^2)
+    // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + dist^2)
     static const double log_2pi = std::log(2.0 * M_PI);
-    return -0.5 * (log_2pi + std::log(det) + mahalanobis_dist_sq);
+    return -0.5 * (log_2pi + std::log(det + 1e-12) + mahalanobis_dist_sq);
 }
 
 // Enumerate candidate projections per point by respecting both covariance ellipses
@@ -923,13 +924,6 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 }
                 Point_Candidates base_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
 
-                // Debug log for first 122 points of trajectory 11
-                // if (traj_id == "11" && i < 122) {
-                //     std::cerr << "[DEBUG] Traj " << traj_id << " Point " << i << ": kNN returned "
-                //               << base_candidates.size() << " candidates, search_radius="
-                //               << search_radius << " deg (" << (search_radius * 111000) << "m)\n" << std::flush;
-                // }
-
                 std::vector<NETWORK::Edge *> edges_to_consider;
                 edges_to_consider.reserve(base_candidates.size());
                 std::unordered_set<NETWORK::EdgeIndex> seen_edges;
@@ -1016,14 +1010,12 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                             double mahal_sq = cov_inv_eff.m[0][0] * dx * dx +
                                              2 * cov_inv_eff.m[0][1] * dx * dy +
                                              cov_inv_eff.m[1][1] * dy * dy;
-                            // Log Gaussian: -0.5 * (log(2*pi) + log(det) + mahal_sq)
-                            log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff) + mahal_sq);
+                            // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + mahal_sq)
+                            log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahal_sq);
                         }
                     }
                     raw_probabilities.push_back(log_probability);
                 }
-
-                // Note: Removed debug logging for trajectory 11 as traj_id parameter was removed
 
                 if (selected_candidates.size() >= static_cast<size_t>(config.min_candidates) ||
                     edges_to_consider.empty() || radius_expanded) {
@@ -1035,11 +1027,13 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             }
         } else {
             // Basic candidate search that directly relies on network_kNN results.
-            // Note: Removed debug logging for trajectory 11 as traj_id parameter was removed
-
             CORE::LineString single_point_geom;
             single_point_geom.add_point(point);
-            Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
+            Traj_Candidates traj_candidates;
+            #pragma omp critical(knn_section)
+            {
+                traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
+            }
             Point_Candidates point_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
 
             selected_candidates.reserve(point_candidates.size());
@@ -1072,7 +1066,8 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                         double mahalanobis_dist_sq = cov_inv_eff.m[0][0] * dx * dx +
                                                       2 * cov_inv_eff.m[0][1] * dx * dy +
                                                       cov_inv_eff.m[1][1] * dy * dy;
-                        log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff) + mahalanobis_dist_sq);
+                        // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + mahalanobis_dist_sq)
+                        log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahalanobis_dist_sq);
                     }
                 }
 
@@ -1109,8 +1104,6 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
         SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
         result.candidates.push_back(std::move(selected_candidates));
-
-        // Note: Removed debug logging for trajectory 11 as traj_id parameter was removed
         result.emission_probabilities.push_back(std::move(log_emission_probs));
     }
 
@@ -1157,17 +1150,18 @@ CMMTrajectory CovarianceMapMatch::slice_trajectory(const CMMTrajectory &traj, in
 std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &traj,
                                                        const CovarianceMapMatchConfig &config,
                                                        CMMTrajectory *filtered_traj) {
-    SPDLOG_DEBUG("Count of points in trajectory {}", traj.geom.get_num_points());
-
     // Validate trajectory
     if (!traj.is_valid()) {
         SPDLOG_ERROR("Invalid trajectory: covariance and protection level data mismatch");
         return {};
     }
 
-    SPDLOG_DEBUG("Search candidates with protection level");
-    CandidateSearchResult candidate_result = search_candidates_with_protection_level(
-        traj.geom, traj.covariances, traj.protection_levels, config);
+    CandidateSearchResult candidate_result;
+    #pragma omp critical(search_candidates_section)
+    {
+        candidate_result = search_candidates_with_protection_level(
+            traj.geom, traj.covariances, traj.protection_levels, config);
+    }
 
     const Traj_Candidates &tc_raw = candidate_result.candidates;
     const std::vector<std::vector<double>> &log_eps_raw = candidate_result.emission_probabilities;
@@ -1185,9 +1179,10 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     }
 
     // Lambda to create a fallback MatchResult for failed segments or points
-    auto create_fallback_result = [&](int start_idx, int end_idx) -> MatchResult {
+    auto create_fallback_result = [&](int start_idx, int end_idx, MatchStatus status) -> MatchResult {
         MatchResult res;
         res.id = traj.id;
+        res.status = status;
         for (int i = start_idx; i <= end_idx && i < static_cast<int>(tc_raw.size()); ++i) {
             res.candidate_details.push_back(global_candidate_details[i]);
             res.original_indices.push_back(i);
@@ -1204,7 +1199,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     }
 
     if (valid_indices.size() < 3) {
-        return {create_fallback_result(0, tc_raw.size() - 1)};
+        return {create_fallback_result(0, tc_raw.size() - 1, MatchStatus::FAILED_NO_CANDIDATE)};
     }
 
     std::vector<MatchResult> final_results;
@@ -1251,7 +1246,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             if (!tg_p || sub_indices.empty()) return;
             TGOpath tg_opath = tg_p->backtrack();
             if (tg_opath.empty()) {
-                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back()));
+                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back(), MatchStatus::FAILED_DISCONNECTED));
                 tg_p.reset();
                 return;
             }
@@ -1303,7 +1298,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 }
             }
             if (filtered_path.empty()) {
-                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back()));
+                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back(), MatchStatus::FAILED_NO_CANDIDATE));
                 tg_p.reset();
                 return;
             }
@@ -1311,7 +1306,14 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             if (!cpath.empty()) {
                 mgeom = network_.complete_path_to_geometry(sub_traj.geom, cpath);
             }
-            MatchResult res{traj.id, filtered_path, opath, cpath, filtered_indices_mapping, mgeom};
+            MatchResult res;
+            res.id = traj.id;
+            res.status = (sub_indices.size() == traj.geom.get_num_points()) ? MatchStatus::SUCCESS : MatchStatus::PARTIAL;
+            res.opt_candidate_path = std::move(filtered_path);
+            res.opath = std::move(opath);
+            res.cpath = std::move(cpath);
+            res.indices = std::move(filtered_indices_mapping);
+            res.mgeom = std::move(mgeom);
             res.sp_distances = std::move(filtered_sp_dist);
             res.eu_distances = std::move(filtered_eu_dist);
             std::vector<std::vector<double>> filtered_nbest;
@@ -1336,7 +1338,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             if (tg_ptr && config.enable_gap_bridging && dist > config.max_gap_distance) {
                 finalize_sub_segment(tg_ptr, current_sub_indices);
                 current_sub_indices.clear();
-                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx));
+                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx, MatchStatus::FAILED_DISCONNECTED));
                 skipped_indices.clear();
             }
             if (!tg_ptr) {
@@ -1357,7 +1359,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             if (!connected) {
                 skipped_indices.push_back(next_real);
             } else {
-                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx));
+                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx, MatchStatus::FAILED_DISCONNECTED));
                 skipped_indices.clear();
                 tg_ptr->get_layers().push_back(std::move(next_layer));
                 current_sub_indices.push_back(next_real);
@@ -1365,7 +1367,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             }
         }
         finalize_sub_segment(tg_ptr, current_sub_indices);
-        for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx));
+        for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx, MatchStatus::FAILED_DISCONNECTED));
     }
 
     if (filtered_traj != nullptr && !final_results.empty()) {
@@ -1406,7 +1408,11 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
     // Otherwise rely on UBODT lookup for forward path between successive edges.
     NodeIndex s = ca->edge->target;
     NodeIndex e = cb->edge->source;
-    auto *r = ubodt_->look_up(s, e);
+    Record *r = nullptr;
+    #pragma omp critical(ubodt_section)
+    {
+        r = ubodt_->look_up(s, e);
+    }
     double sp_dist = r ? r->cost : -1;
 
     if (sp_dist < 0) {
@@ -2147,6 +2153,7 @@ std::string CovarianceMapMatch::match_gps_file(
             }
         }
     };
+
     // Maintain counters for logging throughput and matching success rates.
     const int step_size = 1000;
     int progress = 0;
@@ -2160,12 +2167,11 @@ std::string CovarianceMapMatch::match_gps_file(
 
     #pragma omp parallel for if(use_omp) schedule(dynamic)
     for (int i = 0; i < trajectories_count; ++i) {
-    const CMMTrajectory &trajectory = trajectories[i];
-    CMMTrajectory filtered_traj_base;
-    std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
-
-    for (auto &result : results) {
-
+        const CMMTrajectory &trajectory = trajectories[i];
+        CMMTrajectory filtered_traj_base;
+        std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
+        
+        for (auto &result : results) {
             // Build a trajectory subset containing ONLY the points represented in result.original_indices.
             CORE::Trajectory segment_traj;
             segment_traj.id = result.id;
