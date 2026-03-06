@@ -1168,6 +1168,29 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     const Traj_Candidates &tc_raw = candidate_result.candidates;
     const std::vector<std::vector<double>> &log_eps_raw = candidate_result.emission_probabilities;
 
+    // Pre-extract global candidate details to ensure they are available even on failure
+    std::vector<std::vector<CandidateEmission>> global_candidate_details(tc_raw.size());
+    for (size_t i = 0; i < tc_raw.size(); ++i) {
+        for (size_t j = 0; j < tc_raw[i].size(); ++j) {
+            global_candidate_details[i].push_back({
+                boost::geometry::get<0>(tc_raw[i][j].point),
+                boost::geometry::get<1>(tc_raw[i][j].point),
+                std::exp(log_eps_raw[i][j])
+            });
+        }
+    }
+
+    // Lambda to create a fallback MatchResult for failed segments or points
+    auto create_fallback_result = [&](int start_idx, int end_idx) -> MatchResult {
+        MatchResult res;
+        res.id = traj.id;
+        for (int i = start_idx; i <= end_idx && i < static_cast<int>(tc_raw.size()); ++i) {
+            res.candidate_details.push_back(global_candidate_details[i]);
+            res.original_indices.push_back(i);
+        }
+        return res;
+    };
+
     std::vector<int> valid_indices;
     valid_indices.reserve(tc_raw.size());
     for (int i = 0; i < tc_raw.size(); ++i) {
@@ -1177,7 +1200,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     }
 
     if (valid_indices.size() < 3) {
-        return {};
+        return {create_fallback_result(0, tc_raw.size() - 1)};
     }
 
     std::vector<MatchResult> final_results;
@@ -1214,150 +1237,134 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     }
 
     for (const auto& segment_indices : segments) {
-        int start_real_idx = segment_indices.front();
-        int end_real_idx = segment_indices.back();
+        std::vector<int> current_sub_indices;
+        std::vector<int> skipped_indices;
+        std::unique_ptr<TransitionGraph> tg_ptr;
+        int last_valid_real = -1;
 
-        // Use a dummy empty trajectory to initialize TransitionGraph with just the first layer
-        Traj_Candidates start_tc = {tc_raw[start_real_idx]};
-        std::vector<std::vector<double>> start_log_eps = {log_eps_raw[start_real_idx]};
-        TransitionGraph tg(start_tc, start_log_eps, true);
-        initialize_first_layer(&tg.get_layers()[0], config);
-
-        bool segment_failed = false;
-        // Process rest of the segment
-        for (size_t i = 1; i < segment_indices.size(); ++i) {
-            int prev_real = segment_indices[i-1];
-            int next_real = segment_indices[i];
-
-            double dist = boost::geometry::distance(traj.geom.get_point(prev_real),
-                                                   traj.geom.get_point(next_real));
-
-            // Build next layer
-            TGLayer next_layer;
-            for (size_t k=0; k<tc_raw[next_real].size(); ++k) {
-                next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
-                                           -std::numeric_limits<double>::infinity(), 0, 0});
+        auto finalize_sub_segment = [&](std::unique_ptr<TransitionGraph>& tg_p, 
+                                         const std::vector<int>& sub_indices) {
+            if (!tg_p || sub_indices.empty()) return;
+            TGOpath tg_opath = tg_p->backtrack();
+            if (tg_opath.empty()) {
+                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back()));
+                tg_p.reset();
+                return;
             }
-
-            bool connected = false;
-            update_layer_cmm(&tg.get_layers().back(), &next_layer, dist, &connected, config);
-
-            if (!connected) {
-                segment_failed = true;
-                break; // Disconnected, abort this segment
-            }
-            tg.get_layers().push_back(std::move(next_layer));
-        }
-
-        if (segment_failed) continue;
-
-        // Backtrack and finalize segment result
-        TGOpath tg_opath = tg.backtrack();
-        if (!tg_opath.empty()) {
-            CMMTrajectory segment_traj = slice_trajectory(traj, start_real_idx, end_real_idx + 1);
-
-            // Sub-candidates and sub-emissions for trustworthiness
+            CMMTrajectory sub_traj;
+            sub_traj.id = traj.id;
             Traj_Candidates sub_tc;
             std::vector<std::vector<double>> sub_log_eps;
-            for (int idx : segment_indices) {
+            std::vector<std::vector<CandidateEmission>> sub_all_details;
+            for (int idx : sub_indices) {
+                sub_traj.geom.add_point(traj.geom.get_point(idx));
+                if (!traj.timestamps.empty()) sub_traj.timestamps.push_back(traj.timestamps[idx]);
+                if (!traj.covariances.empty()) sub_traj.covariances.push_back(traj.covariances[idx]);
+                if (!traj.protection_levels.empty()) sub_traj.protection_levels.push_back(traj.protection_levels[idx]);
                 sub_tc.push_back(tc_raw[idx]);
                 sub_log_eps.push_back(log_eps_raw[idx]);
+                sub_all_details.push_back(global_candidate_details[idx]);
             }
-
-            auto trustworthiness_results = compute_window_trustworthiness(
-                sub_tc, sub_log_eps, segment_traj, config);
-
+            auto trustworthiness_results = compute_window_trustworthiness(sub_tc, sub_log_eps, sub_traj, config);
+            
             MatchedCandidatePath matched_candidate_path;
             matched_candidate_path.reserve(tg_opath.size());
-
-            // Filter vectors based on trustworthiness if filtering enabled
             std::vector<MatchedCandidate> filtered_path;
             std::vector<int> filtered_indices;
             std::vector<double> filtered_sp_dist;
             std::vector<double> filtered_eu_dist;
-            std::vector<double> filtered_trust;
             std::vector<std::vector<CandidateEmission>> filtered_details;
+            
+            std::vector<int> indices_mapping;
+            C_Path cpath = ubodt_->construct_complete_path(traj.id, tg_opath, network_.get_edges(), &indices_mapping, config.reverse_tolerance);
 
-            std::vector<double> sp_distances;
-            std::vector<double> eu_distances;
-
-            // Prepare candidate details
-            std::vector<std::vector<CandidateEmission>> all_details;
-            all_details.resize(sub_tc.size());
-            for (size_t i=0; i<sub_tc.size(); ++i) {
-                for (size_t j=0; j<sub_tc[i].size(); ++j) {
-                    all_details[i].push_back({
-                        boost::geometry::get<0>(sub_tc[i][j].point),
-                        boost::geometry::get<1>(sub_tc[i][j].point),
-                        std::exp(sub_log_eps[i][j])
-                    });
-                }
-            }
-
+            O_Path opath;
+            std::vector<int> filtered_indices_mapping;
             for (size_t i = 0; i < tg_opath.size(); ++i) {
                 const TGNode *node = tg_opath[i];
                 double sp = (i == 0) ? 0.0 : node->sp_dist;
-                double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
-
+                double eu = (i == 0) ? 0.0 : boost::geometry::distance(sub_traj.geom.get_point(i-1), sub_traj.geom.get_point(i));
                 double trust = node->trustworthiness;
-                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
-                    trust = trustworthiness_results.first[i];
-                }
-
+                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) trust = trustworthiness_results.first[i];
                 MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust};
                 matched_candidate_path.push_back(mc);
-                sp_distances.push_back(sp);
-                eu_distances.push_back(eu);
-
-                // Apply filtering logic，linear probability thresholding based on trustworthiness，default threshold is 0.0 which means only filter out points with non-positive trustworthiness
                 if (!config.filtered || trust >= config.trustworthiness_threshold) {
                     filtered_path.push_back(mc);
-                    filtered_indices.push_back(segment_indices[i]);
+                    opath.push_back(mc.c.edge->id);
+                    filtered_indices.push_back(sub_indices[i]);
                     filtered_sp_dist.push_back(sp);
                     filtered_eu_dist.push_back(eu);
-                    filtered_trust.push_back(trust);
-                    filtered_details.push_back(all_details[i]);
+                    filtered_details.push_back(sub_all_details[i]);
+                    if (i < indices_mapping.size()) filtered_indices_mapping.push_back(indices_mapping[i]);
                 }
             }
-
-            // If after filtering we have too few points, skip this result
-            if (filtered_path.empty()) continue;
-
-            O_Path opath;
-            for (const auto& mc : filtered_path) opath.push_back(mc.c.edge->id);
-
-            std::vector<int> indices;
-            // Note: construct_complete_path uses the full tg_opath (optimal path), not the filtered one,
-            // because cpath defines the route geometry. We use full path for geometry continuity.
-            C_Path cpath = ubodt_->construct_complete_path(traj.id, tg_opath, network_.get_edges(), &indices, config.reverse_tolerance);
-            LineString mgeom = network_.complete_path_to_geometry(segment_traj.geom, cpath);
-
-            MatchResult res{traj.id, filtered_path, opath, cpath, indices, mgeom};
+            if (filtered_path.empty()) {
+                final_results.push_back(create_fallback_result(sub_indices.front(), sub_indices.back()));
+                tg_p.reset();
+                return;
+            }
+            LineString mgeom;
+            if (!cpath.empty()) {
+                mgeom = network_.complete_path_to_geometry(sub_traj.geom, cpath);
+            }
+            MatchResult res{traj.id, filtered_path, opath, cpath, filtered_indices_mapping, mgeom};
             res.sp_distances = std::move(filtered_sp_dist);
             res.eu_distances = std::move(filtered_eu_dist);
-
-            // Filter nbest_trustworthiness
             std::vector<std::vector<double>> filtered_nbest;
             for (size_t i = 0; i < tg_opath.size(); ++i) {
-                const TGNode *node = tg_opath[i];
-                double trust = node->trustworthiness;
-                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
-                    trust = trustworthiness_results.first[i];
-                }
+                double trust = tg_opath[i]->trustworthiness;
+                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) trust = trustworthiness_results.first[i];
                 if (!config.filtered || trust >= config.trustworthiness_threshold) {
-                    if (i < trustworthiness_results.second.size()) {
-                        filtered_nbest.push_back(trustworthiness_results.second[i]);
-                    } else {
-                        filtered_nbest.push_back({});
-                    }
+                    if (i < trustworthiness_results.second.size()) filtered_nbest.push_back(trustworthiness_results.second[i]);
+                    else filtered_nbest.push_back({});
                 }
             }
             res.nbest_trustworthiness = std::move(filtered_nbest);
             res.original_indices = std::move(filtered_indices);
             res.candidate_details = std::move(filtered_details);
-
             final_results.push_back(std::move(res));
+            tg_p.reset();
+        };
+
+        for (size_t i = 0; i < segment_indices.size(); ++i) {
+            int next_real = segment_indices[i];
+            if (i % 100 == 0) {
+                SPDLOG_INFO("Trajectory id {} segment processing point {}/{}", traj.id, i+1, segment_indices.size());
+            }
+            double dist = (last_valid_real == -1) ? 0.0 : boost::geometry::distance(traj.geom.get_point(last_valid_real), traj.geom.get_point(next_real));
+            if (tg_ptr && config.enable_gap_bridging && dist > config.max_gap_distance) {
+                finalize_sub_segment(tg_ptr, current_sub_indices);
+                current_sub_indices.clear();
+                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx));
+                skipped_indices.clear();
+            }
+            if (!tg_ptr) {
+                Traj_Candidates start_tc = {tc_raw[next_real]};
+                std::vector<std::vector<double>> start_log_eps = {log_eps_raw[next_real]};
+                tg_ptr = std::make_unique<TransitionGraph>(start_tc, start_log_eps, true);
+                initialize_first_layer(&tg_ptr->get_layers()[0], config);
+                current_sub_indices.push_back(next_real);
+                last_valid_real = next_real;
+                continue;
+            }
+            TGLayer next_layer;
+            for (size_t k=0; k<tc_raw[next_real].size(); ++k) {
+                next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0, -std::numeric_limits<double>::infinity(), 0, 0});
+            }
+            bool connected = false;
+            update_layer_cmm(&tg_ptr->get_layers().back(), &next_layer, dist, &connected, config);
+            if (!connected) {
+                skipped_indices.push_back(next_real);
+            } else {
+                for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx));
+                skipped_indices.clear();
+                tg_ptr->get_layers().push_back(std::move(next_layer));
+                current_sub_indices.push_back(next_real);
+                last_valid_real = next_real;
+            }
         }
+        finalize_sub_segment(tg_ptr, current_sub_indices);
+        for (int s_idx : skipped_indices) final_results.push_back(create_fallback_result(s_idx, s_idx));
     }
 
     if (filtered_traj != nullptr && !final_results.empty()) {
@@ -1387,17 +1394,12 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
         if (ca->offset <= cb->offset) {
             return cb->offset - ca->offset;
         }
-        double reverse_limit = ca->edge->length * reverse_tolerance;
-        if (reverse_tolerance > 0 && (ca->offset - cb->offset) < reverse_limit) {
+        // Use a small epsilon for floating point comparison robustness
+        double reverse_limit = ca->edge->length * reverse_tolerance + 1e-6;
+        if (reverse_tolerance > 0 && (ca->offset - cb->offset) <= reverse_limit) {
             return 0.0;
         }
         // Same edge but offset decreased beyond reverse tolerance
-        static int debug_count = 0;
-        if (debug_count < 5) {
-            SPDLOG_WARN("Same edge {} but reverse offset too large: offset_a={}, offset_b={}, reverse_limit={}",
-                       ca->edge->id, ca->offset, cb->offset, reverse_limit);
-            debug_count++;
-        }
     }
 
     // Otherwise rely on UBODT lookup for forward path between successive edges.
@@ -1406,27 +1408,7 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
     auto *r = ubodt_->look_up(s, e);
     double sp_dist = r ? r->cost : -1;
 
-    static int ubodt_miss_count = 0;
-    if (sp_dist < 0 && ubodt_miss_count < 20) {
-        SPDLOG_WARN("UBODT lookup failed: source edge {}->target={}, dest edge {}->source={}, s={}, e={}",
-                   ca->edge->id, ca->edge->target, cb->edge->id, cb->edge->source, s, e);
-        ubodt_miss_count++;
-    }
     if (sp_dist < 0) {
-                // // No path exists, try reverse direction
-        // // When forward lookup fails, try to see if reverse travel is short enough to allow.
-        // s = ca->edge->source;
-        // e = cb->edge->target;
-        // r = ubodt_->look_up(s, e);
-        // sp_dist = r ? r->cost : -1;
-        // if (sp_dist >= 0) {
-        //     // Path exists in reverse direction
-        //     double total_length = ca->edge->length + cb->edge->length;
-        //     double reverse_dist = total_length - ca->offset - cb->offset;
-        //     if (reverse_dist <= sp_dist * (1 + reverse_tolerance)) {
-        //         return reverse_dist;
-        //     }
-        // }    
         return -1;
     } else {
         // Path exists in forward direction
@@ -2089,9 +2071,8 @@ std::string CovarianceMapMatch::match_gps_file(
 
     if (need_reprojection) {
         try {
-            // Create a reprojection function that uses the network's CRS
-            // Note: maybe_reproject_trajectories will be refactored to use input_epsg
-            trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, need_reprojection);
+            // Correctly pass input_epsg instead of need_reprojection
+            trajectories_reprojected = maybe_reproject_trajectories(&trajectories, network_, input_epsg);
         } catch (const std::exception &ex) {
             SPDLOG_WARN("Trajectory reprojection failed: {}", ex.what());
         }
@@ -2172,91 +2153,43 @@ std::string CovarianceMapMatch::match_gps_file(
     int total_trajs = 0;
     auto begin_time = UTIL::get_current_time();
 
-    // Parallel execution path guarded by OpenMP when multiple trajectories exist.
-    if (use_omp && trajectories.size() > 1) {
-#ifdef _OPENMP
-        // Buffer for storing results to maintain output order
-        // Since one trajectory can result in multiple MatchResults, we use a vector of vectors.
-        std::vector<std::vector<std::pair<CORE::Trajectory, MM::MatchResult>>> result_buffer;
-        const int trajectories_count = static_cast<int>(trajectories.size());
-        result_buffer.resize(trajectories_count);
-        #pragma omp parallel for schedule(dynamic)
-        for (int idx = 0; idx < trajectories_count; ++idx) {
-            const CMMTrajectory &trajectory = trajectories[idx];
-            CMMTrajectory filtered_traj_base;
-            std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
-            
-            for (auto &result : results) {
-                // Slice the original trajectory based on the segment's indices
-                CMMTrajectory segment_cmm_traj = slice_trajectory(trajectory, result.original_indices.front(), result.original_indices.back() + 1);
-                CORE::Trajectory segment_traj{segment_cmm_traj.id, segment_cmm_traj.geom, segment_cmm_traj.timestamps};
-                
-                apply_output_transform(&segment_traj, &result);
-                
-                #pragma omp critical(buffer_section)
-                {
-                    result_buffer[idx].push_back(std::make_pair(segment_traj, result));
-                }
+    const int trajectories_count = static_cast<int>(trajectories.size());
 
-                const int points_in_segment = segment_traj.geom.get_num_points();
-                #pragma omp critical(progress_section)
-                {
-                    points_matched += points_in_segment;
-                }
+    #pragma omp parallel for if(use_omp) schedule(dynamic)
+    for (int i = 0; i < trajectories_count; ++i) {
+        const CMMTrajectory &trajectory = trajectories[i];
+        CMMTrajectory filtered_traj_base;
+        std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
+        
+        for (auto &result : results) {
+            // Build a trajectory subset containing ONLY the points represented in result.original_indices.
+            CORE::Trajectory segment_traj;
+            segment_traj.id = result.id;
+            for (int orig_idx : result.original_indices) {
+                segment_traj.geom.add_point(trajectory.geom.get_point(orig_idx));
+                if (!trajectory.timestamps.empty()) segment_traj.timestamps.push_back(trajectory.timestamps[orig_idx]);
             }
-
-            #pragma omp critical(progress_section)
+            
+            // Protect coordinate transformation and file writing
+            #pragma omp critical(writer_section)
             {
-                ++progress;
-                ++total_trajs;
-                total_points += trajectory.geom.get_num_points();
-                if (!results.empty()) {
-                    ++traj_matched;
-                }
-                if (step_size > 0 && progress % step_size == 0) {
-                    std::stringstream buf;
-                    buf << "Progress " << progress << '\n';
-                    std::cout << buf.rdbuf();
-                }
-            }
-        }
-
-        // Write results in order of original trajectory index
-        for (int i = 0; i < trajectories_count; ++i) {
-            for (const auto &item : result_buffer[i]) {
-                writer.write_result(item.first, item.second);
-            }
-        }
-#else
-        use_omp = false;
-#endif
-    }
-
-    // Serial fallback when OpenMP is disabled or there is just a single trajectory.
-    if (!use_omp || trajectories.size() <= 1) {
-        for (const auto &trajectory : trajectories) {
-            if (progress % step_size == 0) {
-                SPDLOG_INFO("Progress {}", progress);
-            }
-            CMMTrajectory filtered_traj_base;
-            std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
-            
-            for (auto &result : results) {
-                CMMTrajectory segment_cmm_traj = slice_trajectory(trajectory, result.original_indices.front(), result.original_indices.back() + 1);
-                CORE::Trajectory segment_traj{segment_cmm_traj.id, segment_cmm_traj.geom, segment_cmm_traj.timestamps};
-                
                 apply_output_transform(&segment_traj, &result);
                 writer.write_result(segment_traj, result);
-                
                 points_matched += segment_traj.geom.get_num_points();
             }
+        }
 
-            total_points += trajectory.geom.get_num_points();
+        #pragma omp critical(progress_section)
+        {
+            ++progress;
             ++total_trajs;
+            total_points += trajectory.geom.get_num_points();
             if (!results.empty()) {
                 ++traj_matched;
             }
-            ++progress;
+            if (step_size > 0 && progress % step_size == 0) {
+                SPDLOG_INFO("Progress {}", progress);
+            }
         }
     }
 
