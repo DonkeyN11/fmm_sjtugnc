@@ -23,9 +23,8 @@ except ImportError:
     Geod = None
     Transformer = None
 
-MAPBOX_DEFAULT_TOKEN = (
-    "pk.eyJ1IjoiZG9ua2V5LW5pbmciLCJhIjoiY21kenJ5OTY5MGc5azJqb25hdTVtc2tvNiJ9.CgMc9ZNXaZ1HDrC4Zl2aMQ"
-)
+# Token from environment variable (DO NOT hardcode credentials in source code)
+MAPBOX_DEFAULT_TOKEN = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
 
 COORD_TRANSFORMER = None
 USE_PROJECTED_CRS = False
