@@ -916,7 +916,11 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             while (true) {
                 CORE::LineString single_point_geom;
                 single_point_geom.add_point(point);
-                Traj_Candidates traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
+                Traj_Candidates traj_candidates;
+                #pragma omp critical(knn_section)
+                {
+                    traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
+                }
                 Point_Candidates base_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
 
                 // Debug log for first 122 points of trajectory 11
@@ -1328,9 +1332,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
         for (size_t i = 0; i < segment_indices.size(); ++i) {
             int next_real = segment_indices[i];
-            if (i % 100 == 0) {
-                SPDLOG_INFO("Trajectory id {} segment processing point {}/{}", traj.id, i+1, segment_indices.size());
-            }
             double dist = (last_valid_real == -1) ? 0.0 : boost::geometry::distance(traj.geom.get_point(last_valid_real), traj.geom.get_point(next_real));
             if (tg_ptr && config.enable_gap_bridging && dist > config.max_gap_distance) {
                 finalize_sub_segment(tg_ptr, current_sub_indices);
@@ -1453,8 +1454,10 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                                           double eu_dist,
                                           bool *connected,
                                           const CovarianceMapMatchConfig &config) {
+    if (!la_ptr || !lb_ptr) return;
     *connected = false;
     const size_t next_candidate_count = lb_ptr->size();
+    if (next_candidate_count == 0) return;
 
     // Vector to store unnormalized log posterior scores for each candidate in next layer
     std::vector<double> raw_scores(next_candidate_count, -std::numeric_limits<double>::infinity());
@@ -2157,11 +2160,12 @@ std::string CovarianceMapMatch::match_gps_file(
 
     #pragma omp parallel for if(use_omp) schedule(dynamic)
     for (int i = 0; i < trajectories_count; ++i) {
-        const CMMTrajectory &trajectory = trajectories[i];
-        CMMTrajectory filtered_traj_base;
-        std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
-        
-        for (auto &result : results) {
+    const CMMTrajectory &trajectory = trajectories[i];
+    CMMTrajectory filtered_traj_base;
+    std::vector<MM::MatchResult> results = match_traj(trajectory, cmm_config, &filtered_traj_base);
+
+    for (auto &result : results) {
+
             // Build a trajectory subset containing ONLY the points represented in result.original_indices.
             CORE::Trajectory segment_traj;
             segment_traj.id = result.id;
