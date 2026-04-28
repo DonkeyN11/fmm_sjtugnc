@@ -402,6 +402,15 @@ def render_html(
     <label><input type="checkbox" id="toggle-road" checked> Road Network</label>
   </div>
 
+  <div id="filter-panel" style="position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: sans-serif;">
+    <h4 style="margin: 0 0 10px 0;">过滤特定路段</h4>
+    <label style="font-size: 13px; color: #555;">输入 Edge ID (用英文逗号分隔):</label><br>
+    <input type="text" id="edge-filter-input" placeholder="例如: 1234, 5678, 9012" style="width: 200px; padding: 5px; margin-top: 5px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;">
+    <br>
+    <button id="btn-apply-filter" style="padding: 5px 15px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px;">筛选</button>
+    <button id="btn-clear-filter" style="padding: 5px 15px; cursor: pointer; background: #6c757d; color: white; border: none; border-radius: 4px; margin-left: 5px;">清除</button>
+  </div>
+
   <div class="search-section">
     <h4>Search & Filter</h4>
     <div class="input-group">
@@ -638,6 +647,45 @@ def render_html(
       searchIdInput.value = "";
       searchSeqInput.value = "";
       applyFilter();
+    });
+                        
+    // 注意：请将 'road-layer' 替换为你代码中实际渲染 shp 路径的 layer 的 ID
+    // 注意：请将 'id' 替换为 geojson properties 中实际存储 edge id 的字段名（如 'edge_id'）
+    const ROAD_LAYER_ID = 'road-layer'; 
+    const EDGE_ID_FIELD = 'id'; 
+
+    // 监听筛选按钮点击
+    document.getElementById('btn-apply-filter').addEventListener('click', function() {
+        const inputText = document.getElementById('edge-filter-input').value;
+        
+        if (!inputText.trim()) {
+            // 如果输入为空，则清除过滤，显示全部
+            map.setFilter(ROAD_LAYER_ID, null);
+            return;
+        }
+
+        // 解析输入的字符串，用逗号分隔，并转为数字数组
+        const targetIds = inputText.split(',')
+            .map(item => parseInt(item.trim(), 10))
+            .filter(id => !isNaN(id));
+
+        if (targetIds.length > 0) {
+            // Mapbox GL JS 语法：['in', ['get', '字段名'], ['literal', [数组]]]
+            map.setFilter(ROAD_LAYER_ID, [
+                'in', 
+                ['get', EDGE_ID_FIELD], 
+                ['literal', targetIds]
+            ]);
+        } else {
+            alert("请输入有效的数字 ID");
+        }
+    });
+
+    // 监听清除按钮点击
+    document.getElementById('btn-clear-filter').addEventListener('click', function() {
+        document.getElementById('edge-filter-input').value = '';
+        // 将过滤条件设为 null 即可恢复显示所有路网
+        map.setFilter(ROAD_LAYER_ID, null);
     });
   });
 </script>
