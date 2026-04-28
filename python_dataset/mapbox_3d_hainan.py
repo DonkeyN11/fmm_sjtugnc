@@ -237,19 +237,59 @@ def load_match_results(path: Path, ids: Set[str], kind: str, bounds: Bounds) -> 
     return features, used_edges, updated_bounds
 
 
-def load_edges_geojson(shapefile: Path, used_edges: Set[str]) -> Dict:
+# def load_edges_geojson(shapefile: Path, used_edges: Set[str]) -> Dict:
+#     """Load road network and return as GeoJSON using ogr2ogr/ogrinfo to filter."""
+#     if not shapefile.exists():
+#         print(f"Road network not found at {shapefile}")
+#         return {"type": "FeatureCollection", "features": []}
+
+#     # print(f"Extracting road network for {len(used_edges)} edges...")
+    
+#     # Construct SQL query for ogr2ogr
+#     edge_list_str = ",".join(f"'{e}'" for e in used_edges)
+#     # We allow both 'fid' and 'id' as common fields
+#     sql = f"SELECT fid as id, * FROM edges"
+    
+#     # if used_edges:
+#     if used_edges is None or edge_id in used_edges:
+#         sql += f" WHERE fid IN ({edge_list_str})"
+
+#     temp_json = "/tmp/edges_filtered.json"
+#     cmd = [
+#         "ogr2ogr", "-f", "GeoJSON", 
+#         "-sql", sql,
+#         temp_json, str(shapefile)
+#     ]
+    
+#     try:
+#         subprocess.run(cmd, check=True, capture_output=True)
+#         with open(temp_json, 'r') as f:
+#             data = json.load(f)
+#         os.remove(temp_json)
+#         return data
+#     except Exception as e:
+#         print(f"Error loading road network: {e}")
+#         return {"type": "FeatureCollection", "features": []}
+
+def load_edges_geojson(shapefile: Path, used_edges: Optional[Set[str]]) -> Dict:
     """Load road network and return as GeoJSON using ogr2ogr/ogrinfo to filter."""
     if not shapefile.exists():
         print(f"Road network not found at {shapefile}")
         return {"type": "FeatureCollection", "features": []}
 
-    print(f"Extracting road network for {len(used_edges)} edges...")
+    # 安全判断：如果为 None 则说明加载全部路网
+    if used_edges is not None:
+        print(f"Extracting road network for {len(used_edges)} edges...")
+    else:
+        print("Extracting entire road network... (This may take a moment)")
     
-    # Construct SQL query for ogr2ogr
-    edge_list_str = ",".join(f"'{e}'" for e in used_edges)
-    # We allow both 'fid' and 'id' as common fields
-    sql = f"SELECT fid as id, * FROM edges"
+    # 构建 SQL 查询
+    # 这里允许 'fid' 映射为 'id' 供前端识别
+    sql = "SELECT fid as id, * FROM edges"
+    
+    # 只有当 used_edges 存在且不为空时，才添加 WHERE 过滤条件
     if used_edges:
+        edge_list_str = ",".join(f"'{e}'" for e in used_edges)
         sql += f" WHERE fid IN ({edge_list_str})"
 
     temp_json = "/tmp/edges_filtered.json"
