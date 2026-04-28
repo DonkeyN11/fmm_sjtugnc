@@ -725,8 +725,8 @@ def main():
     print("Loading FMM results...")
     fmm_features, fmm_edges, bounds = load_match_results(Path(args.fmm), selected_ids, "fmm", bounds)
 
-    all_used_edges = cmm_edges.union(fmm_edges)
-    road_geojson = load_edges_geojson(Path(args.edges), all_used_edges)
+    # all_used_edges = cmm_edges.union(fmm_edges)
+    road_geojson = load_edges_geojson(Path(args.edges), None)
 
     obs_geojson = {"type": "FeatureCollection", "features": obs_features}
     cmm_geojson = {"type": "FeatureCollection", "features": cmm_features}
