@@ -6,6 +6,8 @@ Features:
   - CMM/FMM Result Visualization
   - Trajectory ID & Sequence Search
   - Road Network with Hover-to-ID
+  - Specific Edge Filtering (Top Right)
+  - Coordinate (Lon, Lat) Search & Marker (Bottom Right)
 """
 
 import argparse
@@ -237,40 +239,6 @@ def load_match_results(path: Path, ids: Set[str], kind: str, bounds: Bounds) -> 
     return features, used_edges, updated_bounds
 
 
-# def load_edges_geojson(shapefile: Path, used_edges: Set[str]) -> Dict:
-#     """Load road network and return as GeoJSON using ogr2ogr/ogrinfo to filter."""
-#     if not shapefile.exists():
-#         print(f"Road network not found at {shapefile}")
-#         return {"type": "FeatureCollection", "features": []}
-
-#     # print(f"Extracting road network for {len(used_edges)} edges...")
-    
-#     # Construct SQL query for ogr2ogr
-#     edge_list_str = ",".join(f"'{e}'" for e in used_edges)
-#     # We allow both 'fid' and 'id' as common fields
-#     sql = f"SELECT fid as id, * FROM edges"
-    
-#     # if used_edges:
-#     if used_edges is None or edge_id in used_edges:
-#         sql += f" WHERE fid IN ({edge_list_str})"
-
-#     temp_json = "/tmp/edges_filtered.json"
-#     cmd = [
-#         "ogr2ogr", "-f", "GeoJSON", 
-#         "-sql", sql,
-#         temp_json, str(shapefile)
-#     ]
-    
-#     try:
-#         subprocess.run(cmd, check=True, capture_output=True)
-#         with open(temp_json, 'r') as f:
-#             data = json.load(f)
-#         os.remove(temp_json)
-#         return data
-#     except Exception as e:
-#         print(f"Error loading road network: {e}")
-#         return {"type": "FeatureCollection", "features": []}
-
 def load_edges_geojson(shapefile: Path, used_edges: Optional[Set[str]]) -> Dict:
     """Load road network and return as GeoJSON using ogr2ogr/ogrinfo to filter."""
     if not shapefile.exists():
@@ -283,8 +251,7 @@ def load_edges_geojson(shapefile: Path, used_edges: Optional[Set[str]]) -> Dict:
     else:
         print("Extracting entire road network... (This may take a moment)")
     
-    # 构建 SQL 查询
-    # 这里允许 'fid' 映射为 'id' 供前端识别
+    # 构建 SQL 查询，这里允许 'fid' 映射为 'id' 供前端识别
     sql = "SELECT fid as id, * FROM edges"
     
     # 只有当 used_edges 存在且不为空时，才添加 WHERE 过滤条件
@@ -321,6 +288,7 @@ def render_html(
 ) -> str:
     bounds_js = json.dumps([[bounds[0], bounds[1]], [bounds[2], bounds[3]]]) if math.isfinite(bounds[0]) else "null"
     
+    # 注意：在 Python 的 Template 中，JS 里的 ${var} 必须写成 $${var}，否则会导致 ValueError
     template = Template("""<!DOCTYPE html>
 <html>
 <head>
@@ -402,15 +370,6 @@ def render_html(
     <label><input type="checkbox" id="toggle-road" checked> Road Network</label>
   </div>
 
-  <div id="filter-panel" style="position: absolute; top: 20px; left: 20px; z-index: 10; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: sans-serif;">
-    <h4 style="margin: 0 0 10px 0;">过滤特定路段</h4>
-    <label style="font-size: 13px; color: #555;">输入 Edge ID (用英文逗号分隔):</label><br>
-    <input type="text" id="edge-filter-input" placeholder="例如: 1234, 5678, 9012" style="width: 200px; padding: 5px; margin-top: 5px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;">
-    <br>
-    <button id="btn-apply-filter" style="padding: 5px 15px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px;">筛选</button>
-    <button id="btn-clear-filter" style="padding: 5px 15px; cursor: pointer; background: #6c757d; color: white; border: none; border-radius: 4px; margin-left: 5px;">清除</button>
-  </div>
-
   <div class="search-section">
     <h4>Search & Filter</h4>
     <div class="input-group">
@@ -431,6 +390,28 @@ def render_html(
   </div>
 </div>
 
+<div id="filter-panel" style="position: absolute; top: 20px; right: 20px; z-index: 10; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: sans-serif; width: 230px;">
+  <h4 style="margin: 0 0 10px 0;">过滤特定路段</h4>
+  <label style="font-size: 13px; color: #555;">输入 Edge ID (用逗号分隔):</label><br>
+  <input type="text" id="edge-filter-input" placeholder="如: 1234, 5678" style="width: 100%; box-sizing: border-box; padding: 5px; margin-top: 5px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;">
+  <br>
+  <div style="display: flex; gap: 5px;">
+      <button id="btn-apply-filter" style="flex: 1; padding: 5px 15px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px;">筛选</button>
+      <button id="btn-clear-filter" style="flex: 1; padding: 5px 15px; cursor: pointer; background: #6c757d; color: white; border: none; border-radius: 4px;">清除</button>
+  </div>
+</div>
+
+<div id="coord-panel" style="position: absolute; bottom: 30px; right: 20px; z-index: 10; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: sans-serif; width: 230px;">
+  <h4 style="margin: 0 0 10px 0;">坐标定位</h4>
+  <label style="font-size: 13px; color: #555;">输入 经度, 纬度:</label><br>
+  <input type="text" id="coord-input" placeholder="如: 110.444, 19.983" style="width: 100%; box-sizing: border-box; padding: 5px; margin-top: 5px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;">
+  <br>
+  <div style="display: flex; gap: 5px;">
+    <button id="btn-locate" style="flex: 1; padding: 5px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 4px;">定位</button>
+    <button id="btn-clear-marker" style="flex: 1; padding: 5px; cursor: pointer; background: #dc3545; color: white; border: none; border-radius: 4px;">清除</button>
+  </div>
+</div>
+
 <script>
   mapboxgl.accessToken = '$TOKEN';
   const bounds = $BOUNDS;
@@ -446,6 +427,9 @@ def render_html(
     zoom: 12,
     pitch: 45
   });
+
+  // 用于存放坐标定位的 Marker
+  let locationMarker = null;
 
   map.on('load', () => {
     if (bounds) map.fitBounds(bounds, { padding: 50 });
@@ -541,6 +525,7 @@ def render_html(
         map.getCanvas().style.cursor = 'pointer';
         
         popup.setLngLat(e.lngLat)
+          // 使用 $$ 转义防止 Python Template 报错
           .setHTML(`<strong>Road Edge ID:</strong> $${feature.properties.id}`)
           .addTo(map);
       }
@@ -649,28 +634,22 @@ def render_html(
       applyFilter();
     });
                         
-    // 注意：请将 'road-layer' 替换为你代码中实际渲染 shp 路径的 layer 的 ID
-    // 注意：请将 'id' 替换为 geojson properties 中实际存储 edge id 的字段名（如 'edge_id'）
+    // --- 路由路段筛选逻辑 ---
     const ROAD_LAYER_ID = 'road-layer'; 
     const EDGE_ID_FIELD = 'id'; 
 
-    // 监听筛选按钮点击
     document.getElementById('btn-apply-filter').addEventListener('click', function() {
         const inputText = document.getElementById('edge-filter-input').value;
-        
         if (!inputText.trim()) {
-            // 如果输入为空，则清除过滤，显示全部
             map.setFilter(ROAD_LAYER_ID, null);
             return;
         }
 
-        // 解析输入的字符串，用逗号分隔，并转为数字数组
-        const targetIds = inputText.split(',')
+        const targetIds = inputText.split(/[,，]/)
             .map(item => parseInt(item.trim(), 10))
             .filter(id => !isNaN(id));
 
         if (targetIds.length > 0) {
-            // Mapbox GL JS 语法：['in', ['get', '字段名'], ['literal', [数组]]]
             map.setFilter(ROAD_LAYER_ID, [
                 'in', 
                 ['get', EDGE_ID_FIELD], 
@@ -681,11 +660,53 @@ def render_html(
         }
     });
 
-    // 监听清除按钮点击
     document.getElementById('btn-clear-filter').addEventListener('click', function() {
         document.getElementById('edge-filter-input').value = '';
-        // 将过滤条件设为 null 即可恢复显示所有路网
         map.setFilter(ROAD_LAYER_ID, null);
+    });
+
+    // --- 新增：经纬度定位逻辑 ---
+    document.getElementById('btn-locate').addEventListener('click', function() {
+        const val = document.getElementById('coord-input').value.trim();
+        if (!val) return;
+
+        // 使用正则匹配中英文逗号
+        const parts = val.split(/[,，]/); 
+        if (parts.length >= 2) {
+            const lon = parseFloat(parts[0].trim());
+            const lat = parseFloat(parts[1].trim());
+
+            if (!isNaN(lon) && !isNaN(lat)) {
+                // 如果已经有 marker，先移除
+                if (locationMarker) {
+                    locationMarker.remove();
+                }
+
+                // 添加新的红色 Marker 到地图
+                locationMarker = new mapboxgl.Marker({ color: '#dc3545' })
+                    .setLngLat([lon, lat])
+                    .addTo(map);
+
+                // 将视角平滑飞过去
+                map.flyTo({
+                    center: [lon, lat],
+                    zoom: 17, // 放大层级更适合查看精确点
+                    essential: true
+                });
+            } else {
+                alert('请输入有效的数字坐标！例如: 110.4, 20.0');
+            }
+        } else {
+            alert('请按格式输入：经度, 纬度');
+        }
+    });
+
+    document.getElementById('btn-clear-marker').addEventListener('click', function() {
+        document.getElementById('coord-input').value = '';
+        if (locationMarker) {
+            locationMarker.remove();
+            locationMarker = null;
+        }
     });
   });
 </script>
@@ -725,7 +746,7 @@ def main():
     print("Loading FMM results...")
     fmm_features, fmm_edges, bounds = load_match_results(Path(args.fmm), selected_ids, "fmm", bounds)
 
-    # all_used_edges = cmm_edges.union(fmm_edges)
+    # 在这里传入 None，表示提取所有的路网（不根据 matching 结果过滤）
     road_geojson = load_edges_geojson(Path(args.edges), None)
 
     obs_geojson = {"type": "FeatureCollection", "features": obs_features}
