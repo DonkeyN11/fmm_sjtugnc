@@ -1274,6 +1274,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         matched_candidate_path.reserve(tg_opath.size());
 
         std::vector<MatchedCandidate> filtered_path;
+        TGOpath filtered_tg_opath;
         std::vector<int> filtered_indices;
         std::vector<double> filtered_sp_dist;
         std::vector<double> filtered_eu_dist;
@@ -1299,6 +1300,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
             if (!config.filtered || trust >= config.trustworthiness_threshold) {
                 filtered_path.push_back(mc);
+                filtered_tg_opath.push_back(node);
                 filtered_indices.push_back(sub_indices[i]);
                 filtered_sp_dist.push_back(sp);
                 filtered_eu_dist.push_back(eu);
@@ -1315,7 +1317,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         for (const auto& mc : filtered_path) opath.push_back(mc.c.edge->id);
 
         std::vector<int> indices_mapping;
-        C_Path cpath = ubodt_->construct_complete_path(traj.id, tg_opath, network_.get_edges(), &indices_mapping, config.reverse_tolerance);
+        C_Path cpath = ubodt_->construct_complete_path(traj.id, filtered_tg_opath, network_.get_edges(), &indices_mapping, config.reverse_tolerance);
         LineString mgeom = network_.complete_path_to_geometry(segment_traj.geom, cpath);
 
         MatchResult res;
@@ -1324,21 +1326,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         res.opt_candidate_path = std::move(filtered_path);
         res.opath = std::move(opath);
         res.cpath = std::move(cpath);
-        
-        // Filter indices_mapping for points that were not filtered by trustworthiness
-        std::vector<int> filtered_indices_mapping;
-        if (!indices_mapping.empty()) {
-            for (size_t i = 0; i < tg_opath.size(); ++i) {
-                double trust = tg_opath[i]->trustworthiness;
-                if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
-                    trust = trustworthiness_results.first[i];
-                }
-                if (!config.filtered || trust >= config.trustworthiness_threshold) {
-                    if (i < indices_mapping.size()) filtered_indices_mapping.push_back(indices_mapping[i]);
-                }
-            }
-        }
-        res.indices = std::move(filtered_indices_mapping);
+        res.indices = std::move(indices_mapping);
         res.mgeom = std::move(mgeom);
         res.sp_distances = std::move(filtered_sp_dist);
         res.eu_distances = std::move(filtered_eu_dist);
