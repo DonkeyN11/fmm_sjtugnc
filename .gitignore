@@ -109,3 +109,5 @@ sync.sh
 *.txt
 *.json
 *.html
+
+AGENTS.md
