@@ -1490,7 +1490,13 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
         if (reverse_tolerance > 0 && (ca->offset - cb->offset) <= reverse_limit) {
             return 0.0;
         }
-        // Same edge but offset decreased beyond reverse tolerance
+        // Same edge but offset decreased beyond reverse tolerance, this is an invalid path.
+        return -1;
+    }
+
+    // If edges are directly connected (target == source), no UBODT lookup needed.
+    if (ca->edge->target == cb->edge->source) {
+        return ca->edge->length - ca->offset + cb->offset;
     }
 
     // Otherwise rely on UBODT lookup for forward path between successive edges.
