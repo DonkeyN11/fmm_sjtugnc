@@ -1537,12 +1537,33 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
         if (ca->offset <= cb->offset) {
             return cb->offset - ca->offset;
         }
-        // Use a small epsilon for floating point comparison robustness
-        double reverse_limit = ca->edge->length * reverse_tolerance + 1e-6;
-        if (reverse_tolerance > 0 && (ca->offset - cb->offset) <= reverse_limit) {
+        // Offset decreased on the same edge.
+        // First guard: small decreases (up to 15% of edge length) are treated as
+        // projection artifacts rather than reverse travel. Perpendicular projection
+        // near polyline vertices can produce offset oscillations even when the
+        // vehicle moves forward. This threshold is independent of reverse_tolerance.
+        if ((ca->offset - cb->offset) <= ca->edge->length * 0.15) {
             return 0.0;
         }
-        // Same edge but offset decreased beyond reverse tolerance
+        // Second guard: if reverse_tolerance is configured, allow additional reverse.
+        if (reverse_tolerance > 0) {
+            double reverse_limit = ca->edge->length * reverse_tolerance + 1e-7;
+            if ((ca->offset - cb->offset) <= reverse_limit) {
+                return 0.0;
+            }
+        }
+        // Offset decreased beyond both guards — genuine reverse travel.
+        // Check if U-turn / reverse travel on this edge is possible:
+        // look up the reverse path (target → source) in UBODT.
+        Record *r_reverse = nullptr;
+        #pragma omp critical(ubodt_section)
+        {
+            r_reverse = ubodt_->look_up(ca->edge->target, ca->edge->source);
+        }
+        if (r_reverse != nullptr) {
+            return ca->offset - cb->offset;
+        }
+        return -1;
     }
 
     // If edges are directly connected (target == source), no UBODT lookup needed.
