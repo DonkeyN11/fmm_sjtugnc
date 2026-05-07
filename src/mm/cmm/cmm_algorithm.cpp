@@ -592,15 +592,14 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    int window_length_arg,
                                                    bool margin_used_trustworthiness_arg,
                                                    bool filtered_arg,
-                                                   bool enable_candidate_filter_arg,
-                                                   double candidate_filter_threshold_arg,
                                                    bool enable_gap_bridging_arg,
                                                    double max_gap_distance_arg,
                                                    double min_gps_error_degrees_arg,
                                                    double max_interval_arg,
                                                    double trustworthiness_threshold_arg,
                                                    double map_error_std_arg,
-                                                   double background_log_prob_arg)
+                                                   double background_log_prob_arg,
+                                                   double phmi_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -609,15 +608,14 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       window_length(window_length_arg),
       margin_used_trustworthiness(margin_used_trustworthiness_arg),
       filtered(filtered_arg),
-      enable_candidate_filter(enable_candidate_filter_arg),
-      candidate_filter_threshold(candidate_filter_threshold_arg),
       enable_gap_bridging(enable_gap_bridging_arg),
       max_gap_distance(max_gap_distance_arg),
       min_gps_error_degrees(min_gps_error_degrees_arg),
       max_interval(max_interval_arg),
       trustworthiness_threshold(trustworthiness_threshold_arg),
       map_error_std(map_error_std_arg),
-      background_log_prob(background_log_prob_arg) {
+      background_log_prob(background_log_prob_arg),
+      phmi(phmi_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -627,11 +625,10 @@ void CovarianceMapMatchConfig::print() const {
                 k, min_candidates, protection_level_multiplier, reverse_tolerance);
     SPDLOG_INFO("normalized {} use_mahalanobis {} window_length {} margin_trust {} filtered {}",
                 normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered);
-    SPDLOG_INFO("enable_filter {} filter_threshold {} gap_bridging {} max_gap_distance {}",
-                enable_candidate_filter, candidate_filter_threshold, enable_gap_bridging, max_gap_distance);
-    SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold",
+    SPDLOG_INFO("gap_bridging {} max_gap_distance {}", enable_gap_bridging, max_gap_distance);
+    SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold {}",
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
-    SPDLOG_INFO("map_error_std {} background_log_prob", map_error_std, background_log_prob);
+    SPDLOG_INFO("map_error_std {} background_log_prob {} phmi {}", map_error_std, background_log_prob, phmi);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -647,17 +644,16 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     bool margin_used_trustworthiness = xml_data.get("config.other.margin_used_trustworthiness", true);
     bool filtered = xml_data.get("config.parameters.filtered", true);
 
-    // New parameters for log-space filtering and gap bridging
-    bool enable_candidate_filter = xml_data.get("config.parameters.enable_candidate_filter", true);
-    double candidate_filter_threshold = xml_data.get("config.parameters.candidate_filter_threshold", 15.0);
+    // Gap bridging and integrity parameters
     bool enable_gap_bridging = xml_data.get("config.parameters.enable_gap_bridging", true);
     double max_gap_distance = xml_data.get("config.parameters.max_gap_distance", 2000.0);
+    double phmi = xml_data.get("config.parameters.phmi", 1.0e-5);
 
     // Minimum GPS error to prevent over-confidence
     double min_gps_error_degrees = xml_data.get("config.parameters.min_gps_error_degrees", 1.0e-4);
 
     double max_interval = xml_data.get("config.parameters.max_interval", 180.0);
-    double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 0.0);
+    double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 1.0);
 
     // New parameters for additive map noise and background noise normalization
     double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
@@ -666,10 +662,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
-                                    enable_candidate_filter, candidate_filter_threshold,
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob};
+                                    map_error_std, background_log_prob, phmi};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -686,16 +681,15 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     bool filtered = arg_data["filtered"].as<bool>();
 
     // Check if new args exist (assuming they are registered) or use defaults
-    bool enable_filter = arg_data.count("enable_candidate_filter") ? arg_data["enable_candidate_filter"].as<bool>() : true;
-    double filter_thresh = arg_data.count("candidate_filter_threshold") ? arg_data["candidate_filter_threshold"].as<double>() : 15.0;
     bool enable_gap = arg_data.count("enable_gap_bridging") ? arg_data["enable_gap_bridging"].as<bool>() : true;
     double max_gap = arg_data.count("max_gap_distance") ? arg_data["max_gap_distance"].as<double>() : 2000.0;
+    double phmi = arg_data.count("phmi") ? arg_data["phmi"].as<double>() : 1.0e-5;
 
     // Minimum GPS error to prevent over-confidence
     double min_gps_error = arg_data.count("min_gps_error_degrees") ? arg_data["min_gps_error_degrees"].as<double>() : 1.0e-4;
 
     double max_interval = arg_data.count("max_interval") ? arg_data["max_interval"].as<double>() : 180.0;
-    double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 0.0;
+    double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 1.0;
 
     // New parameters for additive map noise and background noise normalization
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
@@ -704,9 +698,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
-                                    enable_filter, filter_thresh, enable_gap, max_gap, min_gps_error,
+                                    enable_gap, max_gap, min_gps_error,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob};
+                                    map_error_std, background_log_prob, phmi};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -730,10 +724,6 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<bool>()->default_value("true"))
         ("filtered", "Filter out points with no candidates or disconnected transitions",
          cxxopts::value<bool>()->default_value("true"))
-        ("enable_candidate_filter", "Enable L2 candidate filtering based on relative log-probability",
-         cxxopts::value<bool>()->default_value("true"))
-        ("candidate_filter_threshold", "Log-probability threshold for filtering (default 15.0)",
-         cxxopts::value<double>()->default_value("15.0"))
         ("enable_gap_bridging", "Enable trajectory gap bridging",
          cxxopts::value<bool>()->default_value("true"))
         ("max_gap_distance", "Max distance for gap bridging (meters)",
@@ -742,12 +732,14 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("1.0e-4"))
         ("max_interval", "Maximum time interval (seconds) to split segments",
          cxxopts::value<double>()->default_value("180.0"))
-        ("trustworthiness_threshold", "Threshold for filtering low-confidence matches",
-         cxxopts::value<double>()->default_value("0.0"))
+        ("trustworthiness_threshold", "Entropy threshold for filtering ambiguous matches (smaller is more confident)",
+         cxxopts::value<double>()->default_value("1.0"))
         ("map_error_std", "Map error standard deviation in degrees for additive noise (default 5e-5 ≈ 5m)",
          cxxopts::value<double>()->default_value("5.0e-5"))
         ("background_log_prob", "Background noise log probability for normalization (default -20.0)",
-         cxxopts::value<double>()->default_value("-20.0"));
+         cxxopts::value<double>()->default_value("-20.0"))
+        ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
+         cxxopts::value<double>()->default_value("1.0e-5"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -761,28 +753,27 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--window_length (optional) <int>: sliding window length for trustworthiness (10)\n";
     oss << "--margin_used_trustworthiness (optional) <bool>: if true use margin (top1-top2), else use top1 score (true)\n";
     oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
-    oss << "--enable_candidate_filter (optional) <bool>: Enable L2 candidate filtering (true)\n";
-    oss << "--candidate_filter_threshold (optional) <double>: Log-probability threshold for filtering (15.0)\n";
     oss << "--enable_gap_bridging (optional) <bool>: Enable trajectory gap bridging (true)\n";
     oss << "--max_gap_distance (optional) <double>: Max distance for gap bridging in meters (2000.0)\n";
     oss << "--min_gps_error_degrees (optional) <double>: Minimum GPS error in degrees to prevent over-confidence (1e-4 ≈ 11m)\n";
     oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
-    oss << "--trustworthiness_threshold (optional) <double>: Threshold for filtering low-confidence matches (0.0)\n";
+    oss << "--trustworthiness_threshold (optional) <double>: Entropy threshold for filtering ambiguous matches in bits (1.0)\n";
     oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
     oss << "--background_log_prob (optional) <double>: Background noise log probability for normalization (-20.0)\n";
+    oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
-        window_length <= 0 || candidate_filter_threshold < 0 || max_gap_distance < 0 ||
-        map_error_std < 0) {
+        window_length <= 0 || max_gap_distance < 0 ||
+        map_error_std < 0 || phmi < 0 || phmi > 1.0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
                        "protection_level_multiplier {} reverse_tolerance {} window_length {} "
-                       "filter_threshold {} max_gap_distance {} map_error_std {}",
+                       "max_gap_distance {} map_error_std {} phmi {}",
                        k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                       window_length, candidate_filter_threshold, max_gap_distance, map_error_std);
+                       window_length, max_gap_distance, map_error_std, phmi);
         return false;
     }
     if (max_interval < 0) return false;
@@ -1100,7 +1091,30 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             }
         }
 
-        std::vector<double> log_emission_probs = raw_probabilities;
+        std::vector<double> log_emission_probs;
+        log_emission_probs.reserve(raw_probabilities.size());
+
+        double sum_ep_raw = 0.0;
+        std::vector<double> ep_raw_list(raw_probabilities.size(), 0.0);
+
+        // 1. 转为线性 EP 并求和
+        for (size_t k = 0; k < raw_probabilities.size(); ++k) {
+            if (raw_probabilities[k] > -std::numeric_limits<double>::infinity()) {
+                ep_raw_list[k] = std::exp(raw_probabilities[k]);
+                sum_ep_raw += ep_raw_list[k];
+            }
+        }
+
+        // 2. EP 线性归一化并转回 Log 空间
+        double one_minus_phmi = 1.0 - config.phmi;
+        for (size_t k = 0; k < raw_probabilities.size(); ++k) {
+            if (ep_raw_list[k] > 0 && sum_ep_raw > 0) {
+                double linear_ep_norm = one_minus_phmi * (ep_raw_list[k] / sum_ep_raw);
+                log_emission_probs.push_back(std::log(linear_ep_norm));
+            } else {
+                log_emission_probs.push_back(-std::numeric_limits<double>::infinity());
+            }
+        }
 
         SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
         result.candidates.push_back(std::move(selected_candidates));
@@ -1298,7 +1312,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust};
             matched_candidate_path.push_back(mc);
 
-            if (!config.filtered || trust >= config.trustworthiness_threshold) {
+            if (!config.filtered || trust <= config.trustworthiness_threshold) {
                 filtered_path.push_back(mc);
                 filtered_tg_opath.push_back(node);
                 filtered_indices.push_back(sub_indices[i]);
@@ -1338,7 +1352,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
                 trust = trustworthiness_results.first[i];
             }
-            if (!config.filtered || trust >= config.trustworthiness_threshold) {
+            if (!config.filtered || trust <= config.trustworthiness_threshold) {
                 if (i < trustworthiness_results.second.size()) {
                     filtered_nbest.push_back(trustworthiness_results.second[i]);
                 } else {
@@ -1354,6 +1368,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     };
 
     for (const auto& segment_indices : segments) {
+        double log_prob_unconsidered = -std::numeric_limits<double>::infinity();
+
         std::vector<int> current_sub_indices; 
         int start_real_idx = segment_indices.front();
         current_sub_indices.push_back(start_real_idx);
@@ -1372,7 +1388,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             });
         }
         tg_ptr->get_layers().push_back(std::move(start_layer));
-        initialize_first_layer(&tg_ptr->get_layers()[0], config);
+        initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
 
         TGLayer* last_valid_layer = &tg_ptr->get_layers()[0];
         int last_valid_real = start_real_idx;
@@ -1416,7 +1432,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     });
                 }
                 tg_ptr->get_layers().push_back(std::move(new_start_layer));
-                initialize_first_layer(&tg_ptr->get_layers()[0], config);
+                initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
                 
                 last_valid_layer = &tg_ptr->get_layers()[0];
                 last_valid_real = next_real;
@@ -1430,7 +1446,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             }
 
             bool connected = false;
-            update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config);
+            update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config, log_prob_unconsidered);
 
             if (!connected) {
                 skipped_indices.push_back(next_real);
@@ -1517,159 +1533,197 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
     }
 }
 
-// Initialize the first layer with Top-K normalization in log-space
-void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const CovarianceMapMatchConfig &config) {
-    if (!layer || layer->empty()) {
-        return;
-    }
+void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const CovarianceMapMatchConfig &config, double &log_prob_unconsidered) {
+    if (!layer || layer->empty()) return;
 
-    // emission probabilities are already in log-space (from search_candidates_with_protection_level)
-    std::vector<double> log_eps;
-    log_eps.reserve(layer->size());
-    for (const auto &node : *layer) {
-        log_eps.push_back(node.ep); // ep here is already log-prob
-    }
+    std::vector<double> layer_log_probs;
 
-    // Initialize cumu_prob as raw emission probability in log-space
+    // 1. 初始化首层的 cumu_prob (此时 EP 已经在外部做过 1-PHMI 的归一化分配)
     for (size_t i = 0; i < layer->size(); ++i) {
         auto &node = (*layer)[i];
-        if (log_eps[i] > -std::numeric_limits<double>::infinity()) {
-            node.cumu_prob = log_eps[i];  // Assign directly without normalization
-            node.trustworthiness = 0.0;   // Set to 0.0 as window-based trust will override it
+        if (node.ep > -std::numeric_limits<double>::infinity()) {
+            node.cumu_prob = node.ep;
+            layer_log_probs.push_back(node.cumu_prob);
         } else {
             node.cumu_prob = -std::numeric_limits<double>::infinity();
-            node.trustworthiness = 0.0;
         }
-        node.tp = 1.0;  // No transition probability for first layer (store as linear 1.0)
+        node.tp = 1.0; 
         node.prev = nullptr;
     }
+
+    // 2. 内部归一化计算首层的信息熵
+    double layer_entropy = 0.0;
+    if (!layer_log_probs.empty()) {
+        double log_sum = log_sum_exp(layer_log_probs);
+        double inv_log2 = 1.0 / std::log(2.0);
+
+        for (double log_p : layer_log_probs) {
+            double log_norm = log_p - log_sum; 
+            double p_norm = std::exp(log_norm); 
+            if (p_norm > 0.0) {
+                layer_entropy -= p_norm * log_norm * inv_log2; 
+            }
+        }
+        if (layer_entropy < 0.0) layer_entropy = 0.0;
+    }
+
+    // 3. 赋值 trustworthiness
+    for (size_t i = 0; i < layer->size(); ++i) {
+        auto &node = (*layer)[i];
+        if (node.cumu_prob > -std::numeric_limits<double>::infinity()) {
+            node.trustworthiness = layer_entropy;
+        } else {
+            node.trustworthiness = -std::numeric_limits<double>::infinity();
+        }
+    }
+
+    // 初始化未考虑状态概率
+    log_prob_unconsidered = std::log(config.phmi);
 }
 
 // ... update_tg_cmm remains same ...
 
-// Update all transitions between two consecutive layers based on path feasibility and
-// Mahalanobis-aware emission probabilities (LOG-SPACE with Two-Level Filtering)
 void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
-                                          double eu_dist,
-                                          bool *connected,
-                                          const CovarianceMapMatchConfig &config) {
+                                          double eu_dist, bool *connected,
+                                          const CovarianceMapMatchConfig &config,
+                                          double &log_prob_unconsidered) {
     if (!la_ptr || !lb_ptr) return;
     *connected = false;
-    const size_t next_candidate_count = lb_ptr->size();
-    if (next_candidate_count == 0) return;
+    const size_t prev_count = la_ptr->size();
+    const size_t next_count = lb_ptr->size();
+    if (next_count == 0) return;
 
-    // Vector to store unnormalized log posterior scores for each candidate in next layer
-    std::vector<double> raw_scores(next_candidate_count, -std::numeric_limits<double>::infinity());
+    double phmi = config.phmi;
+    double one_minus_phmi = 1.0 - phmi;
+    double log_phmi = std::log(phmi);
 
-    // 1. Viterbi Recursion: Calculate max log score for each candidate in next layer
-    for (size_t b = 0; b < next_candidate_count; ++b) {
-        TGNode &node_b = (*lb_ptr)[b];
+    std::vector<double> leak_probs;
+    leak_probs.push_back(log_prob_unconsidered); // 收集之前所有历元遗留的漏检概率
 
-        // Check for null candidate pointer
-        if (node_b.c == nullptr) {
-            raw_scores[b] = -std::numeric_limits<double>::infinity();
-            continue;
+    // 1. 预先计算 A 到 B 的单步原始 TP、SP 距离及总和
+    std::vector<double> sum_tp_raw_A(prev_count, 0.0);
+    std::vector<std::vector<double>> tp_raw_matrix(prev_count, std::vector<double>(next_count, 0.0));
+    std::vector<std::vector<double>> sp_dist_matrix(prev_count, std::vector<double>(next_count, -1.0));
+
+    for (size_t a = 0; a < prev_count; ++a) {
+        TGNode &node_a = (*la_ptr)[a];
+        if (node_a.cumu_prob == -std::numeric_limits<double>::infinity()) continue;
+
+        for (size_t b = 0; b < next_count; ++b) {
+            if ((*lb_ptr)[b].c == nullptr) continue;
+            double sp_dist = get_sp_dist(node_a.c, (*lb_ptr)[b].c, config.reverse_tolerance);
+            if (sp_dist >= 0) {
+                double tp_raw = TransitionGraph::calc_tp(sp_dist, eu_dist);
+                tp_raw_matrix[a][b] = tp_raw;
+                sp_dist_matrix[a][b] = sp_dist;
+                sum_tp_raw_A[a] += tp_raw;
+            }
         }
 
-        // ep is already log-space
-        double log_ep = node_b.ep;
+        if (sum_tp_raw_A[a] > 0) {
+            // A 节点有合法的转移路径，正常漏检概率为 PHMI
+            leak_probs.push_back(node_a.cumu_prob + log_phmi);
+        } else {
+            // A 节点前方没有候选点（死胡同），该分支概率 100% 漏检
+            leak_probs.push_back(node_a.cumu_prob);
+        }
+    }
 
-        double max_prev_score = -std::numeric_limits<double>::infinity();
+    // 2. 更新全局未考虑状态概率 (前向求和)
+    log_prob_unconsidered = log_sum_exp(leak_probs);
+
+    bool has_valid_candidate = false;
+
+    // 3. 对当前历元的每个候选点 B 进行全概率合并
+    for (size_t b = 0; b < next_count; ++b) {
+        TGNode &node_b = (*lb_ptr)[b];
+        if (node_b.c == nullptr) continue;
+
+        std::vector<double> incoming_log_probs; // 收集所有指向 node_b 的分支概率
         TGNode *best_prev = nullptr;
-        double best_log_tp = -std::numeric_limits<double>::infinity();
+        double best_log_branch_prob = -std::numeric_limits<double>::infinity();
+        double best_log_tp_norm = -std::numeric_limits<double>::infinity();
         double best_sp_dist = 0.0;
 
-        for (auto &node_a : *la_ptr) {
-            if (node_a.cumu_prob == -std::numeric_limits<double>::infinity()) {
-                continue;  // Skip invalid previous states
-            }
+        for (size_t a = 0; a < prev_count; ++a) {
+            TGNode &node_a = (*la_ptr)[a];
+            if (node_a.cumu_prob == -std::numeric_limits<double>::infinity()) continue;
 
-            // Check for null candidate pointer
-            if (node_a.c == nullptr) {
-                continue;
-            }
+            double tp_raw = tp_raw_matrix[a][b];
+            double sum_tp_raw = sum_tp_raw_A[a];
+            (void)sum_tp_raw; // suppressed: only used in normalization (currently bypassed)
 
-            // Calculate shortest path distance
-            double sp_dist = get_sp_dist(node_a.c, node_b.c, config.reverse_tolerance);
-            double log_tp = -std::numeric_limits<double>::infinity();
+            if (tp_raw > 0) {
+                // TEST: bypass per-predecessor normalization, use raw tp directly
+                double linear_tp_norm = tp_raw;
+                double log_tp_norm = std::log(linear_tp_norm);
 
-            if (sp_dist >= 0) {
-                // Calculate transition probability in log space
-                double linear_tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
-                if (linear_tp > 0) {
-                    log_tp = std::log(linear_tp);
+                // 在对数空间内安全相加
+                double log_branch_prob = node_a.cumu_prob + log_tp_norm;
+                incoming_log_probs.push_back(log_branch_prob);
+
+                // 记录 Viterbi 最优前驱，用于 backtrack
+                if (log_branch_prob > best_log_branch_prob) {
+                    best_log_branch_prob = log_branch_prob;
+                    best_prev = &node_a;
+                    best_log_tp_norm = log_tp_norm;
+                    best_sp_dist = sp_dist_matrix[a][b];
                 }
             }
+        }
 
-            // Viterbi: max(prev.cumu_prob + log(tp)) + log(ep)
-            double score = node_a.cumu_prob + log_tp;
+        // 4. 计算最终的 Cumu_Prob (结合已归一化到 Log 空间的 EP)
+        if (!incoming_log_probs.empty() && node_b.ep > -std::numeric_limits<double>::infinity()) {
+            double log_sum_prev_probs = log_sum_exp(incoming_log_probs);
+            
+            node_b.cumu_prob = log_sum_prev_probs + node_b.ep;
+            if (best_prev != nullptr) {
+                node_b.prev = best_prev;
+                node_b.tp = std::exp(best_log_tp_norm);
+                node_b.sp_dist = best_sp_dist;
+            }
+        } else {
+            node_b.cumu_prob = -std::numeric_limits<double>::infinity();
+        }
+    }
 
-            if (score > max_prev_score) {
-                max_prev_score = score;
-                best_prev = &node_a;
-                best_log_tp = log_tp;
-                best_sp_dist = sp_dist;
+    // 5. 收集当前历元所有有效候选点的对数概率，计算局部信息熵
+    std::vector<double> layer_log_probs;
+    for (size_t b = 0; b < next_count; ++b) {
+        TGNode &node_b = (*lb_ptr)[b];
+        if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
+            layer_log_probs.push_back(node_b.cumu_prob);
+        }
+    }
+
+    double layer_entropy = 0.0;
+    if (!layer_log_probs.empty()) {
+        double log_sum = log_sum_exp(layer_log_probs);
+        double inv_log2 = 1.0 / std::log(2.0);
+
+        for (double log_p : layer_log_probs) {
+            double log_norm = log_p - log_sum;
+            double p_norm = std::exp(log_norm);
+            if (p_norm > 0.0) {
+                layer_entropy -= p_norm * log_norm * inv_log2;
             }
         }
+        if (layer_entropy < 0.0) layer_entropy = 0.0;
+    }
 
-        if (best_prev != nullptr) {
-            node_b.prev = best_prev;
-            node_b.tp = std::exp(best_log_tp);  // Store linear tp, not log
-            node_b.sp_dist = best_sp_dist;
-            raw_scores[b] = max_prev_score + log_ep;  // Unnormalized posterior
+    // 6. 将局部信息熵统一赋给本层所有有效候选点的 trustworthiness
+    has_valid_candidate = false;
+    for (size_t b = 0; b < next_count; ++b) {
+        TGNode &node_b = (*lb_ptr)[b];
+        if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
+            node_b.trustworthiness = layer_entropy;
+            has_valid_candidate = true;
+        } else {
+            node_b.trustworthiness = -std::numeric_limits<double>::infinity();
         }
     }
 
-    // 2. Two-Level Filtering
-    if (raw_scores.empty()) {
-        return;
-    }
-    double max_score_in_layer = *std::max_element(raw_scores.begin(), raw_scores.end());
-
-    // L1 Filter: Check if layer is connected (has at least one valid path)
-    if (max_score_in_layer == -std::numeric_limits<double>::infinity()) {
-        return;  // Layer disconnected
-    }
-
-    std::vector<int> kept_indices;
-    std::vector<double> scores_to_normalize;
-
-    // L2 Filter: Filter candidates with relatively low probability
-    for (size_t b = 0; b < next_candidate_count; ++b) {
-        double score = raw_scores[b];
-
-        // Skip null candidates
-        if ((*lb_ptr)[b].c == nullptr) {
-            (*lb_ptr)[b].cumu_prob = -std::numeric_limits<double>::infinity();
-            continue;
-        }
-
-        // L2 Candidate filtering: drop if score is too far from max
-        if (config.enable_candidate_filter &&
-            (score < max_score_in_layer - config.candidate_filter_threshold)) {
-            (*lb_ptr)[b].cumu_prob = -std::numeric_limits<double>::infinity();
-            continue;
-        }
-
-        if (score > -std::numeric_limits<double>::infinity()) {
-            kept_indices.push_back(static_cast<int>(b));
-            scores_to_normalize.push_back(score);
-        }
-    }
-
-    // Check if all candidates were filtered out
-    if (kept_indices.empty()) {
-        return;  // All filtered, layer disconnected
-    }
-
-    *connected = true;
-
-    // 3. Max-Shift to prevent underflow (Mathematical distribution preserved, unnormalized)
-    // We shift by max_score_in_layer to keep scores near 0 in log-space, preventing double precision collapse.
-    for (int idx : kept_indices) {
-        (*lb_ptr)[idx].cumu_prob = raw_scores[idx] - max_score_in_layer;
-        (*lb_ptr)[idx].trustworthiness = 0.0; // Discard single-point linear trustworthiness
-    }
+    *connected = has_valid_candidate;
 }
 
 // Compute sliding-window trustworthiness using top-N (N=3) path scores.
