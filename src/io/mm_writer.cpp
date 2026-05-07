@@ -48,11 +48,11 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_trustworthiness) header += ";trustworthiness";
   if (config_.write_n_best_trustworthiness) header += ";n_best_trustworthiness";
   if (config_.write_cumu_prob) header += ";cumu_prob";
+  if (config_.write_delta_entropy) header += ";delta_entropy";
   if (config_.write_candidates) header += ";candidates";
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
   if (config_.write_speed) header += ";speed";
-  if (config_.write_delta_entropy) header += ";delta_entropy";
 
   m_fstream << header << '\n';
 }
