@@ -1309,7 +1309,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 trust = trustworthiness_results.first[i];
             }
 
-            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust};
+            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy};
             matched_candidate_path.push_back(mc);
 
             if (!config.filtered || trust <= config.trustworthiness_threshold) {
@@ -1567,13 +1567,24 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
         if (layer_entropy < 0.0) layer_entropy = 0.0;
     }
 
-    // 3. 赋值 trustworthiness
+    // 3. 计算首层的信息增益 (delta_entropy = H_prior - H_posterior)
+    //    首层没有先验层传播，使用均匀先验: H_prior = log2(N_valid)
+    double delta_layer_entropy = 0.0;
+    if (!layer_log_probs.empty()) {
+        double H_prior = std::log2(static_cast<double>(layer_log_probs.size()));
+        delta_layer_entropy = H_prior - layer_entropy;
+        if (delta_layer_entropy < 0.0) delta_layer_entropy = 0.0;
+    }
+
+    // 4. 赋值 trustworthiness 与 delta_entropy
     for (size_t i = 0; i < layer->size(); ++i) {
         auto &node = (*layer)[i];
         if (node.cumu_prob > -std::numeric_limits<double>::infinity()) {
             node.trustworthiness = layer_entropy;
+            node.delta_entropy = delta_layer_entropy;
         } else {
             node.trustworthiness = -std::numeric_limits<double>::infinity();
+            node.delta_entropy = -std::numeric_limits<double>::infinity();
         }
     }
 
@@ -1634,6 +1645,9 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
     bool has_valid_candidate = false;
 
+    // 用于收集先验对数概率 (预测分布，尚未乘 EP)
+    std::vector<double> layer_prior_log_probs;
+
     // 3. 对当前历元的每个候选点 B 进行全概率合并
     for (size_t b = 0; b < next_count; ++b) {
         TGNode &node_b = (*lb_ptr)[b];
@@ -1675,7 +1689,8 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         // 4. 计算最终的 Cumu_Prob (结合已归一化到 Log 空间的 EP)
         if (!incoming_log_probs.empty() && node_b.ep > -std::numeric_limits<double>::infinity()) {
             double log_sum_prev_probs = log_sum_exp(incoming_log_probs);
-            
+            layer_prior_log_probs.push_back(log_sum_prev_probs);  // 记录先验
+
             node_b.cumu_prob = log_sum_prev_probs + node_b.ep;
             if (best_prev != nullptr) {
                 node_b.prev = best_prev;
@@ -1711,15 +1726,36 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         if (layer_entropy < 0.0) layer_entropy = 0.0;
     }
 
-    // 6. 将局部信息熵统一赋给本层所有有效候选点的 trustworthiness
+    // 5a. 计算先验分布熵: H(P(x_t | z_{1:t-1}))
+    double layer_prior_entropy = 0.0;
+    if (!layer_prior_log_probs.empty()) {
+        double log_sum_prior = log_sum_exp(layer_prior_log_probs);
+        double inv_log2 = 1.0 / std::log(2.0);
+        for (double log_p : layer_prior_log_probs) {
+            double log_norm = log_p - log_sum_prior;
+            double p_norm = std::exp(log_norm);
+            if (p_norm > 0.0) {
+                layer_prior_entropy -= p_norm * log_norm * inv_log2;
+            }
+        }
+        if (layer_prior_entropy < 0.0) layer_prior_entropy = 0.0;
+    }
+
+    // 5b. 信息增益: ΔH = H_prior - H_posterior
+    double delta_layer_entropy = layer_prior_entropy - layer_entropy;
+    if (delta_layer_entropy < 0.0) delta_layer_entropy = 0.0;
+
+    // 6. 将局部信息熵统一赋给本层所有有效候选点的 trustworthiness 与 delta_entropy
     has_valid_candidate = false;
     for (size_t b = 0; b < next_count; ++b) {
         TGNode &node_b = (*lb_ptr)[b];
         if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
             node_b.trustworthiness = layer_entropy;
+            node_b.delta_entropy = delta_layer_entropy;
             has_valid_candidate = true;
         } else {
             node_b.trustworthiness = -std::numeric_limits<double>::infinity();
+            node_b.delta_entropy = -std::numeric_limits<double>::infinity();
         }
     }
 

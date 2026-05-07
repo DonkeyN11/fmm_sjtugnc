@@ -63,6 +63,7 @@ struct OutputConfig {
   bool write_candidates = false; /**< if true, emit all candidates per observation */
   bool write_seq = false; /**< if true, output sequence number of each point */
   bool write_ogeom = false; /**< if true, output original GPS point geometry */
+  bool write_delta_entropy = false; /**< if true, output delta entropy (information gain H_prior - H_posterior in bits, CMM only) */
   bool point_mode = true; /**< if true, output in point mode (one row per matched point) */
 };
 

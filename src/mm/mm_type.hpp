@@ -68,6 +68,7 @@ struct MatchedCandidate {
   double cumu_prob; /**< cumulative probability of the point */
   double sp_dist; /**< shortest path distance to previous matched candidate */
   double trustworthiness; /**< trustworthiness metric (algorithm-specific; CMM uses sliding-window margin) */
+  double delta_entropy; /**< information gain: H(prior) - H(posterior) in bits (CMM) */
 };
 
 /**
