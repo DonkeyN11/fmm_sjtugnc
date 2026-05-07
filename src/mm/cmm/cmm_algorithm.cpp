@@ -1448,8 +1448,44 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             bool connected = false;
             update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config, log_prob_unconsidered);
 
+            bool should_restart = config.enable_gap_bridging &&
+                                  !tc_raw[next_real].empty() &&
+                                  current_sub_indices.size() >= 2;
+
             if (!connected) {
-                skipped_indices.push_back(next_real);
+                if (!should_restart) {
+                    skipped_indices.push_back(next_real);
+                }
+
+                if (should_restart) {
+                    // 1. 提交当前已积累的子段
+                    process_sub_segment(tg_ptr.get(), current_sub_indices);
+                    for (int skipped_idx : skipped_indices) {
+                        final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
+                    }
+                    skipped_indices.clear();
+
+                    // 2. 以 next_real 为起点重建 TransitionGraph
+                    current_sub_indices.clear();
+                    current_sub_indices.push_back(next_real);
+
+                    tg_ptr = std::make_unique<TransitionGraph>(empty_tc, empty_log_eps, true);
+                    tg_ptr->get_layers().reserve(segment_indices.size() - i + 1);
+
+                    TGLayer restart_layer;
+                    restart_layer.reserve(tc_raw[next_real].size());
+                    for (size_t k = 0; k < tc_raw[next_real].size(); ++k) {
+                        restart_layer.push_back(TGNode{
+                            &tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
+                            -std::numeric_limits<double>::infinity(), 0, 0
+                        });
+                    }
+                    tg_ptr->get_layers().push_back(std::move(restart_layer));
+                    log_prob_unconsidered = -std::numeric_limits<double>::infinity();
+                    initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
+                    last_valid_layer = &tg_ptr->get_layers()[0];
+                    last_valid_real = next_real;
+                }
             } else {
                 for (int skipped_idx : skipped_indices) {
                     final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
@@ -1458,7 +1494,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
                 tg_ptr->get_layers().push_back(std::move(next_layer));
                 current_sub_indices.push_back(next_real);
-                
+
                 // CRITICAL: Get new pointer after push_back because it might have moved
                 // though we called reserve, it is safer to update it.
                 last_valid_layer = &tg_ptr->get_layers().back();
