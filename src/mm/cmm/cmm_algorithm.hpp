@@ -134,15 +134,14 @@ struct CovarianceMapMatchConfig {
                            int window_length_arg = 10,
                            bool margin_used_trustworthiness_arg = true,
                            bool filtered_arg = true,
-                           bool enable_candidate_filter_arg = true,
-                           double candidate_filter_threshold_arg = 15.0, /* log-prob threshold for filtering */
                            bool enable_gap_bridging_arg = true,
                            double max_gap_distance_arg = 2000.0, /* in meters */
                            double min_gps_error_degrees_arg = 1.0e-6,
                            double max_interval_arg = 180.0, /* in seconds */
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double map_error_std_arg = 5.0e-6, /* in degrees */
-                           double background_log_prob_arg = -8.0); /* log-prob of background noise */
+                           double background_log_prob_arg = -8.0, /* log-prob of background noise */
+                           double phmi_arg = 1.0e-5);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -154,11 +153,10 @@ struct CovarianceMapMatchConfig {
     bool margin_used_trustworthiness;   /**< If true, use margin (top1-top2); else use top1 */
     bool filtered;                      /**< Whether to filter out points with no candidates/disconnected transitions */
 
-    // --- New Parameters for Log-Space Filtering & Gap Handling ---
-    bool enable_candidate_filter;       /**< Enable L2 candidate filtering based on relative log-probability */
-    double candidate_filter_threshold;  /**< Log-probability threshold for filtering (default 15.0 -> exp(-15) ≈ 3e-7) */
+    // --- Gap Handling & Integrity Parameters ---
     bool enable_gap_bridging;           /**< Enable skipping invalid points to bridge gaps */
     double max_gap_distance;            /**< Maximum physical distance (meters) to attempt bridging */
+    double phmi;                        /**< Probability of Hazardously Misleading Integrity information (default 1e-5) */
 
     // --- Minimum GPS Error for Emission Probability ---
     double min_gps_error_degrees;       /**< Minimum GPS error in degrees to prevent over-confidence (default 1e-5 ≈ 1.1m) */
@@ -354,7 +352,7 @@ protected:
      * @param layer first layer to initialize
      * @param config CMM configuration
      */
-    void initialize_first_layer(TGLayer *layer, const CovarianceMapMatchConfig &config);
+    void initialize_first_layer(TGLayer *layer, const CovarianceMapMatchConfig &config, double &log_prob_unconsidered);
 
     /**
      * Update probabilities between two layers in the transition graph (LOG-SPACE)
@@ -368,7 +366,8 @@ protected:
     void update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                          double eu_dist,
                          bool *connected,
-                         const CovarianceMapMatchConfig &config);
+                         const CovarianceMapMatchConfig &config,
+                         double &log_prob_unconsidered);
 
     /**
      * Update probabilities in a transition graph using CMM emission probabilities
