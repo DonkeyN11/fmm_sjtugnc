@@ -52,6 +52,7 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
   if (config_.write_speed) header += ";speed";
+  if (config_.write_delta_entropy) header += ";delta_entropy";
 
   m_fstream << header << '\n';
 }
@@ -466,6 +467,35 @@ void CSVMatchResultWriter::write_result(
       }
     }
   }
+  if (config_.write_delta_entropy) {
+    buf << ";";
+    if (!result.opt_candidate_path.empty()) {
+      // If original_indices is available, output aligned with original trajectory points
+      if (!result.original_indices.empty()) {
+        int total_points = *std::max_element(result.original_indices.begin(), result.original_indices.end()) + 1;
+        std::vector<double> output_values(total_points, -999.0);
+        for (size_t i = 0; i < result.original_indices.size(); ++i) {
+          int original_idx = result.original_indices[i];
+          if (original_idx >= 0 && original_idx < total_points && i < result.opt_candidate_path.size()) {
+            output_values[original_idx] = result.opt_candidate_path[i].delta_entropy;
+          }
+        }
+        for (int i = 0; i < total_points; ++i) {
+          buf << output_values[i] << (i==total_points-1?"":",");
+        }
+      } else {
+        // Fallback to original behavior when original_indices is not available
+        int N = result.opt_candidate_path.size();
+        for (int i = 0; i < N; ++i) {
+          const auto &matched = result.opt_candidate_path[i];
+          buf << matched.delta_entropy;
+          if (i != N - 1) {
+            buf << ",";
+          }
+        }
+      }
+    }
+  }
   if (config_.write_candidates) {
     buf << ";";
     if (!result.candidate_details.empty()) {
@@ -756,6 +786,11 @@ void CSVMatchResultWriter::write_point_mode(
         buf << ";-999";
       }
 
+      // delta_entropy: -999 (no delta entropy)
+      if (config_.write_delta_entropy) {
+        buf << ";-999";
+      }
+
       // candidates: output from result.candidate_details if available
       if (config_.write_candidates) {
         buf << ";(";
@@ -941,6 +976,10 @@ void CSVMatchResultWriter::write_point_mode(
 
     if (config_.write_cumu_prob) {
       buf << ";" << mc.cumu_prob;
+    }
+
+    if (config_.write_delta_entropy) {
+      buf << ";" << mc.delta_entropy;
     }
 
     if (config_.write_candidates) {

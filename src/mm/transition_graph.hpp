@@ -35,6 +35,7 @@ struct TGNode {
   double sp_dist; /**< shorest path distance from previous optimal
                        candidate to current node */
   double trustworthiness; /**< heuristic score combining emission and transition */
+  double delta_entropy; /**< information gain: H(prior) - H(posterior) in bits */
 };
 
 /**
