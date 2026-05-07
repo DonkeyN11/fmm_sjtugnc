@@ -984,8 +984,8 @@ void CSVMatchResultWriter::write_point_mode(
 
     if (config_.write_candidates) {
       buf << ";(";
-      if (original_idx >= 0 && original_idx < static_cast<int>(result.candidate_details.size())) {
-        const auto &list = result.candidate_details[original_idx];
+      if (i < static_cast<int>(result.candidate_details.size())) {
+        const auto &list = result.candidate_details[i];
         for (size_t j = 0; j < list.size(); ++j) {
           buf << "(" << std::fixed << std::setprecision(8) << list[j].x << "," << list[j].y << "," << list[j].ep << ")"
               << (j + 1 < list.size() ? "," : "");
