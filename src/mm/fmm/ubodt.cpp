@@ -142,6 +142,13 @@ C_Path UBODT::construct_complete_path(int traj_id, const TGOpath &path,
     SPDLOG_DEBUG("Check point {} a {} b {}", i, a->edge->id, b->edge->id);
     if ((a->edge->id != b->edge->id) || (a->offset - b->offset >
         a->edge->length * reverse_tolerance)) {
+      // Same-edge reverse beyond tolerance: allow direct continuation
+      // without UBODT lookup, avoiding unnecessary detour paths.
+      if (a->edge->id == b->edge->id) {
+        indices->push_back(current_idx);
+        SPDLOG_TRACE("Same-edge reverse Insert index {}", current_idx);
+        continue;
+      }
       // segs stores edge index
       auto segs = look_sp_path(a->edge->target, b->edge->source);
       // No transition exist in UBODT
