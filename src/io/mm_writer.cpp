@@ -49,6 +49,7 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_n_best_trustworthiness) header += ";n_best_trustworthiness";
   if (config_.write_cumu_prob) header += ";cumu_prob";
   if (config_.write_delta_entropy) header += ";delta_entropy";
+  if (config_.write_posterior_entropy) header += ";posterior_entropy";
   if (config_.write_candidates) header += ";candidates";
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
@@ -496,6 +497,33 @@ void CSVMatchResultWriter::write_result(
       }
     }
   }
+  if (config_.write_posterior_entropy) {
+    buf << ";";
+    if (!result.opt_candidate_path.empty()) {
+      if (!result.original_indices.empty()) {
+        int total_points = *std::max_element(result.original_indices.begin(), result.original_indices.end()) + 1;
+        std::vector<double> output_values(total_points, -999.0);
+        for (size_t i = 0; i < result.original_indices.size(); ++i) {
+          int original_idx = result.original_indices[i];
+          if (original_idx >= 0 && original_idx < total_points && i < result.opt_candidate_path.size()) {
+            output_values[original_idx] = result.opt_candidate_path[i].posterior_entropy;
+          }
+        }
+        for (int i = 0; i < total_points; ++i) {
+          buf << output_values[i] << (i==total_points-1?"":",");
+        }
+      } else {
+        int N = result.opt_candidate_path.size();
+        for (int i = 0; i < N; ++i) {
+          const auto &matched = result.opt_candidate_path[i];
+          buf << matched.posterior_entropy;
+          if (i != N - 1) {
+            buf << ",";
+          }
+        }
+      }
+    }
+  }
   if (config_.write_candidates) {
     buf << ";";
     if (!result.candidate_details.empty()) {
@@ -791,6 +819,11 @@ void CSVMatchResultWriter::write_point_mode(
         buf << ";-999";
       }
 
+      // posterior_entropy: -999 (no posterior entropy)
+      if (config_.write_posterior_entropy) {
+        buf << ";-999";
+      }
+
       // candidates: output from result.candidate_details if available
       if (config_.write_candidates) {
         buf << ";(";
@@ -980,6 +1013,10 @@ void CSVMatchResultWriter::write_point_mode(
 
     if (config_.write_delta_entropy) {
       buf << ";" << mc.delta_entropy;
+    }
+
+    if (config_.write_posterior_entropy) {
+      buf << ";" << mc.posterior_entropy;
     }
 
     if (config_.write_candidates) {

@@ -1309,7 +1309,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 trust = trustworthiness_results.first[i];
             }
 
-            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy};
+            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy};
             matched_candidate_path.push_back(mc);
 
             if (!config.filtered || trust <= config.trustworthiness_threshold) {
@@ -1608,17 +1608,25 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
         node.prev = nullptr;
     }
 
-    // 2. 内部归一化计算首层的信息熵
+    // 2. 计算逐节点的过滤后验概率 (filtering posterior) 和首层后验熵
+    //    filtering posterior: p_i = exp(cumu_prob_i) / sum_j exp(cumu_prob_j)
+    //    即 P(state_t=i | obs_{1:t}) 的归一化概率 ∈ [0,1]
     double layer_entropy = 0.0;
     if (!layer_log_probs.empty()) {
         double log_sum = log_sum_exp(layer_log_probs);
         double inv_log2 = 1.0 / std::log(2.0);
 
-        for (double log_p : layer_log_probs) {
-            double log_norm = log_p - log_sum; 
-            double p_norm = std::exp(log_norm); 
-            if (p_norm > 0.0) {
-                layer_entropy -= p_norm * log_norm * inv_log2; 
+        for (size_t i = 0; i < layer->size(); ++i) {
+            auto &node = (*layer)[i];
+            if (node.cumu_prob > -std::numeric_limits<double>::infinity()) {
+                double log_norm = node.cumu_prob - log_sum;
+                double p_norm = std::exp(log_norm);
+                node.trustworthiness = p_norm;  // filtering posterior
+                if (p_norm > 0.0) {
+                    layer_entropy -= p_norm * log_norm * inv_log2;
+                }
+            } else {
+                node.trustworthiness = 0.0;
             }
         }
         if (layer_entropy < 0.0) layer_entropy = 0.0;
@@ -1633,14 +1641,14 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
         if (delta_layer_entropy < 0.0) delta_layer_entropy = 0.0;
     }
 
-    // 4. 赋值 trustworthiness 与 delta_entropy
+    // 4. 赋值 posterior_entropy 与 delta_entropy（trustworthiness 已在步骤2中逐个赋值）
     for (size_t i = 0; i < layer->size(); ++i) {
         auto &node = (*layer)[i];
         if (node.cumu_prob > -std::numeric_limits<double>::infinity()) {
-            node.trustworthiness = layer_entropy;
+            node.posterior_entropy = layer_entropy;
             node.delta_entropy = delta_layer_entropy;
         } else {
-            node.trustworthiness = -std::numeric_limits<double>::infinity();
+            node.posterior_entropy = -std::numeric_limits<double>::infinity();
             node.delta_entropy = -std::numeric_limits<double>::infinity();
         }
     }
@@ -1768,16 +1776,23 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         }
     }
 
+    // 计算逐节点的过滤后验概率 (filtering posterior) 和本层后验熵
     double layer_entropy = 0.0;
     if (!layer_log_probs.empty()) {
         double log_sum = log_sum_exp(layer_log_probs);
         double inv_log2 = 1.0 / std::log(2.0);
 
-        for (double log_p : layer_log_probs) {
-            double log_norm = log_p - log_sum;
-            double p_norm = std::exp(log_norm);
-            if (p_norm > 0.0) {
-                layer_entropy -= p_norm * log_norm * inv_log2;
+        for (size_t b = 0; b < next_count; ++b) {
+            TGNode &node_b = (*lb_ptr)[b];
+            if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
+                double log_norm = node_b.cumu_prob - log_sum;
+                double p_norm = std::exp(log_norm);
+                node_b.trustworthiness = p_norm;  // filtering posterior
+                if (p_norm > 0.0) {
+                    layer_entropy -= p_norm * log_norm * inv_log2;
+                }
+            } else {
+                node_b.trustworthiness = 0.0;
             }
         }
         if (layer_entropy < 0.0) layer_entropy = 0.0;
@@ -1802,16 +1817,16 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     double delta_layer_entropy = layer_prior_entropy - layer_entropy;
     if (delta_layer_entropy < 0.0) delta_layer_entropy = 0.0;
 
-    // 6. 将局部信息熵统一赋给本层所有有效候选点的 trustworthiness 与 delta_entropy
+    // 6. 赋值 posterior_entropy 与 delta_entropy（trustworthiness 已在循环中逐个赋值）
     has_valid_candidate = false;
     for (size_t b = 0; b < next_count; ++b) {
         TGNode &node_b = (*lb_ptr)[b];
         if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
-            node_b.trustworthiness = layer_entropy;
+            node_b.posterior_entropy = layer_entropy;
             node_b.delta_entropy = delta_layer_entropy;
             has_valid_candidate = true;
         } else {
-            node_b.trustworthiness = -std::numeric_limits<double>::infinity();
+            node_b.posterior_entropy = -std::numeric_limits<double>::infinity();
             node_b.delta_entropy = -std::numeric_limits<double>::infinity();
         }
     }

@@ -67,8 +67,9 @@ struct MatchedCandidate {
   double tp;  /**< transition probability to previous matched candidate */
   double cumu_prob; /**< cumulative probability of the point */
   double sp_dist; /**< shortest path distance to previous matched candidate */
-  double trustworthiness; /**< trustworthiness metric (algorithm-specific; CMM uses sliding-window margin) */
+  double trustworthiness; /**< filtering posterior: normalized P(state_t | obs_{1:t}) */
   double delta_entropy; /**< information gain: H(prior) - H(posterior) in bits (CMM) */
+  double posterior_entropy; /**< layer posterior entropy H(posterior) in bits (CMM) */
 };
 
 /**

@@ -34,8 +34,9 @@ struct TGNode {
   double cumu_prob; /**< current node's accumulative probability */
   double sp_dist; /**< shorest path distance from previous optimal
                        candidate to current node */
-  double trustworthiness; /**< heuristic score combining emission and transition */
+  double trustworthiness; /**< filtering posterior: normalized P(state_t | obs_{1:t}) */
   double delta_entropy; /**< information gain: H(prior) - H(posterior) in bits */
+  double posterior_entropy; /**< layer posterior entropy H(posterior) in bits */
 };
 
 /**

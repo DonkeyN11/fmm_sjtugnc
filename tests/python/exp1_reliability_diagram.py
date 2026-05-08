@@ -228,7 +228,7 @@ def ascii_reliability_plot(cmm_bins, fmm_bins, title, ece_c, ece_f):
 
 def main():
     base = Path(__file__).resolve().parents[2]
-    cmm_path = base / 'dataset-hainan-06/mr/cmm_0508_traj11_delta_entropy.csv'
+    cmm_path = base / 'dataset-hainan-06/mr/cmm_0508_traj11_filtering_posterior.csv'
     fmm_path = base / 'dataset-hainan-06/mr/fmm_traj11_0508.csv'
 
     # ── Load ──
