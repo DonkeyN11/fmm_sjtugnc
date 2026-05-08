@@ -51,6 +51,8 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "ogeom ";
   if (output_config.write_delta_entropy)
     ss << "delta_entropy ";
+  if (output_config.write_posterior_entropy)
+    ss << "posterior_entropy ";
   if (output_config.point_mode)
     ss << "point_mode ";
   SPDLOG_INFO("ResultConfig");
@@ -168,6 +170,8 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
         config.output_config.write_ogeom = true;
       } else if (v.first == "delta_entropy") {
         config.output_config.write_delta_entropy = true;
+      } else if (v.first == "posterior_entropy") {
+        config.output_config.write_posterior_entropy = true;
       } else if (v.first == "point_mode") {
         config.output_config.point_mode = true;
       } else if (v.first == "all") {
@@ -192,6 +196,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
         config.output_config.write_speed = true;
         config.output_config.write_timestamp = true;
         config.output_config.write_delta_entropy = true;
+        config.output_config.write_posterior_entropy = true;
       }
     }
   }
@@ -279,6 +284,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     if (dict.find("delta_entropy") != dict.end()) {
       config.output_config.write_delta_entropy = true;
     }
+    if (dict.find("posterior_entropy") != dict.end()) {
+      config.output_config.write_posterior_entropy = true;
+    }
     if (dict.find("point_mode") != dict.end()) {
       config.output_config.point_mode = true;
     }
@@ -304,6 +312,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
       config.output_config.write_speed = true;
       config.output_config.write_timestamp = true;
       config.output_config.write_delta_entropy = true;
+      config.output_config.write_posterior_entropy = true;
     }
   }
   return config;
@@ -350,5 +359,5 @@ void FMM::CONFIG::ResultConfig::register_help(std::ostringstream &oss){
   oss<<"--output (required) <string>: Output file name\n";
   oss<<"--output_fields (optional) <string>: Output fields\n";
   oss<<"  opath,cpath,tpath,mgeom,pgeom,ogeom,\n";
-  oss<<"  offset,error,spdist,sp_dist,eu_dist,tp,ep,trustworthiness,n_best_trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,delta_entropy,seq,point_mode,all\n";
+  oss<<"  offset,error,spdist,sp_dist,eu_dist,tp,ep,trustworthiness,n_best_trustworthiness,candidates,cumu_prob,length,duration,speed,timestamp,delta_entropy,posterior_entropy,seq,point_mode,all\n";
 };
