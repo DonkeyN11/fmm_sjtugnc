@@ -350,6 +350,10 @@ def render_html(
   button.primary { background: #3887be; }
   button.primary:hover { background: #2b6cb0; }
   .stats { margin-top: 10px; font-size: 11px; color: #888; }
+  .style-toggle-group { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; }
+  .style-btn { flex: 1; background: #333; color: #999; border: 1px solid #555; padding: 5px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: all 0.2s; }
+  .style-btn:hover { background: #444; color: #fff; }
+  .style-btn.active { background: #3887be; color: #fff; border-color: #3887be; }
 </style>
 </head>
 <body>
@@ -368,6 +372,11 @@ def render_html(
     <label><input type="checkbox" id="toggle-cmm" checked> CMM</label>
     <label><input type="checkbox" id="toggle-fmm" checked> FMM</label>
     <label><input type="checkbox" id="toggle-road" checked> Road Network</label>
+  </div>
+
+  <div class="style-toggle-group">
+    <button class="style-btn active" id="btn-satellite">Satellite</button>
+    <button class="style-btn" id="btn-light">Light</button>
   </div>
 
   <div class="search-section">
@@ -422,7 +431,7 @@ def render_html(
 
   const map = new mapboxgl.Map({
     container: 'map',
-    style: 'mapbox://styles/mapbox/light-v11',
+    style: 'mapbox://styles/mapbox/satellite-streets-v12',
     center: [110.4, 20.0],
     zoom: 12,
     pitch: 45
@@ -431,88 +440,131 @@ def render_html(
   // 用于存放坐标定位的 Marker
   let locationMarker = null;
 
-  map.on('load', () => {
-    if (bounds) map.fitBounds(bounds, { padding: 50 });
+  // 图层样式常量
+  const STYLE_SATELLITE = 'mapbox://styles/mapbox/satellite-streets-v12';
+  const STYLE_LIGHT = 'mapbox://styles/mapbox/light-v11';
+  let currentMapStyle = STYLE_SATELLITE;
+  let isMapInitialized = false;
 
+  // 添加数据源和图层（每次切换样式后需重新添加）
+  function addSourcesAndLayers() {
     // Sources
-    map.addSource('obs', { type: 'geojson', data: obsGeojson });
-    map.addSource('cmm', { type: 'geojson', data: cmmGeojson });
-    map.addSource('fmm', { type: 'geojson', data: fmmGeojson });
-    map.addSource('road', { type: 'geojson', data: roadGeojson });
+    if (!map.getSource('obs')) map.addSource('obs', { type: 'geojson', data: obsGeojson });
+    if (!map.getSource('cmm')) map.addSource('cmm', { type: 'geojson', data: cmmGeojson });
+    if (!map.getSource('fmm')) map.addSource('fmm', { type: 'geojson', data: fmmGeojson });
+    if (!map.getSource('road')) map.addSource('road', { type: 'geojson', data: roadGeojson });
 
     // Road Layers (Bottom)
-    map.addLayer({
-      id: 'road-layer',
-      type: 'line',
-      source: 'road',
-      paint: {
-        'line-color': '#888',
-        'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 16, 4],
-        'line-opacity': 0.6
-      }
-    });
+    if (!map.getLayer('road-layer')) {
+      map.addLayer({
+        id: 'road-layer',
+        type: 'line',
+        source: 'road',
+        paint: {
+          'line-color': '#888',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 16, 4],
+          'line-opacity': 0.6
+        }
+      });
+    }
 
-    map.addLayer({
-      id: 'road-hover',
-      type: 'line',
-      source: 'road',
-      filter: ['==', ['get', 'id'], ''],
-      paint: {
-        'line-color': '#f00',
-        'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 6],
-        'line-opacity': 0.8
-      }
-    });
+    if (!map.getLayer('road-hover')) {
+      map.addLayer({
+        id: 'road-hover',
+        type: 'line',
+        source: 'road',
+        filter: ['==', ['get', 'id'], ''],
+        paint: {
+          'line-color': '#f00',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 6],
+          'line-opacity': 0.8
+        }
+      });
+    }
 
     // Point Layers
-    map.addLayer({
-      id: 'obs-layer',
-      type: 'circle',
-      source: 'obs',
-      filter: ['==', ['get', 'kind'], 'observation'],
-      paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 6],
-        'circle-color': '#17becf',
-        'circle-opacity': 0.6,
-        'circle-stroke-width': 1,
-        'circle-stroke-color': '#fff'
-      }
-    });
-    
-    map.addLayer({
-      id: 'obs-cov-layer',
-      type: 'fill',
-      source: 'obs',
-      filter: ['==', ['get', 'kind'], 'observation_cov'],
-      paint: {
-        'fill-color': '#17becf',
-        'fill-opacity': 0.1
-      }
-    });
+    if (!map.getLayer('obs-layer')) {
+      map.addLayer({
+        id: 'obs-layer',
+        type: 'circle',
+        source: 'obs',
+        filter: ['==', ['get', 'kind'], 'observation'],
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 6],
+          'circle-color': '#17becf',
+          'circle-opacity': 0.6,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#fff'
+        }
+      });
+    }
 
-    map.addLayer({
-      id: 'cmm-layer',
-      type: 'circle',
-      source: 'cmm',
-      paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
-        'circle-color': '#ff7f0e',
-        'circle-stroke-width': 1.5,
-        'circle-stroke-color': '#fff'
-      }
-    });
+    if (!map.getLayer('obs-cov-layer')) {
+      map.addLayer({
+        id: 'obs-cov-layer',
+        type: 'fill',
+        source: 'obs',
+        filter: ['==', ['get', 'kind'], 'observation_cov'],
+        paint: {
+          'fill-color': '#17becf',
+          'fill-opacity': 0.1
+        }
+      });
+    }
 
-    map.addLayer({
-      id: 'fmm-layer',
-      type: 'circle',
-      source: 'fmm',
-      paint: {
-        'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
-        'circle-color': '#2ca02c',
-        'circle-stroke-width': 1.5,
-        'circle-stroke-color': '#fff'
-      }
-    });
+    if (!map.getLayer('cmm-layer')) {
+      map.addLayer({
+        id: 'cmm-layer',
+        type: 'circle',
+        source: 'cmm',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
+          'circle-color': '#ff7f0e',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': '#fff'
+        }
+      });
+    }
+
+    if (!map.getLayer('fmm-layer')) {
+      map.addLayer({
+        id: 'fmm-layer',
+        type: 'circle',
+        source: 'fmm',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
+          'circle-color': '#2ca02c',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': '#fff'
+        }
+      });
+    }
+  }
+
+  function updateStyleButtons() {
+    const btnSat = document.getElementById('btn-satellite');
+    const btnLight = document.getElementById('btn-light');
+    if (btnSat) btnSat.className = 'style-btn' + (currentMapStyle === STYLE_SATELLITE ? ' active' : '');
+    if (btnLight) btnLight.className = 'style-btn' + (currentMapStyle === STYLE_LIGHT ? ' active' : '');
+  }
+
+  function switchMapStyle(newStyle) {
+    if (currentMapStyle === newStyle) return;
+    currentMapStyle = newStyle;
+    updateStyleButtons();
+    map.setStyle(newStyle);
+  }
+
+  map.on('style.load', () => {
+    if (!isMapInitialized && bounds) map.fitBounds(bounds, { padding: 50 });
+
+    addSourcesAndLayers();
+    updateStyleButtons();
+
+    if (isMapInitialized) return;
+    isMapInitialized = true;
+
+    // ---- 以下为一次性初始化（Popup、Toggle、Filter 等 UI 交互） ----
 
     // Popups
     const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
@@ -523,7 +575,7 @@ def render_html(
         const feature = e.features[0];
         map.setFilter('road-hover', ['==', ['get', 'id'], feature.properties.id]);
         map.getCanvas().style.cursor = 'pointer';
-        
+
         popup.setLngLat(e.lngLat)
           // 使用 $$ 转义防止 Python Template 报错
           .setHTML(`<strong>Road Edge ID:</strong> $${feature.properties.id}`)
@@ -576,6 +628,10 @@ def render_html(
       map.setLayoutProperty('road-layer', 'visibility', e.target.checked ? 'visible' : 'none');
     });
 
+    // Style toggle button listeners
+    document.getElementById('btn-satellite').addEventListener('click', () => switchMapStyle(STYLE_SATELLITE));
+    document.getElementById('btn-light').addEventListener('click', () => switchMapStyle(STYLE_LIGHT));
+
     // Filter Logic
     const searchIdInput = document.getElementById('search-id');
     const searchSeqInput = document.getElementById('search-seq');
@@ -584,14 +640,14 @@ def render_html(
     function applyFilter() {
       const idVal = searchIdInput.value.trim();
       const seqVal = searchSeqInput.value.trim();
-      
+
       let filter = ['all'];
       if (idVal) filter.push(['==', ['get', 'id'], idVal]);
       if (seqVal) filter.push(['==', ['get', 'seq'], parseInt(seqVal)]);
 
       const obsBaseFilter = ['==', ['get', 'kind'], 'observation'];
       const obsCovBaseFilter = ['==', ['get', 'kind'], 'observation_cov'];
-      
+
       map.setFilter('obs-layer', filter.length > 1 ? [...filter, obsBaseFilter] : obsBaseFilter);
       map.setFilter('obs-cov-layer', filter.length > 1 ? [...filter, obsCovBaseFilter] : obsCovBaseFilter);
       map.setFilter('cmm-layer', filter.length > 1 ? filter : null);
@@ -633,10 +689,10 @@ def render_html(
       searchSeqInput.value = "";
       applyFilter();
     });
-                        
+
     // --- 路由路段筛选逻辑 ---
-    const ROAD_LAYER_ID = 'road-layer'; 
-    const EDGE_ID_FIELD = 'id'; 
+    const ROAD_LAYER_ID = 'road-layer';
+    const EDGE_ID_FIELD = 'id';
 
     document.getElementById('btn-apply-filter').addEventListener('click', function() {
         const inputText = document.getElementById('edge-filter-input').value;
@@ -651,8 +707,8 @@ def render_html(
 
         if (targetIds.length > 0) {
             map.setFilter(ROAD_LAYER_ID, [
-                'in', 
-                ['get', EDGE_ID_FIELD], 
+                'in',
+                ['get', EDGE_ID_FIELD],
                 ['literal', targetIds]
             ]);
         } else {
@@ -671,7 +727,7 @@ def render_html(
         if (!val) return;
 
         // 使用正则匹配中英文逗号
-        const parts = val.split(/[,，]/); 
+        const parts = val.split(/[,，]/);
         if (parts.length >= 2) {
             const lon = parseFloat(parts[0].trim());
             const lat = parseFloat(parts[1].trim());
