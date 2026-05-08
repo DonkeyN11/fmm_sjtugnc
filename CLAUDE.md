@@ -49,11 +49,23 @@
     make -j$(nproc)
     ```
 
+* **Build when build file already exists**:
+
+    ```bash
+    cd /home/dell/fmm_sjtugnc/build && make -j$(nproc) 2>&1
+    ```
+
 * **Tests**: `make tests && make test` (in build dir).
 
 * **Python Bindings**: Built automatically in `build/python/`:
   * `fmm.py` - Python interface
   * `_fmm.so` - C++ extension
+
+* **Run cmm**:
+
+    ```bash
+    cd /home/dell/fmm_sjtugnc && ./build/cmm input/config/cmm_config_omp.xml
+    ```
 
 ### 2. Architecture & Directory Structure
 
