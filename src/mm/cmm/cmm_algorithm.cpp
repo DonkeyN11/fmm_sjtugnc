@@ -8,6 +8,7 @@
 #include "util/util.hpp"
 #include "util/debug.hpp"
 #include "io/gps_reader.hpp"
+#include <deque>
 #include "io/mm_writer.hpp"
 
 // #include <Eigen/Dense>
@@ -599,7 +600,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double trustworthiness_threshold_arg,
                                                    double map_error_std_arg,
                                                    double background_log_prob_arg,
-                                                   double phmi_arg)
+                                                   double phmi_arg,
+                                                   int lag_steps_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -615,7 +617,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       trustworthiness_threshold(trustworthiness_threshold_arg),
       map_error_std(map_error_std_arg),
       background_log_prob(background_log_prob_arg),
-      phmi(phmi_arg) {
+      phmi(phmi_arg),
+      lag_steps(lag_steps_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -628,7 +631,7 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("gap_bridging {} max_gap_distance {}", enable_gap_bridging, max_gap_distance);
     SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold {}",
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
-    SPDLOG_INFO("map_error_std {} background_log_prob {} phmi {}", map_error_std, background_log_prob, phmi);
+    SPDLOG_INFO("map_error_std {} background_log_prob {} phmi {} lag_steps {}", map_error_std, background_log_prob, phmi, lag_steps);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -659,12 +662,15 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
     double background_log_prob = xml_data.get("config.parameters.background_log_prob", -20.0);
 
+    // Fixed-lag smoothing: 0 = realtime filtering, N = delay N steps
+    int lag_steps = xml_data.get("config.parameters.lag_steps", 0);
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob, phmi};
+                                    map_error_std, background_log_prob, phmi, lag_steps};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -694,13 +700,14 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     // New parameters for additive map noise and background noise normalization
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
     double background_log_prob = arg_data.count("background_log_prob") ? arg_data["background_log_prob"].as<double>() : -20.0;
+    int lag_steps = arg_data.count("lag_steps") ? arg_data["lag_steps"].as<int>() : 0;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
                                     enable_gap, max_gap, min_gps_error,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob, phmi};
+                                    map_error_std, background_log_prob, phmi, lag_steps};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -739,7 +746,9 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("background_log_prob", "Background noise log probability for normalization (default -20.0)",
          cxxopts::value<double>()->default_value("-20.0"))
         ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
-         cxxopts::value<double>()->default_value("1.0e-5"));
+         cxxopts::value<double>()->default_value("1.0e-5"))
+        ("lag_steps", "Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)",
+         cxxopts::value<int>()->default_value("0"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -761,6 +770,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
     oss << "--background_log_prob (optional) <double>: Background noise log probability for normalization (-20.0)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
+    oss << "--lag_steps (optional) <int>: Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -768,7 +778,7 @@ bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
         window_length <= 0 || max_gap_distance < 0 ||
-        map_error_std < 0 || phmi < 0 || phmi > 1.0) {
+        map_error_std < 0 || phmi < 0 || phmi > 1.0 || lag_steps < 0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
                        "protection_level_multiplier {} reverse_tolerance {} window_length {} "
                        "max_gap_distance {} map_error_std {} phmi {}",
@@ -1390,9 +1400,17 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         tg_ptr->get_layers().push_back(std::move(start_layer));
         initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
 
+        // ── Fixed-lag smoothing buffer ──────────────────────────────────────
+        // Stores (layer_ptr, tp_matrix_to_next) for lag_steps+1 layers.
+        // tp_raw for the first layer is empty (no previous transition).
+        std::deque<std::pair<TGLayer*, std::vector<std::vector<double>>>> lag_buffer;
+        if (config.lag_steps > 0) {
+            lag_buffer.push_back({&tg_ptr->get_layers()[0], {}});
+        }
+
         TGLayer* last_valid_layer = &tg_ptr->get_layers()[0];
         int last_valid_real = start_real_idx;
-        std::vector<int> skipped_indices; 
+        std::vector<int> skipped_indices;
 
         for (size_t i = 1; i < segment_indices.size(); ++i) {
             int next_real = segment_indices[i];
@@ -1410,8 +1428,10 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             constexpr double MAX_REASONABLE_SPEED = 40.0; // 144 km/h
 
             if (config.enable_gap_bridging && (speed > MAX_REASONABLE_SPEED || time_diff > config.max_interval)) {
+                // Sub-trajectory boundary: flush smoothing buffer before finishing this segment
+                flush_lag_buffer(lag_buffer, *this, config.lag_steps);
                 process_sub_segment(tg_ptr.get(), current_sub_indices);
-                
+
                 for (int skipped_idx : skipped_indices) {
                     final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
                 }
@@ -1419,10 +1439,10 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
                 current_sub_indices.clear();
                 current_sub_indices.push_back(next_real);
-                
+
                 tg_ptr = std::make_unique<TransitionGraph>(empty_tc, empty_log_eps, true);
                 tg_ptr->get_layers().reserve(segment_indices.size() + 1);
-                
+
                 TGLayer new_start_layer;
                 new_start_layer.reserve(tc_raw[next_real].size());
                 for (size_t k = 0; k < tc_raw[next_real].size(); ++k) {
@@ -1433,7 +1453,12 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 }
                 tg_ptr->get_layers().push_back(std::move(new_start_layer));
                 initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
-                
+
+                // Restart smoothing buffer for new sub-trajectory
+                if (config.lag_steps > 0) {
+                    lag_buffer.push_back({&tg_ptr->get_layers()[0], {}});
+                }
+
                 last_valid_layer = &tg_ptr->get_layers()[0];
                 last_valid_real = next_real;
                 continue;
@@ -1446,7 +1471,11 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             }
 
             bool connected = false;
-            update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config, log_prob_unconsidered);
+            std::vector<std::vector<double>> tp_raw_smoothing;
+            std::vector<std::vector<double>>* tp_raw_ptr =
+                (config.lag_steps > 0) ? &tp_raw_smoothing : nullptr;
+            update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config,
+                            log_prob_unconsidered, tp_raw_ptr);
 
             bool should_restart = config.enable_gap_bridging &&
                                   !tc_raw[next_real].empty() &&
@@ -1458,7 +1487,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 }
 
                 if (should_restart) {
-                    // 1. 提交当前已积累的子段
+                    // 1. Flush smoothing buffer and commit current sub-segment
+                    flush_lag_buffer(lag_buffer, *this, config.lag_steps);
                     process_sub_segment(tg_ptr.get(), current_sub_indices);
                     for (int skipped_idx : skipped_indices) {
                         final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
@@ -1483,6 +1513,12 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     tg_ptr->get_layers().push_back(std::move(restart_layer));
                     log_prob_unconsidered = -std::numeric_limits<double>::infinity();
                     initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
+
+                    // Restart smoothing buffer
+                    if (config.lag_steps > 0) {
+                        lag_buffer.push_back({&tg_ptr->get_layers()[0], {}});
+                    }
+
                     last_valid_layer = &tg_ptr->get_layers()[0];
                     last_valid_real = next_real;
                 }
@@ -1499,8 +1535,24 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 // though we called reserve, it is safer to update it.
                 last_valid_layer = &tg_ptr->get_layers().back();
                 last_valid_real = next_real;
+
+                // ── Push to smoothing buffer and apply fixed-lag smoothing ──
+                if (config.lag_steps > 0) {
+                    // Store tp matrix for previous layer → this layer transition
+                    lag_buffer.back().second = std::move(tp_raw_smoothing);
+                    lag_buffer.push_back({last_valid_layer, {}});
+
+                    // When buffer has lag_steps+1 entries, smooth the oldest layer
+                    if (lag_buffer.size() > static_cast<size_t>(config.lag_steps)) {
+                        apply_lag_smoothing(lag_buffer);
+                        lag_buffer.pop_front();
+                    }
+                }
             }
         }
+
+        // ── Trajectory end: flush remaining smoothing buffer ──
+        flush_lag_buffer(lag_buffer, *this, config.lag_steps);
 
         if (!current_sub_indices.empty()) {
             process_sub_segment(tg_ptr.get(), current_sub_indices);
@@ -1662,7 +1714,8 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
 void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                                           double eu_dist, bool *connected,
                                           const CovarianceMapMatchConfig &config,
-                                          double &log_prob_unconsidered) {
+                                          double &log_prob_unconsidered,
+                                          std::vector<std::vector<double>> *tp_raw_out) {
     if (!la_ptr || !lb_ptr) return;
     *connected = false;
     const size_t prev_count = la_ptr->size();
@@ -1832,6 +1885,163 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     }
 
     *connected = has_valid_candidate;
+
+    // 7. Optionally export the raw transition probability matrix for fixed-lag smoothing.
+    //    tp_raw_out[a][b] stores the linear transition probability from candidate a to b.
+    //    Used by apply_lag_smoothing() to re-evaluate earlier-layer posteriors.
+    if (tp_raw_out != nullptr && has_valid_candidate) {
+        *tp_raw_out = std::move(tp_raw_matrix);
+    }
+}
+
+// ── Fixed-lag smoothing ─────────────────────────────────────────────────────
+// Re-evaluates the posterior of an earlier layer using evidence from L future
+// layers, computing:
+//
+//   smoothed_cumu[i] = cumu_prob[t-L][i] + log P(z_{t-L+1:t} | s_{t-L}=i)
+//
+// where log P(z_{t-L+1:t} | s_{t-L}=i) is the best-path log-probability from
+// candidate i through the L-step window, computed by a Viterbi-style forward pass:
+//
+//   dp[t-L][i] = 0  (starting from candidate i)
+//   for k = t-L+1 to t:
+//     dp[k][j] = max_a ( dp[k-1][a] + log(tp_raw[a][j]) + ep[k][j] )
+//
+//   future_evidence[i] = max_j dp[t][j]
+//
+// After computing smoothed_log_probs, softmax-normalize for trustworthiness
+// and recompute the layer posterior entropy.
+
+void CovarianceMapMatch::apply_lag_smoothing(
+    std::deque<std::pair<TGLayer*, std::vector<std::vector<double>>>>& lag_data) const {
+
+    size_t L = lag_data.size() - 1;  // number of look-ahead steps
+    if (L == 0) return;
+
+    TGLayer* oldest_layer = lag_data[0].first;
+    const size_t n_old = oldest_layer->size();
+    std::vector<double> smoothed_log_probs(n_old,
+        -std::numeric_limits<double>::infinity());
+    const double neg_inf = -std::numeric_limits<double>::infinity();
+
+    // For each candidate i in the oldest layer, compute the best continuation
+    // through the L-step window.
+    for (size_t i = 0; i < n_old; ++i) {
+        TGNode& start_node = (*oldest_layer)[i];
+        if (start_node.cumu_prob <= neg_inf) continue;
+
+        // ── Step 1: from candidate i to layer[1] ──
+        const auto& tp01 = lag_data[0].second;
+        TGLayer* l1 = lag_data[1].first;
+        size_t n1 = l1->size();
+        std::vector<double> dp_cur(n1, neg_inf);
+
+        for (size_t j = 0; j < n1; ++j) {
+            TGNode& node_j = (*l1)[j];
+            if (node_j.cumu_prob <= neg_inf) continue;
+            if (i < tp01.size() && j < tp01[i].size() && tp01[i][j] > 0) {
+                // dp_j = log(tp(i->j)) + ep_j
+                dp_cur[j] = std::log(tp01[i][j]) + node_j.ep;
+            }
+        }
+
+        // ── Steps 2..L ──
+        for (size_t step = 2; step <= L; ++step) {
+            TGLayer* nl = lag_data[step].first;
+            const auto& tp = lag_data[step - 1].second;
+            size_t nn = nl->size();
+            std::vector<double> dp_next(nn, neg_inf);
+
+            for (size_t a = 0; a < dp_cur.size(); ++a) {
+                if (dp_cur[a] <= neg_inf) continue;
+                for (size_t b = 0; b < nn; ++b) {
+                    TGNode& node_b = (*nl)[b];
+                    if (node_b.cumu_prob <= neg_inf) continue;
+                    if (a < tp.size() && b < tp[a].size() && tp[a][b] > 0) {
+                        double val = dp_cur[a] + std::log(tp[a][b]) + node_b.ep;
+                        if (val > dp_next[b]) dp_next[b] = val;
+                    }
+                }
+            }
+            dp_cur = std::move(dp_next);
+        }
+
+        // Best continuation through the window
+        double best_cont = neg_inf;
+        for (double v : dp_cur) {
+            if (v > best_cont) best_cont = v;
+        }
+
+        if (best_cont > neg_inf) {
+            smoothed_log_probs[i] = start_node.cumu_prob + best_cont;
+        }
+    }
+
+    // ── Softmax normalization ──
+    double log_sum = log_sum_exp(smoothed_log_probs);
+    double inv_log2 = 1.0 / std::log(2.0);
+    double layer_entropy = 0.0;
+    int valid_count = 0;
+    // Use prior: uniform over candidates with valid smoothed prob
+    for (size_t i = 0; i < n_old; ++i) {
+        if (smoothed_log_probs[i] > neg_inf) valid_count++;
+    }
+
+    for (size_t i = 0; i < n_old; ++i) {
+        TGNode& node = (*oldest_layer)[i];
+        if (smoothed_log_probs[i] > neg_inf) {
+            double log_norm = smoothed_log_probs[i] - log_sum;
+            double p_norm = std::exp(log_norm);
+            node.trustworthiness = p_norm;        // smoothed posterior
+            if (p_norm > 0.0) {
+                layer_entropy -= p_norm * log_norm * inv_log2;
+            }
+        } else {
+            node.trustworthiness = 0.0;
+        }
+    }
+    if (layer_entropy < 0.0) layer_entropy = 0.0;
+
+    // Recompute delta_entropy with smoothed posterior
+    double delta_entropy_update = 0.0;
+    if (valid_count > 0) {
+        double H_prior = std::log2(static_cast<double>(valid_count));
+        delta_entropy_update = H_prior - layer_entropy;
+        if (delta_entropy_update < 0.0) delta_entropy_update = 0.0;
+    }
+
+    // Update all three smoothed metrics
+    for (size_t i = 0; i < n_old; ++i) {
+        TGNode& node = (*oldest_layer)[i];
+        if (node.cumu_prob > neg_inf) {
+            node.posterior_entropy = layer_entropy;
+            node.delta_entropy = delta_entropy_update;
+        }
+    }
+
+    SPDLOG_DEBUG("Lag-smoothing applied: layer size={} L={} valid={} entropy={:.4f} delta={:.4f}",
+                 n_old, static_cast<int>(L), valid_count, layer_entropy, delta_entropy_update);
+}
+
+// ── Smoothing-buffer flush (trajectory end / sub-trajectory boundary) ────────
+// Applies smoothing with progressively decreasing look-ahead for remaining
+// buffered layers. The final layer keeps its original filtering posterior.
+
+void CovarianceMapMatch::flush_lag_buffer(
+    std::deque<std::pair<TGLayer*, std::vector<std::vector<double>>>>& lag_data,
+    const CovarianceMapMatch& cmm,
+    int lag_steps)
+{
+    if (lag_steps <= 0) return;
+    while (lag_data.size() > 1) {
+        // The buffer may contain fewer than L+1 entries at trajectory end.
+        // apply_lag_smoothing handles this: it uses min(L, buffer_size-1) steps.
+        cmm.apply_lag_smoothing(lag_data);
+        lag_data.pop_front();
+    }
+    // The last remaining layer has no future evidence; its filtering
+    // posterior is already set during the original Viterbi forward pass.
+    lag_data.clear();
 }
 
 // Compute sliding-window trustworthiness using top-N (N=3) path scores.

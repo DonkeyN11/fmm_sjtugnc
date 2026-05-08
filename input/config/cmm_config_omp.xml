@@ -66,6 +66,7 @@
     <max_interval>180.0</max_interval>
     <trustworthiness_threshold>10.0</trustworthiness_threshold>
     <phmi>0</phmi>
+    <lag_steps>5</lag_steps>
   </parameters>
 
   <other>

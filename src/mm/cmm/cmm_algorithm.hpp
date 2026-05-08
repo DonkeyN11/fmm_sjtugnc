@@ -141,7 +141,8 @@ struct CovarianceMapMatchConfig {
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double map_error_std_arg = 5.0e-6, /* in degrees */
                            double background_log_prob_arg = -8.0, /* log-prob of background noise */
-                           double phmi_arg = 1.0e-5);
+                           double phmi_arg = 1.0e-5,
+                           int lag_steps_arg = 0);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -166,6 +167,7 @@ struct CovarianceMapMatchConfig {
     // --- New Parameters for Additive Map Noise and Background Noise ---
     double map_error_std;               /**< Map error standard deviation in degrees (default 5e-5 ≈ 5m). Added to GPS variance. */
     double background_log_prob;         /**< Background noise log probability (default -20.0). Used as "null hypothesis" in normalization. */
+    int lag_steps;                      /**< Fixed-lag smoothing steps: 0=realtime filtering, N=delay N steps for backward evidence */
 
     /**
      * Check if the configuration is valid or not
@@ -362,13 +364,49 @@ protected:
      * @param eu_dist Euclidean distance between two observed points
      * @param connected set to false if the layer is not connected with the next layer
      * @param config CMM configuration
+     * @param tp_raw_out if non-null, stores the raw transition probability matrix
+     *        tp_raw_out[a][b] = P(z_b|s_b) * P(s_b|s_a) before normalization
      */
     void update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                          double eu_dist,
                          bool *connected,
                          const CovarianceMapMatchConfig &config,
-                         double &log_prob_unconsidered);
+                         double &log_prob_unconsidered,
+                         std::vector<std::vector<double>> *tp_raw_out = nullptr);
 
+public:
+    /**
+     * Fixed-lag smoothing: re-evaluates the posterior of an earlier layer
+     * using evidence from L future steps.
+     *
+     * For a layer at position (t-L) and a buffer of (L+1) layers [t-L, t],
+     * computes the smoothed filtering posterior:
+     *
+     *   smoothed_cumu[i] = cumu_prob_{t-L}[i] + log P(z_{t-L+1:t} | s_{t-L}=i)
+     *
+     * where the future evidence is computed by a max-log forward pass:
+     *
+     *   future_evidence[i] = max over all length-L paths from candidate i
+     *                        of (sum log tp + sum log ep)
+     *
+     * Then applies softmax:  trustworthiness[i] = exp(smoothed_cumu[i]) / Z
+     *
+     * @param lag_data  deque of (layer*, tp_matrix_to_next) for L+1 layers
+     */
+    void apply_lag_smoothing(
+        std::deque<std::pair<TGLayer*, std::vector<std::vector<double>>>>& lag_data) const;
+
+    /**
+     * Flush remaining smoothing-buffer entries at sub-trajectory boundary or
+     * trajectory end. Applies smoothing with progressively decreasing
+     * look-ahead for buffered layers.
+     */
+    static void flush_lag_buffer(
+        std::deque<std::pair<TGLayer*, std::vector<std::vector<double>>>>& lag_data,
+        const CovarianceMapMatch& cmm,
+        int lag_steps);
+
+protected:
     /**
      * Update probabilities in a transition graph using CMM emission probabilities
      * @param tg transition graph
