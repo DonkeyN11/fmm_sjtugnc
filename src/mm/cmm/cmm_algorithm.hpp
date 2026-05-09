@@ -142,11 +142,13 @@ struct CovarianceMapMatchConfig {
                            double map_error_std_arg = 5.0e-6, /* in degrees */
                            double background_log_prob_arg = -8.0, /* log-prob of background noise */
                            double phmi_arg = 1.0e-5,
-                           int lag_steps_arg = 0);
+                           int lag_steps_arg = 0,
+                           double phmi_pl_multiplier_arg = 5.0);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
-    double protection_level_multiplier; /**< Multiplier for protection level */
+    double protection_level_multiplier; /**< Multiplier for protection level (search radius) */
+    double phmi_pl_multiplier;          /**< Multiplier for PHMI integrity check (decoupled from search) */
     double reverse_tolerance;           /**< Reverse movement tolerance */
     bool normalized;                    /**< Whether to normalize emission probabilities */
     bool use_mahalanobis_candidates;    /**< Whether to use Mahalanobis-based candidate search */

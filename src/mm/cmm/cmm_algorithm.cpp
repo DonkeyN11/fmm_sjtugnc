@@ -601,7 +601,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double map_error_std_arg,
                                                    double background_log_prob_arg,
                                                    double phmi_arg,
-                                                   int lag_steps_arg)
+                                                   int lag_steps_arg,
+                                                   double phmi_pl_multiplier_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -618,7 +619,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       map_error_std(map_error_std_arg),
       background_log_prob(background_log_prob_arg),
       phmi(phmi_arg),
-      lag_steps(lag_steps_arg) {
+      lag_steps(lag_steps_arg),
+      phmi_pl_multiplier(phmi_pl_multiplier_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -665,12 +667,16 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     // Fixed-lag smoothing: 0 = realtime filtering, N = delay N steps
     int lag_steps = xml_data.get("config.parameters.lag_steps", 0);
 
+    // PHMI integrity multiplier: decoupled from search radius
+    double phmi_pl_multiplier = xml_data.get("config.parameters.phmi_pl_multiplier", 5.0);
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob, phmi, lag_steps};
+                                    map_error_std, background_log_prob, phmi, lag_steps,
+                                    phmi_pl_multiplier};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -701,13 +707,15 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
     double background_log_prob = arg_data.count("background_log_prob") ? arg_data["background_log_prob"].as<double>() : -20.0;
     int lag_steps = arg_data.count("lag_steps") ? arg_data["lag_steps"].as<int>() : 0;
+    double phmi_pl_multiplier = arg_data.count("phmi_pl_multiplier") ? arg_data["phmi_pl_multiplier"].as<double>() : 5.0;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates, window_length,
                                     margin_used_trustworthiness, filtered,
                                     enable_gap, max_gap, min_gps_error,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob, phmi, lag_steps};
+                                    map_error_std, background_log_prob, phmi, lag_steps,
+                                    phmi_pl_multiplier};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -1115,12 +1123,67 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             }
         }
 
-        // 2. EP 线性归一化并转回 Log 空间
+        // 2. EP 线性归一化并转回 Log 空间（PHMI 完好性条件化）
+        //    PHMI (Probability of Hazardously Misleading Information) encodes
+        //    the GNSS integrity risk: with probability P_HMI, the true position
+        //    may lie outside the Protection Level (PL), i.e. the road network
+        //    may be wrong or the vehicle is off-road.
+        //
+        //    For each candidate k with Euclidean distance d_k from GPS obs:
+        //      d_k ≤ PL:  candidate is "integrity-valid" → weight = (1-PHMI)
+        //      d_k > PL:  candidate exceeds integrity bound → weight = PHMI
+        //
+        //    Normalization: separately normalize inside-PL group by (1-PHMI)
+        //    and outside-PL group by PHMI.  This ensures total mass = 1 and
+        //    prevents overconfidence when the road network cannot explain the
+        //    GNSS observation.
+        //
+        //    When PHMI = 0, the behaviour is identical to the original
+        //    unconditional model.
         double one_minus_phmi = 1.0 - config.phmi;
+        double phmi = config.phmi;
+
+        // Effective Protection Level for PHMI integrity check:
+        //   effective_PL = raw_PL * phmi_pl_multiplier
+        // The search multiplier controls how far to look for candidates;
+        // the PHMI multiplier controls the integrity threshold independently,
+        // allowing discrimination even when many candidates are found.
+        double phmi_effective_pl = protection_level * config.phmi_pl_multiplier;
+
+        // Separate raw EP sums for inside-PL and outside-PL groups
+        double sum_ep_in_raw = 0.0, sum_ep_out_raw = 0.0;
+        for (size_t k = 0; k < raw_probabilities.size(); ++k) {
+            if (ep_raw_list[k] <= 0) continue;
+            if (selected_candidates[k].dist <= phmi_effective_pl) {
+                sum_ep_in_raw += ep_raw_list[k];
+            } else {
+                sum_ep_out_raw += ep_raw_list[k];
+            }
+        }
+
         for (size_t k = 0; k < raw_probabilities.size(); ++k) {
             if (ep_raw_list[k] > 0 && sum_ep_raw > 0) {
-                double linear_ep_norm = one_minus_phmi * (ep_raw_list[k] / sum_ep_raw);
-                log_emission_probs.push_back(std::log(linear_ep_norm));
+                bool inside_pl = (selected_candidates[k].dist <= phmi_effective_pl);
+
+                double integrity_factor, norm_sum;
+                if (config.phmi > 0) {
+                    // PHMI-enabled: normalize each group independently
+                    if (inside_pl) {
+                        integrity_factor = one_minus_phmi;
+                        norm_sum = (sum_ep_in_raw > 0) ? sum_ep_in_raw : sum_ep_raw;
+                    } else {
+                        integrity_factor = phmi;
+                        norm_sum = (sum_ep_out_raw > 0) ? sum_ep_out_raw : sum_ep_raw;
+                    }
+                } else {
+                    // PHMI disabled: original unconditional normalization
+                    integrity_factor = one_minus_phmi;
+                    norm_sum = sum_ep_raw;
+                }
+
+                double linear_ep_norm = integrity_factor * (ep_raw_list[k] / norm_sum);
+                log_emission_probs.push_back(std::log(
+                    std::max(linear_ep_norm, std::numeric_limits<double>::min())));
             } else {
                 log_emission_probs.push_back(-std::numeric_limits<double>::infinity());
             }
