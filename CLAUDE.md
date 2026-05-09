@@ -33,7 +33,7 @@
 
 ### 4. Workflow Enforcement
 
-* **Verify & Commit**: After every code modification, you MUST perform (or instruct to perform) compilation and debugging. Upon success, you MUST proceed with git commit.
+* **Verify & Commit**: After every code modification, you MUST perform (or instruct to perform) compilation and debugging. Upon success, you MUST proceed with git commit. Do not commit files in gitignore.
 
 ---
 

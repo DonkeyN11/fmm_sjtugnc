@@ -111,3 +111,4 @@ sync.sh
 *.html
 
 AGENTS.md
+input/config/cmm_config_omp.xml
