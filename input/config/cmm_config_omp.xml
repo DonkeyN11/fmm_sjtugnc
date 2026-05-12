@@ -29,7 +29,7 @@
   </input>
 
   <output>
-    <file>dataset-hainan-06/mr/cmm_0508_traj11_filtering_posterior.csv</file>
+    <file>dataset-hainan-06/mr/cmm_0508_traj11_phmi.csv</file>
     <point_mode>true</point_mode>
     <fields>
       <seq/>
@@ -65,8 +65,9 @@
     <filtered>false</filtered>
     <max_interval>180.0</max_interval>
     <trustworthiness_threshold>10.0</trustworthiness_threshold>
-    <phmi>0</phmi>
+    <phmi>0.00001</phmi>
     <lag_steps>5</lag_steps>
+    <phmi_pl_multiplier>5</phmi_pl_multiplier>
   </parameters>
 
   <other>
