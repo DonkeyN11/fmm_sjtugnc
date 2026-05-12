@@ -68,6 +68,7 @@
     <phmi>0.00001</phmi>
     <lag_steps>5</lag_steps>
     <phmi_pl_multiplier>5</phmi_pl_multiplier>
+    <h0_prior_log_odds>0</h0_prior_log_odds>
   </parameters>
 
   <other>
