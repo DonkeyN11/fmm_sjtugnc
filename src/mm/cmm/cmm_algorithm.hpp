@@ -390,22 +390,13 @@ public:
 
     /**
      * Fixed-lag smoothing: re-evaluates the posterior of an earlier layer
-     * using evidence from L future steps, then applies sequential Bayesian
-     * H0 hypothesis test for road-network integrity.
+     * using evidence from L future steps.
      *
-     * For a layer at (t-L) and buffer of (L+1) layers:
+     *   1. Viterbi forward pass through L-step window for future evidence
+     *   2. softmax normalization for per-candidate trustworthiness
      *
-     *   1. Computes smoothed cumu_prob[i] = cumu_prob[i] + future_evidence[i]
-     *   2. Computes softmax trustworthiness: trust[i] = exp(smoothed_cumu[i]) / Z
-     *   3. Applies H0 posterior as multiplicative discount:
-     *
-     *        Λ_{t-L} = λ₀ × Π_{τ=t-L}^{t} LR_τ
-     *        α_{t-L} = Λ_{t-L} / (1 + Λ_{t-L})
-     *        trust'[i] = α_{t-L} × trust[i]
-     *
-     *      where LR_τ = frac_inside_pl / max(PHMI, 1 - frac_inside_pl)
-     *      accumulates evidence of road-network deficiencies when candidates
-     *      consistently fall outside the GNSS Protection Level.
+     * The sequential Bayesian H0 test is applied separately via
+     * trajectory-global cumulative λ accumulation, not within the window.
      *
      * @param lag_data  buffer of (L+1) LagEntry objects
      */

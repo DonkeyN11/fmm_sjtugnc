@@ -170,7 +170,7 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
                  matched_candidate_path.begin(),
                  [](const TGNode *a) {
     return MatchedCandidate{
-      *(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist, a->trustworthiness, 0.0, 0.0
+      *(a->c), a->ep, a->tp, a->cumu_prob, a->sp_dist, a->trustworthiness, 0.0, 0.0, 0.0
     };
   });
   O_Path opath(tg_opath.size());

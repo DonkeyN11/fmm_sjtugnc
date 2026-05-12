@@ -65,6 +65,7 @@ struct OutputConfig {
   bool write_ogeom = false; /**< if true, output original GPS point geometry */
   bool write_delta_entropy = false; /**< if true, output delta entropy (information gain H_prior - H_posterior in bits, CMM only) */
   bool write_posterior_entropy = false; /**< if true, output posterior entropy (H_posterior in bits, CMM only) */
+  bool write_h0_lambda = false; /**< if true, output cumulative H0 likelihood ratio λ_t (CMM, PHMI mode) */
   bool point_mode = true; /**< if true, output in point mode (one row per matched point) */
 };
 

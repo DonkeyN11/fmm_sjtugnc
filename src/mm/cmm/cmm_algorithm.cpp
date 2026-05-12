@@ -1329,7 +1329,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     Traj_Candidates empty_tc;
     std::vector<std::vector<double>> empty_log_eps;
 
-    auto process_sub_segment = [&](TransitionGraph* tg_ptr, const std::vector<int>& sub_indices) {
+    auto process_sub_segment = [&](TransitionGraph* tg_ptr, const std::vector<int>& sub_indices,
+                                     std::vector<double>* h0_lambda_vec = nullptr) {
         if (tg_ptr == nullptr || sub_indices.empty()) return;
         int start_real_idx = sub_indices.front();
         int end_real_idx = sub_indices.back();
@@ -1386,7 +1387,20 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 trust = trustworthiness_results.first[i];
             }
 
-            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy};
+            // Apply trajectory-global H0 posterior discount: trust' = α_t × trust
+            // λ_t = exp(h0_lambda_vec[i]) for i>0, λ₀=exp(0) for i=0
+            if (h0_lambda_vec != nullptr && config.phmi > 0 && config.lag_steps >= 0) {
+                double log_lambda_i = (i > 0 && i - 1 < h0_lambda_vec->size())
+                    ? (*h0_lambda_vec)[i - 1] : 0.0;
+                double lambda_i = std::exp(std::max(-700.0, std::min(700.0, log_lambda_i)));
+                double alpha_i = lambda_i / (1.0 + lambda_i);
+                trust *= alpha_i;
+            }
+
+            double h0_lambda_val = (h0_lambda_vec != nullptr && i > 0 && i - 1 < h0_lambda_vec->size())
+                ? std::exp(std::max(-700.0, std::min(700.0, (*h0_lambda_vec)[i - 1]))) : 1.0;
+
+            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy, h0_lambda_val};
             matched_candidate_path.push_back(mc);
 
             if (!config.filtered || trust <= config.trustworthiness_threshold) {
@@ -1474,6 +1488,12 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
         }
 
+        // ── Sequential Bayesian H0 test: trajectory-global Λ accumulation ──
+        // λ_t = λ₀ · Π_{τ=0}^{t} LR_τ   (cumulative likelihood ratio)
+        // α_t = λ_t / (1 + λ_t)          (posterior P(H0 | z_{0:t}))
+        std::vector<double> h0_log_lambdas;     // log(λ_t) per original index
+        double h0_log_lambda = 0.0;              // current log(λ_t), starts from λ₀=1
+
         TGLayer* last_valid_layer = &tg_ptr->get_layers()[0];
         int last_valid_real = start_real_idx;
         std::vector<int> skipped_indices;
@@ -1496,7 +1516,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             if (config.enable_gap_bridging && (speed > MAX_REASONABLE_SPEED || time_diff > config.max_interval)) {
                 // Sub-trajectory boundary: flush smoothing buffer before finishing this segment
                 flush_lag_buffer(lag_buffer, *this, config.lag_steps);
-                process_sub_segment(tg_ptr.get(), current_sub_indices);
+                process_sub_segment(tg_ptr.get(), current_sub_indices, &h0_log_lambdas);
 
                 for (int skipped_idx : skipped_indices) {
                     final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
@@ -1524,6 +1544,9 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 if (config.lag_steps > 0) {
                     lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
                 }
+                // Reset H0 lambda for new sub-trajectory
+                h0_log_lambdas.clear();
+                h0_log_lambda = 0.0;
 
                 last_valid_layer = &tg_ptr->get_layers()[0];
                 last_valid_real = next_real;
@@ -1555,7 +1578,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 if (should_restart) {
                     // 1. Flush smoothing buffer and commit current sub-segment
                     flush_lag_buffer(lag_buffer, *this, config.lag_steps);
-                    process_sub_segment(tg_ptr.get(), current_sub_indices);
+                    process_sub_segment(tg_ptr.get(), current_sub_indices, &h0_log_lambdas);
                     for (int skipped_idx : skipped_indices) {
                         final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
                     }
@@ -1584,6 +1607,9 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     if (config.lag_steps > 0) {
                         lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
                     }
+                    // Reset H0 lambda for new sub-trajectory
+                    h0_log_lambdas.clear();
+                    h0_log_lambda = 0.0;
 
                     last_valid_layer = &tg_ptr->get_layers()[0];
                     last_valid_real = next_real;
@@ -1625,6 +1651,17 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     lag_buffer.back().frac_inside_pl = frac_inside;
                     lag_buffer.push_back({last_valid_layer, {}, 1.0});
 
+                    // ── Accumulate global H0 lambda ──
+                    // LR_t = frac_inside / max(P_HMI, 1-frac_inside)
+                    // λ_t = λ_{t-1} × LR_t
+                    constexpr double H0_PHMI = 1.0e-5;
+                    double f_clamp = std::max(H0_PHMI, std::min(1.0 - H0_PHMI, frac_inside));
+                    double h0_lr = f_clamp / std::max(H0_PHMI, 1.0 - f_clamp);
+                    h0_log_lambda += std::log(h0_lr);
+
+                    // Store λ_t for this epoch (align with original_index later)
+                    h0_log_lambdas.push_back(h0_log_lambda);
+
                     // When buffer has lag_steps+1 entries, smooth the oldest layer
                     if (lag_buffer.size() > static_cast<size_t>(config.lag_steps)) {
                         apply_lag_smoothing(lag_buffer);
@@ -1638,7 +1675,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         flush_lag_buffer(lag_buffer, *this, config.lag_steps);
 
         if (!current_sub_indices.empty()) {
-            process_sub_segment(tg_ptr.get(), current_sub_indices);
+            process_sub_segment(tg_ptr.get(), current_sub_indices, &h0_log_lambdas);
         }
         for (int skipped_idx : skipped_indices) {
             final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
@@ -2080,37 +2117,7 @@ void CovarianceMapMatch::apply_lag_smoothing(
     }
     if (layer_entropy < 0.0) layer_entropy = 0.0;
 
-    // ── Part 3: Sequential Bayesian H0 test ──
-    // Accumulate likelihood ratios across the smoothing window.
-    // LR_t = frac_inside / max(P_HMI, 1 - frac_inside)
-    // λ = λ₀ · Π LR_τ  →  α = λ/(1+λ) = P(H0 | observations)
-    constexpr double DEFAULT_PHMI = 1.0e-5;  // standard GNSS integrity risk
-    double log_lambda = 0.0;  // log(λ₀) = 0 → λ₀ = 1 (uniform prior default)
-
-    for (size_t step = 0; step < lag_data.size(); ++step) {
-        double f = lag_data[step].frac_inside_pl;
-        // Clamp to avoid log(0) or division by zero
-        if (f < DEFAULT_PHMI) f = DEFAULT_PHMI;
-        if (f > 1.0 - DEFAULT_PHMI) f = 1.0 - DEFAULT_PHMI;
-        double lr = f / std::max(DEFAULT_PHMI, 1.0 - f);
-        log_lambda += std::log(lr);
-    }
-
-    // Clamp to avoid overflow
-    log_lambda = std::max(-700.0, std::min(700.0, log_lambda));
-    double lambda = std::exp(log_lambda);
-    double alpha_h0 = lambda / (1.0 + lambda);
-    // α_h0 ∈ [0,1]: 1 = H0 fully supported, 0 = H0 rejected (map error / off-road)
-
-    // Apply H0 posterior as multiplicative discount (cannot be softmax-canceled)
-    for (size_t i = 0; i < n_old; ++i) {
-        TGNode& node = (*oldest_layer)[i];
-        if (node.cumu_prob > neg_inf) {
-            node.trustworthiness *= alpha_h0;
-        }
-    }
-
-    // ── Part 4: Recompute entropy and delta ──
+    // ── Part 3: Recompute entropy and delta ──
     double delta_entropy_update = 0.0;
     if (valid_count > 0) {
         double H_prior = std::log2(static_cast<double>(valid_count));
@@ -2125,8 +2132,8 @@ void CovarianceMapMatch::apply_lag_smoothing(
         }
     }
 
-    SPDLOG_DEBUG("Lag-smoothing: L={} valid={} entropy={:.4f} lambda={:.2e} alpha_h0={:.4f}",
-                 static_cast<int>(L), valid_count, layer_entropy, lambda, alpha_h0);
+    SPDLOG_DEBUG("Lag-smoothing: L={} valid={} entropy={:.4f} delta={:.4f}",
+                 static_cast<int>(L), valid_count, layer_entropy, delta_entropy_update);
 }
 
 // ── Smoothing-buffer flush (trajectory end / sub-trajectory boundary) ────────
