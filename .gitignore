@@ -7,6 +7,8 @@ build_debug/
 dataset-hainan/
 dataset-hainan-06/
 input/
+.claude/
+.playwright-cli/
 
 # Doc files
 
@@ -112,3 +114,4 @@ sync.sh
 
 AGENTS.md
 input/config/cmm_config_omp.xml
+docs/Journal of Field Robotics - 2016 - Phillips - Is It What I Think It Is  Is It Where I Think It Is  Using Point‐Clouds for.pdf

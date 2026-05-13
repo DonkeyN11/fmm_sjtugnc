@@ -1652,11 +1652,16 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     lag_buffer.push_back({last_valid_layer, {}, 1.0});
 
                     // ── Accumulate global H0 lambda ──
-                    // LR_t = frac_inside / max(P_HMI, 1-frac_inside)
-                    // λ_t = λ_{t-1} × LR_t
-                    constexpr double H0_PHMI = 1.0e-5;
-                    double f_clamp = std::max(H0_PHMI, std::min(1.0 - H0_PHMI, frac_inside));
-                    double h0_lr = f_clamp / std::max(H0_PHMI, 1.0 - f_clamp);
+                    // Bayesian sequential test:
+                    //   LR_t = P(z_t | H0) / P(z_t | ¬H0) = frac_inside / PHMI
+                    //   λ_t = λ_{t-1} × LR_t
+                    // Using config.phmi as the GNSS integrity risk baseline.
+                    // frac_inside is clamped to [PHMI/1e3, 1-PHMI/1e3] to avoid
+                    // log(0) and preserve per-epoch LR discrimination.
+                    double phmi_floor = std::max(config.phmi / 1000.0, 1.0e-10);
+                    double f_clamp = std::max(phmi_floor,
+                        std::min(1.0 - phmi_floor, frac_inside));
+                    double h0_lr = f_clamp / config.phmi;
                     h0_log_lambda += std::log(h0_lr);
 
                     // Store λ_t for this epoch (align with original_index later)
