@@ -247,11 +247,44 @@ The CMM engine (`src/mm/cmm/cmm_algorithm.cpp`, ~2200+ lines) implements:
 
 2. **Log-Space HMM** — All probability computations in log-space for numerical stability with very small probabilities. Viterbi decoding operates on log-probabilities.
 
-3. **Fixed-Lag Smoothing** (lag_steps) — Computes posterior distribution $P(\text{state}_t | \text{obs}_{1:t+L})$ over states at step $t$ using observations up to $t + \text{lag\_steps}$ ahead via Viterbi-style forward propagation within a fixed-lag window:
-   - Forward pass accumulates log-probabilities from layer $t$ through layer $t+L$
-   - Softmax normalization yields per-candidate trustworthiness scores
-   - Layer entropy and delta entropy computed from the full posterior
-   - Top-3 trustworthiness scores per layer stored as `n_best_trustworthiness`
+3. **Fixed-Lag Smoothing** (lag_steps) — Computes smoothed posterior distribution $P(s_t^{(i)} \mid \text{obs}_{1:t+L})$ over candidates at layer $t$ using observations up to $t + \text{lag\_steps}$ ahead. Implemented in `apply_lag_smoothing()` at `src/mm/cmm/cmm_algorithm.cpp:2011`.
+
+   **Buffer management** (`lag_steps=5` example):
+   ```
+   时间线:   t₀   t₁   t₂   t₃   t₄   t₅   t₆
+            ↑                         ↑
+       已平滑输出              最新观测进入
+
+   lag_buffer = [layer(t₀), layer(t₁), layer(t₂), layer(t₃), layer(t₄), layer(t₅)]
+                  ↑  缓冲区满(>5)，对 t₀ 做平滑，然后 pop_front
+   ```
+   - 每读入新历元 $t_n$：计算 TP 矩阵，存入 `lag_buffer.back().tp_to_next`，push_back `layer(t_n)`
+   - 当 `lag_buffer.size() > lag_steps` 时，对最老层做平滑后 pop_front
+   - 轨迹结束时 `flush_lag_buffer()` 逐步清空剩余缓冲（$L$ 递减）
+
+   **三步计算**
+
+   **Part 1 — Viterbi 前向传播:** 对最老层 $t_0$ 的每个候选 $i$，做 $L$ 步 Viterbi 前向：
+   $$\text{score}_i = \text{cumu\_prob}_i(t_0) + \max_{\text{path } t_0 \to t_L} \sum_{\tau=1}^{L} \left[ \log P(s_\tau \mid s_{\tau-1}) + \log P(o_\tau \mid s_\tau) \right]$$
+   其中 $\max_{\text{path}}$ 是 Viterbi 式的各步取 max：`dp(step)[b] = max_a{ dp(step-1)[a] + log(tp[a→b]) + ep(step)[b] }`
+
+   **Part 2 — Softmax 归一化 → trustworthiness:**
+   $$P(s_t = i \mid \text{obs}_{1:t+L}) = \frac{\exp(\text{score}_i)}{\sum_j \exp(\text{score}_j)}$$
+   通过 `log_sum_exp` + `exp(log_norm)` 实现。值域 $[0, 1]$，所有候选之和为 1。
+
+   **Part 3 — 信息熵:**
+   $$H(\text{posterior}) = -\sum_i p_i \log_2 p_i, \quad \Delta H = \log_2(N_{\text{valid}}) - H(\text{posterior})$$
+
+   **各 epoch 输出的质量指标:**
+
+   | 指标 | 来源 | 含义 | 值域 |
+   |------|------|------|------|
+   | `trustworthiness` | Part 2 softmax | Viterbi 最优候选的平滑后验概率 | $[0, 1]$ |
+   | `delta_entropy` | Part 3 | 信息增益 $\Delta H$: 该层消解了多少不确定性 | $[0, \infty)$ bits |
+   | `posterior_entropy` | Part 3 | 后验熵 $H$: 该层剩余不确定性 | $[0, \infty)$ bits |
+   | `n_best_trustworthiness` | 同层所有候选 top-3 | 前三名 softmax 后验概率 | $[0, 1]^3$ |
+
+   当 `lag_steps=0` 时，退化为首层初始化的 filtering posterior（仅看过去证据）。
 
 4. **Trustworthiness** — Softmax-normalized smoothing posterior $P(s_t^{(i)} | \text{obs}_{1:t+L})$, i.e., the probability that candidate $i$ is correct given all observed evidence up to $t+L$. For the winning candidate: $\text{tw}_t = \max_i P(s_t^{(i)} | \text{obs}_{1:t+L})$.
 
@@ -290,7 +323,7 @@ Full parameter set (`input/config/cmm_config_omp.xml`):
     <use_mahalanobis>true</use_mahalanobis>  <!-- Enable anisotropic emission -->
     <filtered>false</filtered>              <!-- Enable filtering (keep strongest trajectory) -->
     <max_interval>180.0</max_interval>       <!-- Max gap seconds for gap bridging -->
-    <trustworthiness_threshold>10.0</trustworthiness_threshold>  <!-- Trust threshold -->
+    <trustworthiness_threshold>0.5</trustworthiness_threshold>  <!-- Trust threshold [0,1]: drop epochs with trust < threshold -->
     <phmi>0.00001</phmi>                     <!-- PHMI target (1e-5) -->
     <lag_steps>5</lag_steps>                 <!-- Smoothing lag steps -->
     <phmi_pl_multiplier>5</phmi_pl_multiplier>  <!-- PL multiplier under PHMI mode -->

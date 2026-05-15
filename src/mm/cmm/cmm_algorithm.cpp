@@ -636,7 +636,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double min_gps_error_degrees = xml_data.get("config.parameters.min_gps_error_degrees", 1.0e-4);
 
     double max_interval = xml_data.get("config.parameters.max_interval", 180.0);
-    double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 1.0);
+    double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 0.0);
 
     // New parameters for additive map noise and background noise normalization
     double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
@@ -678,7 +678,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double min_gps_error = arg_data.count("min_gps_error_degrees") ? arg_data["min_gps_error_degrees"].as<double>() : 1.0e-4;
 
     double max_interval = arg_data.count("max_interval") ? arg_data["max_interval"].as<double>() : 180.0;
-    double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 1.0;
+    double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 0.0;
 
     // New parameters for additive map noise and background noise normalization
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
@@ -721,8 +721,8 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("1.0e-4"))
         ("max_interval", "Maximum time interval (seconds) to split segments",
          cxxopts::value<double>()->default_value("180.0"))
-        ("trustworthiness_threshold", "Entropy threshold for filtering ambiguous matches (smaller is more confident)",
-         cxxopts::value<double>()->default_value("1.0"))
+        ("trustworthiness_threshold", "Threshold on trustworthiness posterior [0,1] to filter low-confidence epochs (0.0)",
+         cxxopts::value<double>()->default_value("0.0"))
         ("map_error_std", "Map error standard deviation in degrees for additive noise (default 5e-5 ≈ 5m)",
          cxxopts::value<double>()->default_value("5.0e-5"))
         ("background_log_prob", "Background noise log probability for normalization (default -20.0)",
@@ -746,7 +746,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--max_gap_distance (optional) <double>: Max distance for gap bridging in meters (2000.0)\n";
     oss << "--min_gps_error_degrees (optional) <double>: Minimum GPS error in degrees to prevent over-confidence (1e-4 ≈ 11m)\n";
     oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
-    oss << "--trustworthiness_threshold (optional) <double>: Entropy threshold for filtering ambiguous matches in bits (1.0)\n";
+    oss << "--trustworthiness_threshold (optional) <double>: trustworthiness posterior [0,1] threshold for filtering (0.0)\n";
     oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
     oss << "--background_log_prob (optional) <double>: Background noise log probability for normalization (-20.0)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
@@ -1377,7 +1377,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy, h0_lambda_val};
             matched_candidate_path.push_back(mc);
 
-            if (!config.filtered || trust <= config.trustworthiness_threshold) {
+            if (!config.filtered || trust >= config.trustworthiness_threshold) {
                 filtered_path.push_back(mc);
                 filtered_tg_opath.push_back(node);
                 filtered_indices.push_back(sub_indices[i]);
@@ -1415,7 +1415,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         for (size_t i = 0; i < tg_opath.size(); ++i) {
             const TGNode *node = tg_opath[i];
             double trust = node->trustworthiness;
-            if (!config.filtered || trust <= config.trustworthiness_threshold) {
+            if (!config.filtered || trust >= config.trustworthiness_threshold) {
                 if (i < layer_nbest.size()) {
                     filtered_nbest.push_back(layer_nbest[i]);
                 } else {
