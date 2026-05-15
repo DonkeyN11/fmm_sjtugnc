@@ -247,12 +247,13 @@ The CMM engine (`src/mm/cmm/cmm_algorithm.cpp`, ~2200+ lines) implements:
 
 2. **Log-Space HMM** — All probability computations in log-space for numerical stability with very small probabilities. Viterbi decoding operates on log-probabilities.
 
-3. **Fixed-Lag Smoothing** (window_length, lag_steps) — Computes posterior distribution $P(\text{state}_t | \text{obs}_{1:t+L})$ over states at step $t$ using observations up to $t + \text{lag\_steps}$ ahead. This is the forward-backward (Baum-Welch) algorithm restricted to a sliding window:
-   - Forward pass accumulates log-probabilities
-   - Backward pass within a limited lag window computes the smoothing posterior
-   - Output layer-normalized trustworthiness, delta entropy, posterior entropy
+3. **Fixed-Lag Smoothing** (lag_steps) — Computes posterior distribution $P(\text{state}_t | \text{obs}_{1:t+L})$ over states at step $t$ using observations up to $t + \text{lag\_steps}$ ahead via Viterbi-style forward propagation within a fixed-lag window:
+   - Forward pass accumulates log-probabilities from layer $t$ through layer $t+L$
+   - Softmax normalization yields per-candidate trustworthiness scores
+   - Layer entropy and delta entropy computed from the full posterior
+   - Top-3 trustworthiness scores per layer stored as `n_best_trustworthiness`
 
-4. **Trustworthiness** — Normalized smoothing posterior $P(\text{state}_t | \text{obs}_{1:t+L})$. This is a per-point quality metric indicating how confident the model is about each match given all observed evidence.
+4. **Trustworthiness** — Softmax-normalized smoothing posterior $P(s_t^{(i)} | \text{obs}_{1:t+L})$, i.e., the probability that candidate $i$ is correct given all observed evidence up to $t+L$. For the winning candidate: $\text{tw}_t = \max_i P(s_t^{(i)} | \text{obs}_{1:t+L})$.
 
 5. **Delta Entropy** — Information gain from prior to posterior in bits:
    $$ \Delta H_t = H(\text{prior}) - H(\text{posterior}_t) $$
@@ -287,7 +288,6 @@ Full parameter set (`input/config/cmm_config_omp.xml`):
     <reverse_tolerance>0.0</reverse_tolerance>  <!-- Reverse matching tolerance -->
     <normalized>false</normalized>           <!-- Use normalized Mahalanobis -->
     <use_mahalanobis>true</use_mahalanobis>  <!-- Enable anisotropic emission -->
-    <window_length>100</window_length>       <!-- Fixed-lag window size -->
     <filtered>false</filtered>              <!-- Enable filtering (keep strongest trajectory) -->
     <max_interval>180.0</max_interval>       <!-- Max gap seconds for gap bridging -->
     <trustworthiness_threshold>10.0</trustworthiness_threshold>  <!-- Trust threshold -->

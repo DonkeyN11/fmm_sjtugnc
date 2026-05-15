@@ -100,24 +100,6 @@ std::optional<long long> parse_integer(const std::string &value) {
     }
 }
 
-// Maintain a descending list of top-k scores.
-void push_top_k(std::vector<double> *scores, double value, size_t k) {
-    if (!std::isfinite(value)) {
-        return;
-    }
-    auto &vec = *scores;
-    auto it = vec.begin();
-    for (; it != vec.end(); ++it) {
-        if (value > *it) {
-            break;
-        }
-    }
-    vec.insert(it, value);
-    if (vec.size() > k) {
-        vec.pop_back();
-    }
-}
-
 // LogSumExp utility for numerical stability in log-space calculations
 // Computes log(sum(exp(x_i))) as: max(x) + log(sum(exp(x_i - max(x))))
 // This prevents overflow/underflow when exponentiating large or small log values.
@@ -590,8 +572,6 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double reverse_tolerance_arg,
                                                    bool normalized_arg,
                                                    bool use_mahalanobis_candidates_arg,
-                                                   int window_length_arg,
-                                                   bool margin_used_trustworthiness_arg,
                                                    bool filtered_arg,
                                                    bool enable_gap_bridging_arg,
                                                    double max_gap_distance_arg,
@@ -609,8 +589,6 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       reverse_tolerance(reverse_tolerance_arg),
       normalized(normalized_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
-      window_length(window_length_arg),
-      margin_used_trustworthiness(margin_used_trustworthiness_arg),
       filtered(filtered_arg),
       enable_gap_bridging(enable_gap_bridging_arg),
       max_gap_distance(max_gap_distance_arg),
@@ -630,8 +608,8 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
     SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {}",
                 k, min_candidates, protection_level_multiplier, reverse_tolerance);
-    SPDLOG_INFO("normalized {} use_mahalanobis {} window_length {} margin_trust {} filtered {}",
-                normalized, use_mahalanobis_candidates, window_length, margin_used_trustworthiness, filtered);
+    SPDLOG_INFO("normalized {} use_mahalanobis {} filtered {}",
+                normalized, use_mahalanobis_candidates, filtered);
     SPDLOG_INFO("gap_bridging {} max_gap_distance {}", enable_gap_bridging, max_gap_distance);
     SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold {}",
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
@@ -647,8 +625,6 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
     bool normalized = xml_data.get("config.parameters.normalized", true);
     bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
-    int window_length = xml_data.get("config.parameters.window_length", 10);
-    bool margin_used_trustworthiness = xml_data.get("config.other.margin_used_trustworthiness", true);
     bool filtered = xml_data.get("config.parameters.filtered", true);
 
     // Gap bridging and integrity parameters
@@ -674,8 +650,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double h0_prior_log_odds = xml_data.get("config.parameters.h0_prior_log_odds", 0.0);
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                                    normalized, use_mahalanobis_candidates, window_length,
-                                    margin_used_trustworthiness, filtered,
+                                    normalized, use_mahalanobis_candidates,
+                                    filtered,
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_log_prob, phmi, lag_steps,
@@ -691,8 +667,6 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double reverse_tolerance = arg_data["reverse_tolerance"].as<double>();
     bool normalized = arg_data["normalized"].as<bool>();
     bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
-    int window_length = arg_data["window_length"].as<int>();
-    bool margin_used_trustworthiness = arg_data["margin_used_trustworthiness"].as<bool>();
     bool filtered = arg_data["filtered"].as<bool>();
 
     // Check if new args exist (assuming they are registered) or use defaults
@@ -714,8 +688,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                                    normalized, use_mahalanobis_candidates, window_length,
-                                    margin_used_trustworthiness, filtered,
+                                    normalized, use_mahalanobis_candidates,
+                                    filtered,
                                     enable_gap, max_gap, min_gps_error,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_log_prob, phmi, lag_steps,
@@ -736,10 +710,6 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("normalized", "Normalize emission probabilities",
          cxxopts::value<bool>()->default_value("true"))
         ("use_mahalanobis", "Use Mahalanobis-based candidate search",
-         cxxopts::value<bool>()->default_value("true"))
-        ("window_length", "Sliding window length for trustworthiness (points)",
-         cxxopts::value<int>()->default_value("10"))
-        ("margin_used_trustworthiness", "If true use margin (top1-top2) as trustworthiness, else use top1 score",
          cxxopts::value<bool>()->default_value("true"))
         ("filtered", "Filter out points with no candidates or disconnected transitions",
          cxxopts::value<bool>()->default_value("true"))
@@ -771,8 +741,6 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--reverse_tolerance (optional) <double>: proportion of reverse movement allowed on an edge\n";
     oss << "--normalized (optional) <bool>: whether to normalize emission probabilities (true)\n";
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
-    oss << "--window_length (optional) <int>: sliding window length for trustworthiness (10)\n";
-    oss << "--margin_used_trustworthiness (optional) <bool>: if true use margin (top1-top2), else use top1 score (true)\n";
     oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
     oss << "--enable_gap_bridging (optional) <bool>: Enable trajectory gap bridging (true)\n";
     oss << "--max_gap_distance (optional) <double>: Max distance for gap bridging in meters (2000.0)\n";
@@ -789,13 +757,13 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
-        window_length <= 0 || max_gap_distance < 0 ||
+        max_gap_distance < 0 ||
         map_error_std < 0 || phmi < 0 || phmi > 1.0 || lag_steps < 0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
-                       "protection_level_multiplier {} reverse_tolerance {} window_length {} "
+                       "protection_level_multiplier {} reverse_tolerance {} "
                        "max_gap_distance {} map_error_std {} phmi {}",
                        k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                       window_length, max_gap_distance, map_error_std, phmi);
+                       max_gap_distance, map_error_std, phmi);
         return false;
     }
     if (max_interval < 0) return false;
@@ -1352,16 +1320,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             }
         }
 
-        Traj_Candidates sub_tc;
-        std::vector<std::vector<double>> sub_log_eps;
-        for (int idx : sub_indices) {
-            sub_tc.push_back(tc_raw[idx]);
-            sub_log_eps.push_back(log_eps_raw[idx]);
-        }
-
-        auto trustworthiness_results = compute_window_trustworthiness(
-            sub_tc, sub_log_eps, segment_traj, config);
-
         MatchedCandidatePath matched_candidate_path;
         matched_candidate_path.reserve(tg_opath.size());
 
@@ -1377,15 +1335,31 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             all_details.push_back(global_candidate_details[idx]);
         }
 
+        // Pre-extract top-3 trustworthiness per layer from lag-smoothing softmax posterior
+        const auto& layers = tg_ptr->get_layers();
+        std::vector<std::vector<double>> layer_nbest;
+        layer_nbest.reserve(layers.size());
+        for (size_t li = 0; li < layers.size(); ++li) {
+            const TGLayer& layer = layers[li];
+            std::vector<double> tw_vals;
+            tw_vals.reserve(layer.size());
+            for (const TGNode& node : layer) {
+                if (node.trustworthiness > 0.0) {
+                    tw_vals.push_back(node.trustworthiness);
+                }
+            }
+            std::sort(tw_vals.begin(), tw_vals.end(), std::greater<double>());
+            std::vector<double> top3(tw_vals.begin(),
+                tw_vals.begin() + std::min<size_t>(3, tw_vals.size()));
+            layer_nbest.push_back(std::move(top3));
+        }
+
         for (size_t i = 0; i < tg_opath.size(); ++i) {
             const TGNode *node = tg_opath[i];
             double sp = (i == 0) ? 0.0 : node->sp_dist;
             double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
 
             double trust = node->trustworthiness;
-            if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
-                trust = trustworthiness_results.first[i];
-            }
 
             // Apply trajectory-global H0 posterior discount: trust' = α_t × trust
             // λ_t = exp(h0_lambda_vec[i]) for i>0, λ₀=exp(0) for i=0
@@ -1437,15 +1411,13 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         res.eu_distances = std::move(filtered_eu_dist);
 
         std::vector<std::vector<double>> filtered_nbest;
+        filtered_nbest.reserve(tg_opath.size());
         for (size_t i = 0; i < tg_opath.size(); ++i) {
             const TGNode *node = tg_opath[i];
             double trust = node->trustworthiness;
-            if (config.margin_used_trustworthiness && i < trustworthiness_results.first.size()) {
-                trust = trustworthiness_results.first[i];
-            }
             if (!config.filtered || trust <= config.trustworthiness_threshold) {
-                if (i < trustworthiness_results.second.size()) {
-                    filtered_nbest.push_back(trustworthiness_results.second[i]);
+                if (i < layer_nbest.size()) {
+                    filtered_nbest.push_back(layer_nbest[i]);
                 } else {
                     filtered_nbest.push_back({});
                 }
@@ -2153,107 +2125,6 @@ void CovarianceMapMatch::flush_lag_buffer(
         lag_data.pop_front();
     }
     lag_data.clear();
-}
-
-// Compute sliding-window trustworthiness using top-N (N=3) path scores.
-std::pair<std::vector<double>, std::vector<std::vector<double>>>
-CovarianceMapMatch::compute_window_trustworthiness(
-    const Traj_Candidates &tc,
-    const std::vector<std::vector<double>> &log_emission_probabilities,
-    const CMMTrajectory &traj,
-    const CovarianceMapMatchConfig &config) {
-
-    const size_t layer_count = tc.size();
-    std::vector<double> trust_margins(layer_count, 0.0);
-    std::vector<std::vector<double>> n_best(layer_count);
-    if (layer_count == 0) {
-        return {trust_margins, n_best};
-    }
-
-    const size_t window_length = static_cast<size_t>(std::max(1, config.window_length));
-    std::vector<double> euclidean_distances;
-    euclidean_distances.reserve(layer_count > 0 ? layer_count - 1 : 0);
-    for (size_t i = 0; i + 1 < layer_count; ++i) {
-        euclidean_distances.push_back(
-            boost::geometry::distance(traj.geom.get_point(i), traj.geom.get_point(i + 1)));
-    }
-
-    const size_t k = 3;
-    for (size_t end_idx = 0; end_idx < layer_count; ++end_idx) {
-        size_t start_idx = (end_idx + 1 > window_length) ? end_idx + 1 - window_length : 0;
-
-        std::vector<std::vector<double>> prev_scores(tc[start_idx].size());
-        const auto *start_eps = (start_idx < log_emission_probabilities.size())
-                                    ? &log_emission_probabilities[start_idx]
-                                    : nullptr;
-        for (size_t j = 0; j < tc[start_idx].size(); ++j) {
-            double log_ep = (start_eps && j < start_eps->size()) ? (*start_eps)[j] : -std::numeric_limits<double>::infinity();
-            if (log_ep > -std::numeric_limits<double>::infinity()) {
-                push_top_k(&prev_scores[j], log_ep, k);
-            }
-        }
-
-        for (size_t cursor = start_idx + 1; cursor <= end_idx; ++cursor) {
-            size_t prev_idx = cursor - 1;
-            std::vector<std::vector<double>> cur_scores(tc[cursor].size());
-            double eu_dist = (prev_idx < euclidean_distances.size()) ? euclidean_distances[prev_idx] : 0.0;
-            const auto *cur_eps = (cursor < log_emission_probabilities.size())
-                                      ? &log_emission_probabilities[cursor]
-                                      : nullptr;
-
-            for (size_t b = 0; b < tc[cursor].size(); ++b) {
-                double log_ep_b = (cur_eps && b < cur_eps->size()) ? (*cur_eps)[b] : -std::numeric_limits<double>::infinity();
-                if (log_ep_b == -std::numeric_limits<double>::infinity()) {
-                    continue;
-                }
-                for (size_t a = 0; a < tc[prev_idx].size(); ++a) {
-                    const auto &paths_to_a = prev_scores[a];
-                    if (paths_to_a.empty()) {
-                        continue;
-                    }
-                    double sp_dist = get_sp_dist(&tc[prev_idx][a], &tc[cursor][b], config.reverse_tolerance);
-                    if (sp_dist < 0) {
-                        continue;
-                    }
-                    double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
-                    if (tp <= 0) {
-                        continue;
-                    }
-                    double log_tp = std::log(tp);
-                    for (double prev_log : paths_to_a) {
-                        push_top_k(&cur_scores[b], prev_log + log_tp + log_ep_b, k);
-                    }
-                }
-            }
-            prev_scores.swap(cur_scores);
-        }
-
-        std::vector<double> combined;
-        for (const auto &scores : prev_scores) {
-            for (double val : scores) {
-                push_top_k(&combined, val, k);
-            }
-        }
-
-        // Apply Top-K normalization to the window scores if they exist
-        if (!combined.empty()) {
-            double log_norm = log_sum_exp(combined);
-            for (double &val : combined) {
-                val = std::exp(val - log_norm); // Convert to linear probability [0, 1]
-            }
-            n_best[end_idx] = combined;
-            if (combined.size() >= 2) {
-                trust_margins[end_idx] = combined[0] - combined[1];
-            } else if (combined.size() == 1) {
-                trust_margins[end_idx] = combined[0];
-            }
-        } else {
-            n_best[end_idx] = {};
-            trust_margins[end_idx] = 0.0;
-        }
-    }
-
-    return {trust_margins, n_best};
 }
 
 // Entry point used by CLI/Python binding: parse trajectories, optionally reproject them,
