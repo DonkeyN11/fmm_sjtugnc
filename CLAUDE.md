@@ -34,6 +34,10 @@
 ### 4. Workflow Enforcement
 
 * **Verify & Commit**: After every code modification, you MUST perform (or instruct to perform) compilation and debugging. Upon success, you MUST proceed with git commit. Do not commit files in gitignore.
+* **Branch Policy** (STRICT):
+  * 🚨 **NEVER commit directly to `master` or `main`**. All changes, regardless of size, MUST be committed on a **new feature branch** created from the current tracked branch.
+  * **Merge**: Merging into `master`/`main` is **ONLY permitted by the author (Donkey.Ning)**. Do not execute `git merge` targeting `master`/`main`.
+  * **Auto-commit**: After any file modification (excluding `.gitignore`-covered files), commit all changes on the **current tracking branch** — provided it is NOT `master`/`main`.
 
 ---
 
