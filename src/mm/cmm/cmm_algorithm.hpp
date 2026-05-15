@@ -124,15 +124,12 @@ struct CovarianceMapMatchConfig {
      * @param min_candidates_arg minimum number of candidates to keep
      * @param protection_level_multiplier_arg multiplier for protection level
      * @param reverse_tolerance reverse movement tolerance
-     * @param window_length_arg sliding window length for trustworthiness
      */
     CovarianceMapMatchConfig(int k_arg = 8, int min_candidates_arg = 3,
                              double protection_level_multiplier_arg = 1.0,
                            double reverse_tolerance = 0.0,
                            bool normalized_arg = true,
                            bool use_mahalanobis_candidates_arg = true,
-                           int window_length_arg = 10,
-                           bool margin_used_trustworthiness_arg = true,
                            bool filtered_arg = true,
                            bool enable_gap_bridging_arg = true,
                            double max_gap_distance_arg = 2000.0, /* in meters */
@@ -153,8 +150,6 @@ struct CovarianceMapMatchConfig {
     double reverse_tolerance;           /**< Reverse movement tolerance */
     bool normalized;                    /**< Whether to normalize emission probabilities */
     bool use_mahalanobis_candidates;    /**< Whether to use Mahalanobis-based candidate search */
-    int window_length;                  /**< Sliding window length for trustworthiness */
-    bool margin_used_trustworthiness;   /**< If true, use margin (top1-top2); else use top1 */
     bool filtered;                      /**< Whether to filter out points with no candidates/disconnected transitions */
 
     // --- Gap Handling & Integrity Parameters ---
@@ -423,16 +418,6 @@ protected:
     void update_tg_cmm(TransitionGraph *tg,
                       const CMMTrajectory &traj,
                       const CovarianceMapMatchConfig &config);
-
-    /**
-     * Compute sliding-window trustworthiness scores and top-N paths.
-     * @return pair of (trustworthiness margin per epoch, top-N log scores per epoch)
-     */
-    std::pair<std::vector<double>, std::vector<std::vector<double>>> compute_window_trustworthiness(
-        const Traj_Candidates &tc,
-        const std::vector<std::vector<double>> &log_emission_probabilities,
-        const CMMTrajectory &traj,
-        const CovarianceMapMatchConfig &config);
 
     /**
      * Slice a CMMTrajectory into a sub-segment [start_idx, end_idx)
