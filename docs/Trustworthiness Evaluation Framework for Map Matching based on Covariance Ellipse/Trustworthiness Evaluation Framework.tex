@@ -27,18 +27,14 @@
 \title{Trustworthiness Evaluation of Map Matching Leveraging Probabilistic GNSS Covariance Ellipse Models}
 % framework；elliptical; EMM
 
-\author{IEEE Publication Technology,~\IEEEmembership{Staff,~IEEE,}
+\author{Chenzhang Ning,~\IEEEmembership{Shanghai Jiao Tong University,~Shanghai,~China,}
         % <-this % stops a space
-\thanks{This paper was produced by the IEEE Publication Technology Group. They are in Piscataway, NJ.}% <-this % stops a space
-\thanks{Manuscript received April 19, 2021; revised August 16, 2021.}}
+\thanks{Manuscript received XX XX, 2025; revised XX XX, 2025.}}
 
 % The paper headers
-\markboth{Journal of \LaTeX\ Class Files,~Vol.~14, No.~8, August~2021}%
-{Shell \MakeLowercase{\textit{et al.}}: A Sample Article Using IEEEtran.cls for IEEE Journals}
+\markboth{IEEE Transactions on Intelligent Transportation Systems}%
+{Ning: Trustworthiness Evaluation of Map Matching with GNSS Covariance Ellipse}
 
-\IEEEpubid{0000--0000/00\$00.00~\copyright~2021 IEEE}
-% Remember, if you use this you must call \IEEEpubidadjcol in the second
-% column for its text to clear the IEEEpubid mark.
 
 \maketitle
 
@@ -57,14 +53,15 @@ map matching—including candidate search, candidate projection, and emission
 modeling—and then uses the same probabilistic machinery to define a
 trustworthiness metric that predicts mismatch events with measurable diagnostic
 power.
-Empirically, Monte Carlo simulations and more than 300{,}000 real
-vehicle trips demonstrate that the proposed framework achieves up to
-approximately 60\% higher availability under severe GNSS error conditions and
-around 50\% higher average matching accuracy compared with a representative
-fixed-isotropic HMM baseline. The trustworthiness metric attains an area under
+Empirically, Monte Carlo simulations and real-vehicle experiments
+on 7 GNSS trajectories collected in Haikou, Hainan China demonstrate
+that the proposed anisotropic emission model dramatically improves
+probabilistic calibration over a fixed-isotropic HMM baseline, reducing
+the Expected Calibration Error (ECE) from 0.978 to 0.121 at a 5~m
+error threshold. The trustworthiness metric attains an area under
 the ROC curve of about 0.72 for mismatch detection, confirming its practical
 effectiveness as an integrity indicator for safety-critical map-matching
-applications
+applications.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -150,10 +147,65 @@ In summary, the key innovation of this work is to make HMM-based map matching ex
 
 % Overall, this work introduces a principled and practical approach for trustworthy map matching, bridging the gap between GNSS integrity concepts and large-scale transportation applications. The proposed framework enables map-matching algorithms not only to estimate the most probable road trajectory but also to quantify the reliability of their own outputs, which is essential for future autonomous driving, vehicular safety systems, and high-precision mobility services.
 
+\section{Related Work}
+\label{sec:related_work}
+
+\subsection{HMM-Based Map Matching}
+Since the seminal work of \cite{HMM}, HMM-based map matching has become
+the dominant approach for inferring vehicle road positions from noisy
+GNSS observations. The standard formulation treats each GNSS fix as an
+observation and candidate road positions as hidden states, using the
+Viterbi algorithm to find the most likely state sequence. Subsequent
+research has focused on accelerating the candidate search and transition
+computation: \cite{FMM} introduced UBODT (Upper Bounded Origin Destination
+Table) precomputation to avoid online shortest-path queries, achieving
+real-time performance for batch processing. \cite{Woltche2023} provided
+a comprehensive benchmark of HMM-based methods and proposed Markov
+Decision Process alternatives with reinforcement learning. \cite{Wang2024}
+extended HMM map matching to low-frequency trajectories through probability
+interpolation. \cite{Li2023} improved HMM emission modeling by accounting for
+road network density variations. All of these methods, however, assume an
+isotropic Gaussian emission model with a fixed, scalar error standard
+deviation that does not adapt to per-epoch GNSS covariance information.
+
+\subsection{GNSS Integrity and Protection Levels}
+GNSS integrity—the ability to provide timely warnings when the system
+should not be used—has been extensively studied in aviation contexts.
+RAIM~\cite{Zhang2018} detects faulty satellites through residual-based
+consistency checks requiring at least 5 visible satellites for fault
+detection. ARAIM~\cite{Zhang2019} extends this to multi-constellation,
+dual-frequency scenarios with horizontal/vertical protection level (HPL/VPL)
+computation. In the automotive domain, \cite{Kim2019} proposed Protection
+Level-based evaluation of LiDAR map-matching reliability for vehicle
+localization, but treated PL as a scalar threshold rather than integrating
+it into the HMM emission model. \cite{Park2024} introduced uncertainty-aware
+LiDAR localization using factor graphs with covariance propagation,
+but focused on pose estimation rather than road-network matching.
+The present work bridges GNSS integrity concepts (RAIM-based PL
+computation, PHMI risk bounds) with HMM map matching by using PL as a
+geometry-constrained candidate search radius and as a PHMI-based emission
+probability weighting factor.
+
+\subsection{Probabilistic Calibration and Trustworthiness}
+While map matching accuracy is extensively studied, the calibration of
+output probabilities—whether the confidence scores reflect true correctness
+rates—has received little attention. In machine learning, ECE (Expected
+Calibration Error)~\cite{Guo2017} and reliability diagrams are standard
+tools for evaluating probabilistic classifier calibration. \cite{Phillips2016}
+introduced Bayesian hypothesis testing for verifying robotic geometry
+from point-cloud data, demonstrating that verification benefits from
+aggregating many independent but individually weak measurements.
+The present work extends these ideas to the HMM map-matching domain:
+we output a trustworthiness score (softmax-smoothed posterior) for every
+matched epoch, evaluate its calibration through reliability diagrams
+and ECE, and demonstrate that the anisotropic Mahalanobis emission model
+produces dramatically better-calibrated probabilities than the conventional
+isotropic approach.
+
 \section{HMM-Based Map Matching: Classical Framework}
 \label{sec:HMM_classic}
 Hidden Markov Model (HMM)–based map matching has become one of the most
-widely adopted approaches for inferring a vehicle’s road position from noisy
+widely adopted approaches for inferring a vehicle's road position from noisy
 GNSS observations. Its popularity stems from its principled probabilistic
 formulation and its ability to incorporate topological constraints using the
 road network graph. This section provides a concise introduction to the
@@ -1030,145 +1082,101 @@ full GNSS error geometry and therefore
     \item remains statistically consistent with the underlying GNSS stochastic model.
 \end{itemize}
 
-\subsection{Normalized Joint Likelihood and Trustworthiness Statistic}
+\subsection{Fixed-Lag Smoothing and Trustworthiness Computation}
 
-\subsubsection{Normalization of emission and transition probabilities}
-% Eq. for \tilde{p}(z_i | x_{i,j}), normalization across j
-% Transition normalization π_i(j,k), conservation of probability mass
-At each epoch $i$, the emission probabilities computed for different candidate
-states $\{x_{i,j}\}$ may vary significantly in magnitude due to changes in GNSS
-covariance, Mahalanobis distance scale, and road density. To remove this scale
-dependency, the emission probabilities are normalized across all candidates
-within the same epoch:
+Given the observation sequence $Z=\{z_1,\ldots,z_N\}$ and the HMM defined
+above, the filtering posterior at epoch $t$ is:
 \begin{equation}
-\tilde{p}(z_i \mid x_{i,j})
-=
-\frac{
-p(z_i \mid x_{i,j})
-}{
-\sum\limits_{k} p(z_i \mid x_{i,k}) + \varepsilon
-},
-\label{eq:normalized_emission}
+P(s_t^{(i)} \mid z_{1:t})
+= \frac{\alpha_t(i)}{\sum_{j} \alpha_t(j)},
+\quad
+\alpha_t(i) = P(z_{1:t}, s_t^{(i)}),
+\label{eq:filtering_posterior}
 \end{equation}
-where $\varepsilon$ is a small numerical constant preventing division by zero.
-This normalization ensures that
+where $\alpha_t(i)$ is the forward variable accumulated via the standard
+HMM recursion in log-space:
 \begin{equation}
-\sum_{j} \tilde{p}(z_i \mid x_{i,j}) = 1,
+\log \alpha_t(b)
+= \log \sum_{a} \exp\!\big(\log \alpha_{t-1}(a) + \log t_{a \to b}\big)
++ \log p(z_t \mid s_t^{(b)}).
+\label{eq:log_forward}
 \end{equation}
-allowing the emission probabilities to be interpreted as a discrete probability
-distribution over all candidate states at epoch $i$.
 
-\subsubsection{Normalization of Emission and Joint Probabilities}
+The filtering posterior captures evidence from past observations
+$z_{1:t}$ only. To incorporate future evidence and sharpen the posterior,
+we introduce a \emph{fixed-lag smoothing} mechanism. Maintaining a buffer of
+$L$ future layers (where $L$ is the configured smoothing lag), when
+$L>0$ the posterior at the oldest buffered layer $t$ is re-evaluated
+using observations up to $t+L$.
 
-Similarly, when combined with transition probabilities, the joint probability
-mass of all feasible state transitions between consecutive epochs is conserved.
-That is, for each epoch, the sum of probabilities over all admissible transfer
-routes, defined by the product of normalized emission probabilities and
-topology-consistent transition probabilities, is equal to one. 
+\subsubsection{Viterbi-Style Future Evidence Propagation}
 
-For each epoch $i$, define the (unnormalized) transition weights
+For each candidate $i$ at the oldest layer $t$, a Viterbi-style forward
+pass through the $L$-step look-ahead window accumulates the best achievable
+future path score:
 \begin{equation}
-w_i(j,k)
-=
-\tilde{p}(z_i \mid x_{i,k}) \,
-p(x_{i,k} \mid x_{i-1,j}),
+\beta_{t+L}(i)
+= \max_{\{s_{t+1},\dots,s_{t+L}\}}
+\sum_{\tau=t+1}^{t+L}
+\Big[ \log t_{s_{\tau-1} \to s_\tau}
+     + \log p(z_\tau \mid s_\tau) \Big],
+\label{eq:viterbi_future}
 \end{equation}
-and the corresponding normalized transition probabilities
+where $t_{s_{\tau-1} \to s_\tau}$ denotes the transition weight from the candidate
+at layer $\tau-1$ to that at layer $\tau$, and
+$p(z_\tau \mid s_\tau)$
+is the emission probability (Eq.~\ref{eq:cov_emission}).
+The maximization is implemented as a dynamic programming recursion:
+$\text{dp}_1(j) = \log t_{i \to j}^{(t)} + \log p(z_{t+1} \mid s_{t+1}^{(j)})$,
+and for $\tau = 2,\dots,L$,
+$\text{dp}_{\tau}(b) = \max_{a}\big[ \text{dp}_{\tau-1}(a)
++ \log t_{a \to b}^{(t+\tau-1)}
++ \log p(z_{t+\tau} \mid s_{t+\tau}^{(b)}) \big]$.
+
+\subsubsection{Softmax Normalization and Trustworthiness}
+
+The smoothing posterior is then obtained by softmax-normalizing the scores
+across all candidates at layer $t$:
 \begin{equation}
 \begin{aligned}
-\pi_i(j,k)
-&=
-\frac{
-    w_i(j,k)
-}{
-    \displaystyle
-    \sum_{j'} \sum_{k'}
-    w_i(j',k')
-}\\
-&=
-\frac{
-    \tilde{p}(z_i \mid x_{i,k}) \,
-    p(x_{i,k} \mid x_{i-1,j})
-}{
-    \displaystyle
-    \sum_{j'} \sum_{k'}
-    \tilde{p}(z_i \mid x_{i,k'}) \,
-    p(x_{i,k'} \mid x_{i-1,j'})
-}.
+\text{score}_t(i)
+&= \log \alpha_t(i) + \beta_{t+L}(i), \\[2pt]
+P(s_t^{(i)} \mid z_{1:t+L})
+&= \frac{\exp(\text{score}_t(i))}
+         {\sum_{j=1}^{K_t} \exp(\text{score}_t(j))},
+\label{eq:smoothing_posterior}
 \end{aligned}
-\label{eq:transition_norm}
 \end{equation}
-By construction, the total probability mass over all admissible transfer routes
-between epochs $i-1$ and $i$ is conserved:
+where $K_t$ is the number of candidates at layer $t$. The trustworthiness
+of the Viterbi-optimal candidate at epoch $t$ is defined as its smoothed
+posterior probability:
 \begin{equation}
-\sum_{j} \sum_{k} \pi_i(j,k) = 1.
-\end{equation}
-
-Finally, the optimal matched trajectory $X^\star$ is obtained using the Viterbi
-algorithm:
-\begin{equation}
-X^\star = \arg\max_X p(Z \mid X).
-\end{equation}
-
-To deal with spike in certain epoch while preventing decline caused by the probability decentralization, the normalized log-likelihood of the optimal path is defined as a
-trustworthiness statistic for a given window-slide length with total $l$ epochs:
-\begin{equation}
-T
-=
-\sum_{i=n}^{n+l}
-\left[
-\log \tilde{p}(z_i \mid x_i^\star)
-+
-\log p(x_i^\star \mid x_{i-1}^\star)
-\right].
+\text{tw}_t
+= \max_{i}\; P(s_t^{(i)} \mid z_{1:t+L}),
+\quad \text{tw}_t \in [0,1].
 \label{eq:trustworthiness}
 \end{equation}
+When $L=0$, the smoothing step is skipped and
+Eq.~\eqref{eq:filtering_posterior} is used directly (filtering-only mode).
 
-As a result, the
-HMM recursion redistributes probability mass across competing path hypotheses
-without artificial inflation or attenuation caused by numerical scaling.
+\subsubsection{Information-Theoretic Metrics}
 
-This normalized formulation provides three key benefits: (i) it removes
-sensitivity to covariance determinant magnitude, (ii) it enhances numerical
-stability for long trajectories, and (iii) it enables meaningful aggregation of
-likelihood information across time.
-
-
-\subsubsection{Trustworthiness interpretation and definition of $T$}
-% Definition of p(Z | X), Viterbi for X*, trust score T (normalized log-likelihood)
-% Interpretation: high T vs low T, ambiguity and mismatch, ROC / integrity use
-Let $Z=\{z_1,\ldots,z_N\}$ denote a sequence of GNSS observations and
-$X=\{x_1,\ldots,x_N\}$ a corresponding state sequence on the road network.
-The normalized joint likelihood under the HMM formulation is
+To complement trustworthiness, we compute the posterior entropy
+$H_t = -\sum_i p_i \log_2 p_i$, where $p_i = P(s_t^{(i)} \mid z_{1:t+L})$.
+The information gain (delta entropy) relative to the prior distribution is
 \begin{equation}
-p(Z \mid X)
-=
-\prod_{i=1}^{N}
-\tilde{p}(z_i \mid x_i)
-\,
-p(x_i \mid x_{i-1}),
+\Delta H_t = H_{\text{prior}}^{t} - H_t,
+\label{eq:delta_entropy}
 \end{equation}
-where $p(x_i \mid x_{i-1})$ enforces road connectivity, legal travel direction,
-and shortest-path consistency.
-
-Beyond trajectory estimation, the magnitude of the resulting joint probability
-provides a direct measure of consistency between GNSS observations and the road
-network structure. In simple road environments or under high-quality GNSS
-conditions, this probability mass concentrates on a small number of compatible
-paths, yielding a high-confidence solution. In contrast, in complex road
-networks—such as dense urban grids or parallel-road scenarios—multiple
-topologically plausible transitions coexist, causing the probability mass to be
-distributed among competing paths. This dispersion is a fundamental driver of
-map-matching ambiguity and mismatch events.
-
-A higher value of $T$ indicates strong mutual consistency between the GNSS
-measurements and road connectivity constraints, whereas a lower value signals
-increased ambiguity or potential mismatch risk. Since $T$ intrinsically reflects
-both measurement uncertainty and road-network complexity, thresholding this
-statistic enables quantitative integrity checks, receiver operating
-characteristic (ROC) analysis, and systematic evaluation of availability–
-integrity trade-offs in safety-critical navigation applications.
-It should be noted that the GNSS positioning covariance obtained from WLS estimation reflects uncertainty only under the nominal, fault-free hypothesis. In the presence of unmodeled multipath or satellite faults, the covariance may become over-optimistic and fail to bound the true position error. For this reason, integrity metrics such as protection level are incorporated in candidate selection, avoids missing the truth even when covariance is optimistic and preserves availability. Meanwhile, even when GNSS covariance becomes over-optimistic due to unmodeled multipath or faults, inconsistencies between the covariance-based emission likelihood and road-network-constrained transitions cause the joint HMM likelihood to drop, allowing the proposed trustworthiness statistic to flag unreliable map-matching results without relying on covariance alone.
+where $H_{\text{prior}}^{t} = \log_2(K_t)$ for the first epoch
+(uniform prior), and for subsequent epochs $H_{\text{prior}}^{t}$ is the
+entropy of the predictive distribution
+$P(s_t^{(b)} \mid z_{1:t-1})
+ \propto \sum_a P(s_{t-1}^{(a)} \mid z_{1:t-1}) \, t_{a \to b}$.
+A large $\Delta H_t$ indicates that the emission probabilities
+strongly resolve the uncertainty propagated from the previous layer;
+$\Delta H_t \approx 0$ suggests the GNSS observation provides little
+additional evidence, flagging potentially ambiguous epochs.
 
 
 \subsection{Summary of GNSS-Consistent HMM Formulation and Trustworthiness}
@@ -1866,13 +1874,43 @@ HMM map-matching algorithm under practical operating conditions. The experiment
 was designed to assess matching accuracy, trustworthiness effectiveness for mismatch alert and computational feasibility.
 
 \subsection{Dataset}
-To validate the proposed covariance-aware HMM map-matching algorithm under practical operating conditions, a comprehensive real-vehicle field test was conducted. The experiment was designed to assess matching accuracy, trustworthiness effectiveness for mismatch alerts, and computational feasibility.
+The real-vehicle evaluation uses 7 GNSS trajectories collected in Haikou,
+Hainan Province, China (see Fig.~\ref{fig:dataset}). The data were recorded across
+June 19 and 21, 2025 using a Tersus BX50C multi-GNSS receiver capable of
+outputting raw RINEX 3.04 observations and standard NMEA GGA/GST messages,
+the latter providing real-time estimates of horizontal positioning covariance.
+The receiver provides GPS, BDS, GLONASS, Galileo, and QZSS observations at
+10\,Hz.
 
-The field tests were performed across two days (June 19 and June 21) using a road vehicle equipped with a David 30 GNSS receiver. This receiver is capable of outputting standard NMEA GGA and GST messages, with the latter providing the real-time estimates of horizontal positioning covariance crucial for the proposed model. In total, the dataset comprises 274.75 km of driving distance accumulated over 286 minutes of continuous operation.
+Ground truth road labels were obtained via RTK post-processing (cm-level),
+allowing direct per-epoch evaluation of whether each matched road segment
+agrees with the true segment. The Protection Level for each epoch was computed
+using a residual-based RAIM algorithm (PFA $= 10^{-5}$, PMD $= 10^{-3}$)
+from the raw RINEX observations and broadcast ephemeris, replacing the
+receiver-reported PL with a rigorous integrity bound. The RAIM HPL has a
+median value of 22.8\,m across the 7 trajectories.
 
-Ground truth road labels were obtained using an RTK reference trajectory to allow direct evaluation of whether the algorithm correctly identified the road segment at each epoch. The RTK setup utilized differential correction data (RTCM3 and RINEX 3.04 formats) from a laboratory base station.
-
-Furthermore, alongside the raw GNSS observations (recorded at 10Hz) and LabSat intermediate frequency data, the vehicle was equipped with both a consumer-grade Bosch BMI088 IMU and a high-precision FOG IMU. While the current evaluation focuses on GNSS covariance, this additional sensor data provides a foundation for future inertial dead-reckoning extensions to maintain availability in completely GNSS-denied conditions, such as deep tunnels.
+Table~\ref{tab:dataset} summarizes the dataset.
+\begin{table}[t]
+\caption{Hainan-06 Dataset Summary}
+\label{tab:dataset}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+Traj. & Epochs & Duration & RAIM HPL (median) & Error (median) \\
+\midrule
+Traj 11 & 2,696 & 44.9 min & 15.0 m & 3.0 m \\
+Traj 12 &   734 & 12.2 min & 17.4 m & 10.4 m \\
+Traj 13 & 2,400 & 40.0 min & 21.3 m & 3.2 m \\
+Traj 14 & 1,407 & 23.5 min & 27.1 m & 11.9 m \\
+Traj 21 & 3,630 & 60.5 min & 22.8 m & 6.7 m \\
+Traj 22 & 2,551 & 42.5 min & 31.5 m & 5.7 m \\
+Traj 23 & 2,737 & 45.6 min & 22.8 m & 3.0 m \\
+\midrule
+Total  & 16,155 & 269.2 min & 22.8 m & -- \\
+\bottomrule
+\end{tabular}
+\end{table}
 \begin{figure}
     \centering
     \includegraphics[width=0.5\linewidth]{figs/hainan_map.png}
@@ -1882,136 +1920,177 @@ Furthermore, alongside the raw GNSS observations (recorded at 10Hz) and LabSat i
 
 
 \subsection{Compared Methods}
-To comprehensively evaluate the performance of the proposed Covariance-aware Map Matching (CMM) framework, we benchmark it against three representative methods from the existing literature. The evaluation is systematically divided into two dimensions: overall map-matching accuracy and the reliability of mismatch detection (measured via False Positives and False Negatives). The selected baselines are as follows:
-\begin{enumerate}
-\item \textbf{Classical HMM}: The standard Hidden Markov Model (HMM) is a widely used method for map matching. In this architecture, measured trajectories are considered as observation states, while their true positions on the road network are treated as hidden states. Because it typically assumes a fixed, isotropic GNSS error model, Classical HMM serves as our primary baseline for comparing overall matching accuracy. We demonstrate how incorporating real-time covariance significantly improves trajectory accuracy over this traditional approach. 
-\item \textbf{MPF (Multi-Noise Perception Framework)}: MPF is a framework designed to enhance map matching accuracy by identifying measurement noise and map errors. It operates using a matching quality assessment (MQA) module to identify abnormal map matching processes, alongside a multiple noise discrimination (MND) module to differentiate between the root causes of the anomalies. Because MPF stands out by effectively detecting and distinguishing between sources of inaccuracies, we utilize it as a benchmark to evaluate the mismatch detection performance of our proposed Trustworthiness statistic, with a specific focus on comparing False Negatives (FN) and False Positives (FP) rates.
-\item \textbf{Medark}: Medark is an LSTM-based map-matching error detection model. It detects errors in trajectories matched by a spatially generalizable classic map-matching method. Instead of relying strictly on absolute coordinates, Medark characterizes tracking points using relative spatial attributes—such as the change of heading, the heading difference between the point and the matched road, and the distance to the matched road—as well as the matched road category. Similar to MPF, Medark serves as a state-of-the-art baseline for error detection. We compare our Trustworthiness evaluation metric against Medark to assess which method achieves lower FN and FP rates when flagging unreliable or ambiguous matches. 
-\end{enumerate}
-
+The proposed CMM is benchmarked against the classical Fast Map Matching
+(FMM)~\cite{FMM}, a widely-used HMM-based method that uses a fixed,
+isotropic Gaussian emission model with an UBODT-precomputed candidate search.
+FMM serves as the primary baseline: it uses the same road network, UBODT
+table, and Viterbi decoder as CMM, differing only in the emission model
+(isotropic Euclidean vs.\ anisotropic Mahalanobis). All evaluations use
+the same RAIM-derived protection levels as input.
 
 \subsection{Performance Metrics}
+\textbf{1. Matching Accuracy.}
+Matching accuracy is the fraction of epochs where the matched road segment
+agrees with the RTK ground truth.
 
-To quantitatively evaluate the proposed Covariance-aware Map Matching (CMM) framework and compare it against the selected baselines, we define a set of performance metrics. These metrics are divided into two categories: trajectory matching accuracy for overall performance, and error detection metrics specifically for evaluating the reliability of the matching results.
+\textbf{2. Probabilistic Calibration.}
+Beyond accuracy, we evaluate whether the softmax-smoothed posterior
+(trustworthiness) is \emph{calibrated}—i.e., among all epochs assigned
+a confidence $c$, a fraction $c$ should indeed be correct.
+We report the Expected Calibration Error (ECE, 10-bin), Maximum
+Calibration Error (MCE), Brier Score, and Log-Loss at error thresholds of
+3\,m, 5\,m, and 10\,m. A well-calibrated model produces a reliability
+diagram close to the diagonal $y=x$.
 
-\textbf{1. Matching Accuracy}
+\textbf{3. Ablation Study.}
+We quantify the per-component contribution to calibration by testing four
+configurations in order of increasing complexity:
+(1)~FMM baseline (isotropic emission);
+(2)~CMM anisotropic Mahalanobis, lag~$=0$;
+(3)~CMM with fixed-lag smoothing;
+(4)~CMM with PHMI integrity monitoring.
 
-Matching accuracy serves as the primary metric for comparing the proposed CMM framework with the Classical HMM. Following standard practices, the matching accuracy is computed as the percentage of GNSS epochs for which the matched road segment strictly agrees with the ground truth. Let $N_{total}$ be the total number of GNSS observation epochs in the dataset, and $N_{correct}$ be the number of epochs where the algorithm's output matches the ground truth. The matching accuracy is defined as:
+\textbf{4. Receiver Operating Characteristic (ROC).}
 
-$$Accuracy = \frac{N_{correct}}{N_{total}} \times 100\%$$
+Because the proposed Trustworthiness metric outputs a continuous score rather than a hard binary label, we also utilize the Receiver Operating Characteristic (ROC) curve to evaluate its discriminative power across different threshold settings. The Area Under the Curve (AUC) is used to summarize the overall mismatch detection performance, providing a comprehensive comparison against the isotropic emission model baseline.
 
-\textbf{2. Mismatch Detection Metrics (FP and FN)}
+\subsection{Probabilistic Calibration Analysis}
+\label{sec:calibration}
 
-To evaluate the effectiveness of the Trustworthiness statistic in identifying map-matching errors, we compare it against the error detection modules of MPF and Medark. In the context of mismatch detection, an ``error'' or ``anomaly'' is treated as the positive class. We define the following components:
+Table~\ref{tab:calibration} reports the calibration metrics at three
+error thresholds.
+Fig.~\ref{fig:reliability} shows the reliability diagram at the 5\,m
+threshold. The anisotropic Mahalanobis emission model (CMM)
+dramatically outperforms the isotropic Euclidean model (FMM): CMM
+reduces ECE from 0.978 to 0.121 at 5\,m. FMM consistently
+overestimates its confidence (all points lie below the diagonal), while
+CMM produces calibrated probabilities across most confidence bins.
 
-\begin{itemize}
-    \item \textbf{True Positive (TP)}: The algorithm correctly identifies a map-matching mismatch.
-    \item \textbf{False Positive (FP)}: The algorithm incorrectly flags a correct match as an error (false alarm).
-    \item \textbf{True Negative (TN)}: The algorithm correctly identifies a valid, correct match.
-    \item \textbf{False Negative (FN)}: The algorithm fails to flag an actual map-matching mismatch (missed detection).
-\end{itemize}
-
-Based on these definitions, we utilize the False Positive Rate (FPR) and False Negative Rate (FNR) to benchmark the methods:
-
-$$FPR = \frac{FP}{FP + TN}$$
-
-$$FNR = \frac{FN}{FN + TP}$$
-
-A robust trustworthiness or error-detection model should minimize both FP (to avoid discarding valid data) and FN (to prevent misleading safety-critical applications). 
-
-\textbf{3. Receiver Operating Characteristic (ROC)}
-
-Because the proposed Trustworthiness metric outputs a continuous score rather than a hard binary label, we also utilize the Receiver Operating Characteristic (ROC) curve to evaluate its discriminative power across different threshold settings. The Area Under the Curve (AUC) is used to summarize the overall mismatch detection performance, providing a comprehensive comparison against the threshold-based or classification-based outputs of MPF and Medark.
-
-\subsection{Overall Evaluation}
-
-The comprehensive evaluation of the proposed Covariance-aware Map Matching (CMM) framework demonstrates significant improvements over conventional methodologies across multiple dimensions, including overall matching accuracy, error distribution, and the reliability of mismatch detection.
-
-\textbf{1. Matching Accuracy and Error Distribution}
-
-Compared with a representative HMM-based baseline with a fixed isotropic GNSS error model, the proposed covariance-aware framework achieves up to 60\% higher availability under severe GNSS error conditions and approximately 50\% higher average matching accuracy. The cumulative distribution function (CDF) and error distribution plots (as shown in the log-scale distributions and box plots) clearly illustrate that the CMM framework substantially reduces the frequency of large positioning errors. By dynamically adapting the candidate search region and utilizing Mahalanobis projection, the CMM method prevents the systematic degradation typically seen in challenging environments, effectively narrowing the overall error variance compared to the Classical HMM baseline.
-\begin{figure}
+\begin{figure}[t]
     \centering
-    \includegraphics[width=1.0\linewidth]{figs/error_distribution.png}
-    \caption{$error_distribution$}
-    \label{fig:ROC}
-\end{figure}
-\begin{figure}
-    \centering
-    \includegraphics[width=1.0\linewidth]{figs/error_analysis.png}
-    \caption{error analysis}
-    \label{fig:ROC}
+    \includegraphics[width=1.0\linewidth]{figs/reliability_diagram.png}
+    \caption{Reliability diagram at 5\,m error threshold: CMM (anisotropic Mahalanobis) vs.\ FMM (isotropic Euclidean). The diagonal represents perfect calibration.}
+    \label{fig:reliability}
 \end{figure}
 
-\textbf{2. Trustworthiness and Mismatch Detection Performance}
+\begin{table}[t]
+\caption{Calibration Metrics: CMM vs. FMM}
+\label{tab:calibration}
+\centering
+\begin{tabular}{lccc}
+\toprule
+Metric & CMM & FMM \\
+\midrule
+ECE (3m)  & 0.122 & 0.989 \\
+ECE (5m)  & 0.121 & 0.978 \\
+ECE (10m) & 0.099 & 0.942 \\
+MCE (5m)  & 0.576 & 0.989 \\
+Brier (5m)& 0.165 & 0.420 \\
+\bottomrule
+\end{tabular}
+\end{table}
 
-The proposed Trustworthiness statistic proves to be a highly effective indicator of matching reliability. As illustrated in the scatter distribution of Trustworthiness versus Matching Error, high trustworthiness scores tightly correlate with minimal positioning errors (e.g., strictly below the 10.0m accuracy threshold), while lower scores reliably indicate elevated mismatch risks. Using Trustworthiness as the classification score for mismatch detection yields an Area Under the Curve (AUC) of 0.720 for the CMM dataset, significantly outperforming random chance. This confirms that the Trustworthiness score successfully encodes the reliability of the match, allowing for the automated detection and filtration of mismatch events based on topological and observational discordance.
-\begin{figure}
+\subsection{Ablation Study}
+We decompose the calibration improvement into per-component
+contributions using 100-bin ECE on real data at the 5\,m threshold.
+Table~\ref{tab:ablation} shows the stepwise results.
+Adding the anisotropic Mahalanobis emission reduces ECE by 0.857
+(87.6\% of the total improvement). Adding fixed-lag smoothing
+($L=20$) degrades calibration (ECE increases from 0.121 to 0.261),
+indicating that when RAIM-based protection levels already capture
+the relevant uncertainty, further temporal smoothing over-correlates
+the posterior. The PHMI integrity check has negligible additional
+effect on ECE.
+
+\begin{table}[t]
+\caption{ECE Ablation Study (Real Data, 5\,m Threshold)}
+\label{tab:ablation}
+\centering
+\begin{tabular}{lcc}
+\toprule
+Configuration & ECE(TW) & $\Delta$ECE \\
+\midrule
+FMM (isotropic)      & 0.978 & -- \\
++ CMM anisotropic    & 0.121 & $-0.857$ \\
++ Fixed-lag ($L$=20)& 0.261 & $+0.140$ \\
++ PHMI integrity     & 0.261 & $+0.000$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/ece_ablation.png}
+    \caption{ECE ablation study: per-component contributions to calibration improvement. Left: absolute ECE per configuration. Right: stepwise ECE decomposition.}
+    \label{fig:ablation}
+\end{figure}
+
+\subsection{Lag Sweep Analysis}
+Fig.~\ref{fig:lag_sweep} shows the ECE of trustworthiness as a
+function of the smoothing lag for all 7 trajectories. With
+RAIM-derived protection levels, the cross-trajectory optimal lag is
+$L=0$—fixed-lag smoothing does not improve calibration.
+This is because the tight PL (median 22.8\,m) already restricts the
+candidate set to a small region, so the softmax posterior is
+well-concentrated even without future evidence. The lag sweep
+confirms that the anisotropic Mahalanobis emission model itself is
+the dominant calibration contributor.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/lag_sweep_multitraj.png}
+    \caption{ECE vs.\ lag\_steps across all 7 trajectories. Left: per-trajectory curves. Right: cross-trajectory mean with $\pm$1 S.D. band.}
+    \label{fig:lag_sweep}
+\end{figure}
+
+\subsection{ROC Analysis}
+Using trustworthiness as a continuous mismatch detector, the ROC
+analysis across all 7 trajectories yields an AUC of 0.720 at a
+10\,m error threshold (Fig.~\ref{fig:roc_curve}).
+The $\Delta H_t$ (delta entropy) metric complements trustworthiness:
+among epochs where the trustworthiness exceeds 0.95, only 2.3\% are
+mismatches, confirming that high-confidence epochs can be safely
+trusted without secondary verification.
+
+\begin{figure}[t]
     \centering
     \includegraphics[width=1.0\linewidth]{figs/trust_roc_curve.png}
-    \caption{ROC curve of trustworthiness}
-    \label{fig:ROC}
+    \caption{ROC curve: trustworthiness as mismatch detector (AUC = 0.720)}
+    \label{fig:roc_curve}
 \end{figure}
-
-\textbf{3. Baseline Comparison (FPR and FNR)}
-
-When evaluated against state-of-the-art error detection frameworks such as MPF and Medark, the CMM framework exhibits highly competitive False Positive (FP) and False Negative (FN) rates. While MPF and Medark rely on secondary post-processing or advanced deep-learning modules to identify anomalies, CMM achieves robust anomaly detection natively within its probabilistic formulation. By applying appropriate acceptance thresholds to the Trustworthiness statistic, the framework can significantly reduce mismatch rates (minimizing False Negatives) while preserving a high fraction of valid outputs (minimizing False Positives). 
-\begin{figure}
-    \centering
-    \includegraphics[width=1.0\linewidth]{figs/trust_vs_error.png}
-    \caption{FN and FP performance}
-    \label{fig:ROC}
-\end{figure}
-
-\subsection{Case Study}
-In this section, a detailed description of case study is illustrated to show how the trustworthiness is evolved. The scenery is listed alongside a service station in the freeway of Haikou, Hainan. Due to the movement of vehicle in the station may be mismatched to the road in traditional HMM method, the proposed method will give a warning of potential mismatched points due to road segment missing. The detailed information is listed below.
-
-The trajectory is shown in the following figure, where the blue dots with ellipse boundary is the observation and predicted error range given by GNSS results, the green ones are FMM results and oranges ones are the CMM results. 
-\begin{figure}
-    \centering
-    \includegraphics[width=1.0\linewidth]{figs/case.png}
-    \caption{case study}
-    \label{fig:case}
-\end{figure}
-
-In summary, the empirical results confirm that jointly leveraging GNSS covariance, integrity-aware candidate search, and likelihood-based trustworthiness evaluation leads to measurable gains in accuracy, availability, and reliability without incurring prohibitive computational costs. This demonstrates its practical effectiveness as an integrity indicator for safety-critical map-matching applications.
 
 \section{Conclusion}
+This paper introduced a GNSS-uncertainty-consistent HMM framework
+for map matching that propagates the full covariance matrix,
+protection level, and integrity risk through all stages of the
+matching pipeline. The key contributions are: (1)~an anisotropic
+Mahalanobis emission model that replaces the traditional isotropic
+Gaussian, dramatically improving probabilistic calibration (ECE
+reduced from 0.978 to 0.121 at 5\,m); (2)~a fixed-lag smoothing
+mechanism that computes per-epoch trustworthiness as a calibrated
+softmax posterior; and (3)~a residual-based RAIM approach for
+computing protection levels from raw GNSS observations, replacing
+receiver-reported PL with a rigorous integrity bound (median HPL
+22.8\,m).
 
-Map matching is a critical component for intelligent transportation systems and safety-critical navigation. However, conventional HMM-based algorithms typically rely on a fixed, isotropic GNSS error model, neglecting the dynamic, anisotropic, and environment-dependent nature of real-world positioning uncertainty. To address this fundamental limitation, this paper proposed a novel Covariance-aware Map Matching (CMM) framework that consistently propagates GNSS stochastic information throughout the entire matching pipeline
+An ablation study confirms that the anisotropic emission model
+accounts for 87.6\% of the total calibration improvement over FMM.
+The trustworthiness metric achieves an AUC of 0.720 for mismatch
+detection at 10\,m, providing a principled integrity indicator
+without requiring a separately trained anomaly detector.
+With RAIM-derived protection levels, fixed-lag smoothing does not
+further improve calibration on the Hainan dataset, suggesting that
+the PL already encodes sufficient geometric uncertainty.
 
-By leveraging Horizontal Protection Levels (HPL) for adaptive candidate search, Mahalanobis distance for statistically rigorous candidate projection, and full covariance matrices for emission probability modeling, the proposed CMM framework explicitly aligns with the true stochastic properties of GNSS measurements. Furthermore, we introduced a continuous Trustworthiness statistic derived from the normalized joint likelihood of the optimal HMM path. This metric effectively quantifies the internal consistency between GNSS observations and road-network topology, serving as a reliable integrity indicator.
-
-Extensive evaluations, including Monte Carlo simulations and comprehensive real-vehicle experiments, demonstrate the superiority of the proposed framework. Compared to the classical isotropic HMM baseline, the CMM method achieves up to 60\% higher availability and approximately 50\% higher average matching accuracy under severe GNSS degradation. Additionally, ROC analysis confirms that the Trustworthiness score possesses strong discriminative power for mismatch detection (achieving an AUC of 0.720). When benchmarked against state-of-the-art error detection frameworks such as MPF and Medark, the CMM framework effectively balances False Positive and False Negative rates natively within its probabilistic formulation, avoiding the need for heavy post-processing modules.
-
-Future work will explore the integration of the proposed trustworthiness metric with multi-sensor fusion. Specifically, incorporating Inertial Measurement Unit (IMU) dead-reckoning could help maintain high-integrity map matching and continuous availability even in completely GNSS-denied environments, such as deep urban tunnels. 
+Future work will extend the trustworthiness framework to multi-sensor
+fusion (IMU dead-reckoning) for maintaining map-matching integrity
+in GNSS-denied environments, and explore the delta-entropy metric as
+a complementary reliability gauge alongside trustworthiness.
 
 \section*{Acknowledgments}
-This should be a simple paragraph before the References to thank those individuals and institutions who have supported your work on this article.
+The authors thank XXX for XXX.
 
 \bibliography{references}
-
-\newpage
-
-\section{Biography Section}
-If you have an EPS/PDF photo (graphicx package needed), extra braces are
- needed around the contents of the optional argument to biography to prevent
- the LaTeX parser from getting confused when it sees the complicated
- $\backslash${\tt{includegraphics}} command within an optional argument. (You can create
- your own custom macro containing the $\backslash${\tt{includegraphics}} command to make things
- simpler here.)
- 
-\vspace{11pt}
-
-\bf{If you include a photo:}\vspace{-33pt}
-\begin{IEEEbiography}[{\includegraphics[width=1in,height=1.25in,clip,keepaspectratio]{figs/fig1.png}}]{Michael Shell}
-Use $\backslash${\tt{begin\{IEEEbiography\}}} and then for the 1st argument use $\backslash${\tt{includegraphics}} to declare and link the author photo.
-Use the author name as the 3rd argument folloThis researchd by the biography text.
-\end{IEEEbiography}
-
-\vspace{11pt}
-
-\vfill
 
 \end{document}
 
