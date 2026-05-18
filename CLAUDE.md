@@ -13,6 +13,7 @@
 
 * **Destructive Commands**: **ABSOLUTELY FORBIDDEN**: Do **NOT** generate scripts or commands containing `rm -rf`, `rm -r`, or unverified recursive deletion on directories.
 * **Cleanup**: If file cleanup is necessary, suggest deleting specific files explicitly (e.g., `rm build/CMakeCache.txt`) or ask the user to perform the cleanup manually.
+* **sudo forbidden**: Do **NOT** use sudo commands, if it's installation, install in the conda env instead.
 
 ### 2. Code & File Management
 
