@@ -26,7 +26,12 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 project(fmm)
 
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE -DBOOST_ALLOW_DEPRECATED_HEADERS -Wno-deprecated-declarations -Wno-nonnull -DBOOST_NO_CONCEPT_CHECKS -fpermissive")
+if(DEFINED ENV{CONDA_PREFIX})
+  set(CMAKE_CXX_FLAGS "-isystem $ENV{CONDA_PREFIX}/include -O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE -DBOOST_ALLOW_DEPRECATED_HEADERS -Wno-deprecated-declarations -Wno-nonnull -DBOOST_NO_CONCEPT_CHECKS -fpermissive")
+  set(CMAKE_C_FLAGS "-isystem $ENV{CONDA_PREFIX}/include -O3")
+else()
+  set(CMAKE_CXX_FLAGS "-O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE -DBOOST_ALLOW_DEPRECATED_HEADERS -Wno-deprecated-declarations -Wno-nonnull -DBOOST_NO_CONCEPT_CHECKS -fpermissive")
+endif()
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/build")
 
@@ -78,8 +83,8 @@ else()
   message(FATAL_ERROR "Boost Not Found!")
 endif (Boost_FOUND)
 
-# Align ABI with conda-provided Boost (built with the old std::string ABI).
-add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=0)
+# Align ABI with conda-provided Boost (conda Boost 1.85 uses new CXX11 ABI).
+add_compile_definitions(_GLIBCXX_USE_CXX11_ABI=1)
 
 # find_library(BOOST_SERIALIZATION_LIBRARY
 #   NAMES boost_serialization)
