@@ -38,6 +38,7 @@
   * 🚨 **NEVER commit directly to `master` or `main`**. All changes, regardless of size, MUST be committed on a **new feature branch** created from the current tracked branch.
   * **Merge**: Merging into `master`/`main` is **ONLY permitted by the author (Donkey.Ning)**. Do not execute `git merge` targeting `master`/`main`.
   * **Auto-commit**: After any file modification (excluding `.gitignore`-covered files), commit all changes on the **current tracking branch** — provided it is NOT `master`/`main`.
+  * **Commit署名**: 禁止在 commit message 中添加 `Co-Authored-By` 或任何 AI 共同作者署名。提交者仅为 Donkey.Ning。
 
 ---
 
