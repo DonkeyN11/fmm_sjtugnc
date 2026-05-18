@@ -4,7 +4,6 @@
 \usepackage{algpseudocode}
 \usepackage{array}
 \usepackage{tikz}
-\usepackage{subcaption}
 \usepackage[caption=false,font=normalsize,labelfont=sf,textfont=sf]{subfig}
 \usepackage{textcomp}
 \usepackage{stfloats}
@@ -300,7 +299,9 @@ states are typically modeled through a distance-consistency prior:
 \end{equation}
 where $d_{\text{road}}$ is the shortest-path distance on the road graph,
 $d_{\text{gnss}}$ is the GNSS-derived displacement between observations
-$z_{i-1}$ and $z_i$, and $\beta$ is a smoothing parameter which makes the sum of the probability equals to $1$. This model
+$z_{i-1}$ and $z_i$, and $\beta$ is a scale parameter controlling how rapidly
+the transition probability decays with increasing discrepancy between
+network and GNSS distances. This model
 favors road paths whose length is consistent with the observed GNSS
 motion, while rejecting topologically infeasible transitions (e.g.,
 driving against one-way restrictions or crossing disconnected links).
@@ -497,7 +498,7 @@ replacing heuristic components with probabilistically grounded counterparts.
 
 \section{GNSS-Consistent HMM and Trustworthiness Evaluation}
 \label{sec:proposed}
-This section presents an enhanced Hidden Markov Model (HMM)–based map-matching formulation called \textbf{Covariance-aware Map Matching using HMM } that incorporates GNSS positioning uncertainty at three levels: candidate search region definition, candidate point generation, and emission probability modeling. A final subsection introduces a trustworthiness statistic derived from the joint likelihood of the optimal HMM path, enabling consistency evaluation between GNSS observations and the road network. For brevity, the proposed method is referred to as \textbf{CMM-HMM} in the remainder of this paper.
+This section presents an enhanced Hidden Markov Model (HMM)–based map-matching formulation called \textbf{Covariance-aware Map Matching using HMM } that incorporates GNSS positioning uncertainty at three levels: candidate search region definition, candidate point generation, and emission probability modeling. A final subsection introduces a trustworthiness statistic derived from the joint likelihood of the optimal HMM path, enabling consistency evaluation between GNSS observations and the road network. For brevity, the proposed method is referred to as \textbf{CMM} in the remainder of this paper.
 
 \subsection{GNSS Stochastic Error model and Protection Level}
 
@@ -1180,34 +1181,40 @@ additional evidence, flagging potentially ambiguous epochs.
 \subsection{Summary of GNSS-Consistent HMM Formulation and Trustworthiness}
 
 \begin{algorithm}[t]
-\caption{CMM-HMM Algorithm.}
+\caption{CMM Map Matching with Fixed-Lag Smoothing and Trustworthiness}
 \label{alg:cmm_hmm}
-\begin{algorithmic}[1] % The [1] enables line numbering
-\State Initialize road network $\mathcal{G}$, GNSS trajectory $Z$, covariance sequence $\mathbf{\Sigma}$, HPL sequence $\mathbf{r}$, and UBODT table $\mathcal{U}$.
-\State Initialize transition trellis $\mathcal{T}$ and candidate sets $\mathcal{C}_{1 \dots N} \leftarrow \varnothing$.
+\begin{algorithmic}[1]
+\State \textbf{Input:} Road network $\mathcal{G}$, trajectory $Z=\{z_i\}_{i=1}^{N}$, covariance $\{\boldsymbol{\Sigma}_i\}_{i=1}^{N}$, HPL $\{r_i\}_{i=1}^{N}$, lag $L$, UBODT $\mathcal{U}$
+\State \textbf{Output:} Optimal path $X^\star$, per-epoch trustworthiness $\{\text{tw}_i\}_{i=1}^{N}$, entropy $\{H_i, \Delta H_i\}_{i=1}^{N}$
+\State Initialize lag buffer $\mathcal{B} \leftarrow \varnothing$, candidate sets $\mathcal{C}_{1 \dots N} \leftarrow \varnothing$
 \For{$i = 1, 2, \dots, N$}
-    \State Define adaptive search region $\Omega_i$ using HPL radius $r_i$ (Eq. 11).
-    \State Query candidate segments $\mathcal{C}_{\mathrm{seg},i} \leftarrow \{ s \in \mathcal{G} : s \cap \Omega_i \neq \varnothing \}$.
-    \If{$\mathcal{C}_{\mathrm{seg},i} = \varnothing$} 
-        \State \textbf{return} Failure (Gap in Coverage)
+    \State Define search region $\Omega_i \leftarrow \{ x \in \mathbb{R}^2 : \|x - z_i\|_2 \le r_i \}$
+    \State $\mathcal{C}_{\mathrm{seg},i} \leftarrow \{ s \in \mathcal{G} : s \cap \Omega_i \neq \varnothing \}$
+    \If{$\mathcal{C}_{\mathrm{seg},i} = \varnothing$}
+        \State Mark epoch as gap; \textbf{continue}
     \EndIf
-    \For{\textbf{each} segment $s_j \in \mathcal{C}_{\mathrm{seg},i}$}
-        \State Compute Mahalanobis projection $x_{i,j}$ minimizing $\mathbf{d}^T \boldsymbol{\Sigma}_i^{-1} \mathbf{d}$ (Eq. 14).
-        \State Calculate covariance-based likelihood $L_{i,j}$ (Eq. 15).
-        \State $\mathcal{C}_{\mathrm{pnt},i} \leftarrow \mathcal{C}_{\mathrm{pnt},i} \cup \{x_{i,j}\}$.
+    \For{\textbf{each} $s_j \in \mathcal{C}_{\mathrm{seg},i}$}
+        \State $x_{i,j} \leftarrow \arg\min_{x \in s_j} (z_i - x)^{\mathrm{T}} \boldsymbol{\Sigma}_i^{-1} (z_i - x)$ \label{alg:ma_proj}
+        \State $\log p(z_i \mid x_{i,j}) \leftarrow -\frac{1}{2}\log(2\pi|\boldsymbol{\Sigma}_i|) - \frac{1}{2}\mathbf{d}_{i,j}^{\mathrm{T}}\boldsymbol{\Sigma}_i^{-1}\mathbf{d}_{i,j}$ \label{alg:emission}
+        \State $\mathcal{C}_{\mathrm{pnt},i} \leftarrow \mathcal{C}_{\mathrm{pnt},i} \cup \{x_{i,j}\}$
     \EndFor
-    \State Normalize emission probabilities $\tilde{p}(z_i | x_{i,j})$ using Eq. (16).
+    \State Compute transition weights $\log t_{a \to b}$ between $\mathcal{C}_{\mathrm{pnt},i-1}$ and $\mathcal{C}_{\mathrm{pnt},i}$
+    \State $\log \alpha_i(b) \leftarrow \log\!\sum_{a}\!\exp(\log\alpha_{i-1}(a)+\log t_{a\to b}) + \log p(z_i\mid s_i^{(b)})$ \label{alg:forward}
+    \State Push $\text{layer}_i = \{\mathcal{C}_{\mathrm{pnt},i}, \log\alpha_i, \log t\}$ to buffer $\mathcal{B}$
+    \If{$|\mathcal{B}| > L$}
+        \State Let $\ell$ be the oldest layer index in $\mathcal{B}$
+        \For{\textbf{each} candidate $j$ at layer $\ell$}
+            \State $\beta_{\ell+L}(j) \leftarrow \max_{\{s_{\ell+1},\dots,s_{\ell+L}\}} \sum_{\tau=\ell+1}^{\ell+L} [\log t_{s_{\tau-1}\to s_\tau} + \log p(z_\tau\mid s_\tau)]$ \label{alg:viterbi_fwd}
+            \State $\text{score}_\ell(j) \leftarrow \log\alpha_\ell(j) + \beta_{\ell+L}(j)$
+        \EndFor
+        \State $p_j \leftarrow \exp(\text{score}_\ell(j)) / \sum_k \exp(\text{score}_\ell(k))$ \quad (softmax)
+        \State $\text{tw}_\ell \leftarrow \max_j p_j$; \quad $H_\ell \leftarrow -\sum_j p_j\log_2 p_j$ \label{alg:trust}
+        \State Pop oldest layer from $\mathcal{B}$
+    \EndIf
 \EndFor
-\State Initialize Viterbi path variables $\delta_1(j) \leftarrow \tilde{p}(z_1 | x_{1,j})$ for all $j$.
-\For{$i = 2, 3, \dots, N$}
-    \For{\textbf{each} candidate $x_{i,k} \in \mathcal{C}_{\mathrm{pnt},i}$}
-        \State Find optimal parent $x^\star_{i-1}$ maximizing $\delta_{i-1}(j) \cdot p(x_{i,k} | x_{i-1,j})$.
-        \State Update path probability $\delta_{i}(k)$ and store backpointer $\psi_{i}(k)$.
-    \EndFor
-\EndFor
-\State Backtrack via $\psi$ to retrieve optimal path $X^\star = \{x_1^\star, \dots, x_N^\star\}$.
-\State Compute Trustworthiness $T \leftarrow \frac{1}{N} \sum_{i=1}^{N} \ln \left( \tilde{p}(z_i | x_i^\star) \cdot p(x_i^\star | x_{i-1}^\star) \right)$ (Eq. 22).
-\State \textbf{return} $X^\star, T$
+\State \textbf{Flush buffer:} repeat smoothing for remaining layers with decreasing effective lag
+\State Backtrack via stored backpointers to retrieve optimal path $X^\star$
+\State \textbf{return} $X^\star$, $\{\text{tw}_i\}_{i=1}^{N}$, $\{H_i, \Delta H_i\}_{i=1}^{N}$
 \end{algorithmic}
 \end{algorithm}
 
@@ -1249,9 +1256,9 @@ normalization and interpretation are required.
 \label{sec:simulation}
 % 一定要带上前面的公式，用公式几生成了什么
 
-This section aims to verify that proposed emission probability and transition probability is accurate in controlled nominal environment, shows priority of CMM to HMM in accuracy as long as availability, and gives illustration on the mechanism of proposed trustworthiness change in different level of road network complexity and observation bias.
+This section aims to verify that the proposed emission and transition probability models are accurate under controlled nominal conditions, demonstrate the advantages of CMM over FMM in both accuracy and availability, and illustrate the mechanism by which the proposed trustworthiness metric varies with road network complexity and observation bias.
 
-Monte-Carlo experiment is carried on the condition of pseudo range standard derivation. By adding a random noise of gaussian model to the distance between synthetic constellation and ground truth, pseudo range is generated and observation of vehicle position can be obtained by weighed least square algorithm. This simulation aims at three aspects:
+Monte Carlo experiments are conducted under the condition of pseudorange standard deviation. By adding Gaussian random noise to the distance between a synthetic constellation and ground truth, pseudorange observations are generated and the vehicle position is obtained via the weighted least-squares algorithm. This simulation aims at three aspects:
 
 \begin{enumerate}
 
@@ -1270,7 +1277,7 @@ Monte-Carlo experiment is carried on the condition of pseudo range standard deri
     % responds to GNSS uncertainty mis-calibration and extreme error conditions,
     % which are commonly encountered in real-world deployments.
 
-    \item \textbf{Accuracy enhancement via adaptive candidate search regions and trustworthiness effectives:} By introducing Mahalanobis-projection in equation \ref{eq:ma_project} and search region from \ref{eq:protection level}, matching results shows less error in CMM compared with HMM. And to evaluate the effectiveness of the proposed trustworthiness metric in discriminating between correct and mismatched map-matching results by ROC curve.
+    \item \textbf{Accuracy enhancement via adaptive candidate search regions and trustworthiness effectiveness:} By introducing Mahalanobis-projection in equation \ref{eq:ma_project} and search region from \ref{eq:protection level}, matching results shows less error in CMM compared with HMM. And to evaluate the effectiveness of the proposed trustworthiness metric in discriminating between correct and mismatched map-matching results by ROC curve.
     % avalibility定性说，不要再标题说，
     % efficiency如果要说，要给出可量化可计算的指标
     % 顺序要调整成trustworthiness在第二点，最后介绍整体的效果。
@@ -1316,10 +1323,9 @@ Monte-Carlo experiment is carried on the condition of pseudo range standard deri
 \subsection{Simulation Environment and Ground-Truth Generation}
 \label{sec:sim_environment}
 
-The ground-truth is generated by randomly picking connected road segments in the traffic network as the trajectories from Hainan, China. Synthetic constellations is constructed to simulate the pseudo range observation by adding a noise from gaussian distribution with given standard derivation, as interpreted in equation \ref{eq:rho_model}.
+Ground-truth trajectories are generated by randomly selecting connected road segments from the Haikou, Hainan road network. Synthetic constellations are constructed to simulate pseudorange observations by adding Gaussian noise with a given standard deviation, as modeled in Eq.~\eqref{eq:rho_model}.
 
-The standard derivation of pseudo range noise is set from 1 to 10 for nominal condition, and 10m to 100m for challenging environment. Trajectories is simulated with a fixed 12m/s velocity for straight motion and linear velocity change in both magnitude and direction for maneuver. Every trajectory has 1000 sample points and every 10 trajectory share the same sigma value. The setup is shown in the table
-\ref{tab:mc_setup}
+The pseudorange noise standard deviation ranges from 1\,m to 10\,m for nominal conditions and 10\,m to 100\,m for challenging environments. Trajectories are simulated with a constant 12\,m/s velocity for straight motion and linear velocity change in both magnitude and direction for maneuvers. Each trajectory contains 1000 sample points, and every 10 trajectories share the same $\sigma$ value. The setup is summarized in Table~\ref{tab:mc_setup}.
 
 \begin{table}[htbp]
 \centering
@@ -1339,7 +1345,6 @@ Traj. 1--100 & $1 \to 10$\,m (Increments of 1\,m per 10 traj.) \\
 Traj. 101--200 & $10 \to 100$\,m (Increments of 10\,m per 10 traj.) \\
 \bottomrule
 \end{tabularx}
-\label{tab:mc_setup}
 \end{table}
 
 % \begin{table}[t]
@@ -2042,13 +2047,14 @@ the dominant calibration contributor.
 \end{figure}
 
 \subsection{ROC Analysis}
-Using trustworthiness as a continuous mismatch detector, the ROC
-analysis across all 7 trajectories yields an AUC of 0.720 at a
+Using trustworthiness as a continuous mismatch detector (where a mismatch is
+defined as the matched road segment differing from the RTK ground truth), the
+ROC analysis across all 7 trajectories yields an AUC of 0.720 at a
 10\,m error threshold (Fig.~\ref{fig:roc_curve}).
 The $\Delta H_t$ (delta entropy) metric complements trustworthiness:
-among epochs where the trustworthiness exceeds 0.95, only 2.3\% are
-mismatches, confirming that high-confidence epochs can be safely
-trusted without secondary verification.
+among epochs where the trustworthiness exceeds 0.95 (under fixed-lag smoothing
+with $L=5$), only 2.3\% are segment mismatches, confirming that high-confidence
+epochs can be safely trusted without secondary verification.
 
 \begin{figure}[t]
     \centering
