@@ -22,9 +22,20 @@ import numpy as np
 import pandas as pd
 
 try:
+    import matplotlib
+    matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 except ImportError as exc:  # pragma: no cover - optional dependency guard
     raise SystemExit("matplotlib is required to run this script.") from exc
+
+DPI = 300
+plt.rcParams.update({
+    "font.size": 8, "axes.labelsize": 9, "axes.titlesize": 10,
+    "legend.fontsize": 7, "xtick.labelsize": 7, "ytick.labelsize": 7,
+    "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight",
+})
+COLOR_COV = "#2166ac"    # CMM / covariance-based (blue)
+COLOR_ISO = "#b2182b"    # FMM / isotropic (red)
 
 try:
     import geopandas as gpd
@@ -255,11 +266,11 @@ def plot_emission_ellipse(
     w95 = 2 * r95 * math.sqrt(eigvals[0])
     h95 = 2 * r95 * math.sqrt(eigvals[1])
     ell95 = _ellipse_points(center, w95, h95, angle, theta)
-    ax.plot(ell95[:, 0], ell95[:, 1], color="tab:blue", lw=2, label="Covariance 95%")
+    ax.plot(ell95[:, 0], ell95[:, 1], color=COLOR_COV, lw=2, label="Covariance 95%")
 
     r_iso = math.sqrt(chi2_95) * sigma_iso
     circle = np.column_stack([center[0] + r_iso * np.cos(theta), center[1] + r_iso * np.sin(theta)])
-    ax.plot(circle[:, 0], circle[:, 1], color="tab:orange", lw=1.8, label="Isotropic 95%")
+    ax.plot(circle[:, 0], circle[:, 1], color=COLOR_ISO, lw=1.8, label="Isotropic 95%")
 
     ax.set_aspect("equal", adjustable="box")
     ax.set_xlabel("X (m)")
@@ -268,7 +279,7 @@ def plot_emission_ellipse(
     ax.legend(loc="upper right")
     output.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(output, dpi=160)
+    fig.savefig(output, dpi=DPI)
     plt.close(fig)
 
 
@@ -323,19 +334,20 @@ def plot_mahalanobis_hist(
     if x_max is not None:
         bins = max(30, min(160, int(round(hist_max * 5))))
 
-    fig, ax = plt.subplots(figsize=(6.5, 4.2))
-    ax.hist(d2_cov, bins=bins, density=True, alpha=hist_alpha, color="tab:blue", label="Covariance-based")
-    ax.hist(d2_iso, bins=bins, density=True, alpha=hist_alpha, color="tab:orange", label="Isotropic")
-    ax.plot(xs, chi_pdf, color="black", lw=2, alpha=fit_alpha, label=r"$\chi^2(2)$ PDF")
+    fig, ax = plt.subplots(figsize=(5.5, 3.5))
+    ax.hist(d2_cov, bins=bins, density=True, alpha=hist_alpha, color=COLOR_COV, label="Covariance-based")
+    ax.hist(d2_iso, bins=bins, density=True, alpha=hist_alpha, color=COLOR_ISO, label="Isotropic")
+    ax.plot(xs, chi_pdf, color="black", lw=1.5, alpha=fit_alpha, label=r"$\chi^2(2)$ PDF")
     ax.set_xlabel(r"Mahalanobis distance$^2$")
     ax.set_ylabel("PDF")
-    ax.set_title("Normalized innovation distribution")
+    ax.set_title("Normalized Innovation Distribution")
     if x_max is not None:
         ax.set_xlim(0.0, x_max)
     ax.legend(loc="upper right")
+    ax.grid(True, alpha=0.3)
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=160)
+    fig.savefig(output, dpi=DPI)
     plt.close(fig)
 
     ks_cov = _ks_stat(d2_cov)
@@ -395,15 +407,16 @@ def plot_consistency_overview(
 
     xs = np.linspace(0.0, hist_max, 400)
     chi_pdf = 0.5 * np.exp(-0.5 * xs)
-    ax_hist.hist(d2_cov, bins=bins, density=True, alpha=hist_alpha, color="tab:blue", label="Covariance-based")
-    ax_hist.hist(d2_iso, bins=bins, density=True, alpha=hist_alpha, color="tab:orange", label="Isotropic")
-    ax_hist.plot(xs, chi_pdf, color="black", lw=2, alpha=fit_alpha, label=r"$\chi^2(2)$ PDF")
+    ax_hist.hist(d2_cov, bins=bins, density=True, alpha=hist_alpha, color=COLOR_COV, label="Covariance-based")
+    ax_hist.hist(d2_iso, bins=bins, density=True, alpha=hist_alpha, color=COLOR_ISO, label="Isotropic")
+    ax_hist.plot(xs, chi_pdf, color="black", lw=1.5, alpha=fit_alpha, label=r"$\chi^2(2)$ PDF")
     ax_hist.set_xlabel(r"Mahalanobis distance$^2$")
     ax_hist.set_ylabel("PDF")
-    ax_hist.set_title("Normalized innovation")
+    ax_hist.set_title("(a) Normalized innovation distribution")
     if x_max is not None:
         ax_hist.set_xlim(0.0, x_max)
     ax_hist.legend(loc="upper right")
+    ax_hist.grid(True, alpha=0.3)
 
     def _pp_plot(ax, samples: np.ndarray, label: str, color: str) -> None:
         sorted_vals = np.sort(samples)
@@ -412,25 +425,27 @@ def plot_consistency_overview(
         theo = np.array([CHI2_2_CDF(x) for x in sorted_vals])
         ax.plot(theo, emp, color=color, lw=2, label=label)
 
-    ax_pp.plot([0, 1], [0, 1], color="0.5", lw=1.2, linestyle="--")
-    _pp_plot(ax_pp, d2_cov, "Covariance-based", "tab:blue")
-    _pp_plot(ax_pp, d2_iso, "Isotropic", "tab:orange")
+    ax_pp.plot([0, 1], [0, 1], color="0.5", lw=1.0, linestyle="--")
+    _pp_plot(ax_pp, d2_cov, "Covariance-based", COLOR_COV)
+    _pp_plot(ax_pp, d2_iso, "Isotropic", COLOR_ISO)
     ax_pp.set_xlabel("Theoretical CDF")
     ax_pp.set_ylabel("Empirical CDF")
-    ax_pp.set_title("P-P plot (chi-square)")
+    ax_pp.set_title("(b) P-P plot (chi-square)")
     ax_pp.legend(loc="lower right")
+    ax_pp.grid(True, alpha=0.3)
 
     if whitened:
         w = np.asarray(whitened, dtype=float)
-        ax_white.scatter(w[:, 0], w[:, 1], s=6, alpha=0.25, color="tab:blue", edgecolors="none")
+        ax_white.scatter(w[:, 0], w[:, 1], s=4, alpha=0.25, color=COLOR_COV, edgecolors="none")
         theta = np.linspace(0, 2 * math.pi, 200)
-        ax_white.plot(np.cos(theta), np.sin(theta), color="black", lw=1.5, label="Unit circle")
-        ax_white.plot(2 * np.cos(theta), 2 * np.sin(theta), color="black", lw=1.0, linestyle="--", label="2σ")
+        ax_white.plot(np.cos(theta), np.sin(theta), color="black", lw=1.2, label="Unit circle")
+        ax_white.plot(2 * np.cos(theta), 2 * np.sin(theta), color="black", lw=0.8, linestyle="--", label="2σ")
         ax_white.set_aspect("equal", adjustable="box")
         ax_white.set_xlabel("Whitened X")
         ax_white.set_ylabel("Whitened Y")
-        ax_white.set_title("Whitened errors")
-        ax_white.legend(loc="upper right", fontsize=8)
+        ax_white.set_title("(c) Whitened errors")
+        ax_white.legend(loc="upper right", fontsize=7)
+        ax_white.grid(True, alpha=0.3)
     else:
         ax_white.axis("off")
 
@@ -440,18 +455,19 @@ def plot_consistency_overview(
     cov_cdf = _rayleigh_cdf(r_grid[:, None], sigma_eq[None, :]).mean(axis=1)
     iso_sigma = float(np.nanmean(sigma_iso))
     iso_cdf = _rayleigh_cdf(r_grid, np.full_like(r_grid, iso_sigma))
-    ax_rad.plot(r_sorted, emp_cdf, color="tab:blue", lw=2, label="MC radial CDF")
-    ax_rad.plot(r_grid, cov_cdf, color="tab:blue", lw=1.5, linestyle="--", label="Rayleigh (cov)")
-    ax_rad.plot(r_grid, iso_cdf, color="tab:orange", lw=1.5, linestyle="--", label="Rayleigh (iso)")
+    ax_rad.step(r_sorted, emp_cdf, color=COLOR_COV, lw=1.2, label="MC radial CDF", where="post")
+    ax_rad.plot(r_grid, cov_cdf, color=COLOR_COV, lw=1.0, linestyle="--", label="Rayleigh (cov)")
+    ax_rad.plot(r_grid, iso_cdf, color=COLOR_ISO, lw=1.0, linestyle="--", label="Rayleigh (iso)")
     ax_rad.set_xlabel(r"$|e|$ (m)")
     ax_rad.set_ylabel("CDF")
-    ax_rad.set_title("Radial error distribution")
-    ax_rad.legend(loc="lower right", fontsize=8)
+    ax_rad.set_title("(d) Radial error distribution")
+    ax_rad.legend(loc="lower right", fontsize=7)
+    ax_rad.grid(True, alpha=0.3)
 
-    fig.suptitle("Consistency overview: Monte Carlo vs LS covariance", y=0.98)
+    fig.suptitle("Consistency Overview: Monte Carlo vs LS Covariance", fontsize=10, fontweight="bold")
     fig.tight_layout(rect=[0, 0, 1, 0.96])
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=160)
+    fig.savefig(output, dpi=DPI)
     plt.close(fig)
 
 
@@ -507,16 +523,16 @@ def plot_direction_consistency(
         (axes[0], along, along_sig, "Along-road error"),
         (axes[1], cross, cross_sig, "Cross-road error"),
     ]:
-        ax.hist(data, bins=60, density=True, alpha=0.5, color="tab:blue", label="MC (cov)")
+        ax.hist(data, bins=60, density=True, alpha=0.5, color=COLOR_COV, label="MC (cov)")
         xs = np.linspace(np.percentile(data, 1), np.percentile(data, 99), 300)
         cov_sig = float(np.nanmean(sig))
         cov_pdf = (1.0 / (math.sqrt(2 * math.pi) * cov_sig)) * np.exp(-0.5 * (xs / cov_sig) ** 2)
-        ax.plot(xs, cov_pdf, color="tab:blue", lw=1.8, linestyle="--", label="N(0, σ_cov)")
+        ax.plot(xs, cov_pdf, color=COLOR_COV, lw=1.8, linestyle="--", label="N(0, σ_cov)")
         if math.isfinite(sigma_iso):
             iso_pdf = (1.0 / (math.sqrt(2 * math.pi) * sigma_iso)) * np.exp(
                 -0.5 * (xs / sigma_iso) ** 2
             )
-            ax.plot(xs, iso_pdf, color="tab:orange", lw=1.8, linestyle="--", label="N(0, σ_iso)")
+            ax.plot(xs, iso_pdf, color=COLOR_ISO, lw=1.8, linestyle="--", label="N(0, σ_iso)")
         ax.set_title(title)
         ax.set_xlabel("Meters")
         ax.set_ylabel("PDF")
@@ -525,7 +541,7 @@ def plot_direction_consistency(
     fig.suptitle("Direction-aligned error consistency")
     fig.tight_layout(rect=[0, 0, 1, 0.95])
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=160)
+    fig.savefig(output, dpi=DPI)
     plt.close(fig)
 
 
@@ -555,7 +571,7 @@ def plot_margin_cdf(
             cov_margin = cov_margin[np.isfinite(cov_margin)]
             xs = np.sort(cov_margin)
             ys = np.arange(1, xs.size + 1) / xs.size
-            ax.plot(xs, ys, color="tab:blue", lw=2, label="Covariance-based")
+            ax.plot(xs, ys, color=COLOR_COV, lw=2, label="Covariance-based")
     if fmm_df is not None and "n_best_trustworthiness" in fmm_df.columns:
         pairs = _parse_n_best_series(fmm_df["n_best_trustworthiness"])
         if pairs:
@@ -563,7 +579,7 @@ def plot_margin_cdf(
             iso_margin = iso_margin[np.isfinite(iso_margin)]
             xs = np.sort(iso_margin)
             ys = np.arange(1, xs.size + 1) / xs.size
-            ax.plot(xs, ys, color="tab:orange", lw=2, label="Isotropic")
+            ax.plot(xs, ys, color=COLOR_ISO, lw=2, label="Isotropic")
 
     ax.set_xlabel(r"$\Delta L = L_{best} - L_{2nd}$")
     ax.set_ylabel("CDF")
@@ -571,7 +587,7 @@ def plot_margin_cdf(
     ax.legend(loc="lower right")
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=160)
+    fig.savefig(output, dpi=DPI)
     plt.close(fig)
 
     return cov_margin, iso_margin
@@ -611,15 +627,15 @@ def plot_error_vs_pl(
 
     fig, ax = plt.subplots(figsize=(7.0, 4.2))
     ax.plot(err, color="black", lw=1.5, label="Position error")
-    ax.plot(pl_cov, color="tab:blue", lw=2, label="PL (covariance-based)")
-    ax.plot(pl_iso, color="tab:orange", lw=2, label="PL (isotropic)")
+    ax.plot(pl_cov, color=COLOR_COV, lw=2, label="PL (covariance-based)")
+    ax.plot(pl_iso, color=COLOR_ISO, lw=2, label="PL (isotropic)")
     ax.set_xlabel("Sample index")
     ax.set_ylabel("Meters")
     ax.set_title(f"Integrity envelope (traj {traj_id})")
     ax.legend(loc="upper right")
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=160)
+    fig.savefig(output, dpi=DPI)
     plt.close(fig)
 
     pl95_cov = float(np.nanpercentile(pl_cov, 95))
@@ -659,8 +675,8 @@ def plot_summary_metrics(
     fig, ax = plt.subplots(figsize=(6.5, 4.2))
     x = np.arange(len(labels))
     width = 0.35
-    ax.bar(x - width / 2, cov_scores, width, label="Covariance-based", color="tab:blue")
-    ax.bar(x + width / 2, iso_scores, width, label="Isotropic", color="tab:orange")
+    ax.bar(x - width / 2, cov_scores, width, label="Covariance-based", color=COLOR_COV)
+    ax.bar(x + width / 2, iso_scores, width, label="Isotropic", color=COLOR_ISO)
     ax.set_xticks(x)
     ax.set_xticklabels(labels, rotation=15, ha="right")
     ax.set_ylabel("Score (higher is better)")
@@ -668,7 +684,7 @@ def plot_summary_metrics(
     ax.legend(loc="upper right")
     fig.tight_layout()
     output.parent.mkdir(parents=True, exist_ok=True)
-    fig.savefig(output, dpi=160)
+    fig.savefig(output, dpi=DPI)
     plt.close(fig)
 
 

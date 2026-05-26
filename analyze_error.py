@@ -13,10 +13,22 @@ Analyzes:
 import csv
 import re
 import numpy as np
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from pathlib import Path
 from typing import List, Tuple, Dict
 from dataclasses import dataclass
+
+DPI = 300
+COLOR_CMM = "#2166ac"
+COLOR_FMM = "#b2182b"
+COLOR_FILTERED = "#4393c3"
+plt.rcParams.update({
+    "font.size": 8, "axes.labelsize": 9, "axes.titlesize": 10,
+    "legend.fontsize": 7, "xtick.labelsize": 7, "ytick.labelsize": 7,
+    "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight",
+})
 
 
 @dataclass
@@ -184,85 +196,32 @@ def print_statistics(name: str, errors: np.ndarray):
 
 def plot_error_distributions(fmm_errors: np.ndarray, cmm_errors: np.ndarray,
                              cmm_filtered_errors: np.ndarray, output_path: Path):
-    """Plot error distributions for FMM and CMM."""
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    """Plot error CDF comparison for FMM, CMM, and filtered CMM."""
+    fig, ax = plt.subplots(figsize=(5.5, 3.8))
 
-    # 1. Histogram
-    ax = axes[0, 0]
-    bins = np.logspace(np.log10(0.1), np.log10(1000), 50)
-    ax.hist(fmm_errors, bins=bins, alpha=0.6, label='FMM', color='blue', density=True)
-    ax.hist(cmm_errors, bins=bins, alpha=0.6, label='CMM (all)', color='green', density=True)
-    ax.hist(cmm_filtered_errors, bins=bins, alpha=0.6, label='CMM (filtered)', color='red', density=True)
-    ax.set_xscale('log')
-    ax.set_xlabel('Error (m)')
-    ax.set_ylabel('Density')
-    ax.set_title('Error Distribution (Log Scale)')
-    ax.legend()
+    # CDF curves
+    for data, color, label in [
+        (fmm_errors, COLOR_FMM, "FMM (isotropic)"),
+        (cmm_errors, COLOR_CMM, "CMM (all)"),
+        (cmm_filtered_errors, COLOR_FILTERED, "CMM (filtered)"),
+    ]:
+        sorted_vals = np.sort(data)
+        probs = np.arange(1, len(sorted_vals) + 1) / len(sorted_vals)
+        ax.step(sorted_vals, probs, where="post", color=color, linewidth=1.2, label=label)
+
+    ax.set_xlabel("Error (m)")
+    ax.set_ylabel("Cumulative Probability")
+    ax.set_title("Error Cumulative Distribution Function")
+    ax.set_xscale("log")
+    ax.set_xlim(0.1, None)
+    ax.set_ylim(0.0, 1.0)
+    ax.legend(loc="lower right")
     ax.grid(True, alpha=0.3)
 
-    # 2. Cumulative distribution
-    ax = axes[0, 1]
-    sorted_fmm = np.sort(fmm_errors)
-    sorted_cmm = np.sort(cmm_errors)
-    sorted_cmm_filt = np.sort(cmm_filtered_errors)
-
-    ax.plot(sorted_fmm, np.arange(1, len(sorted_fmm) + 1) / len(sorted_fmm),
-            label='FMM', color='blue', linewidth=2)
-    ax.plot(sorted_cmm, np.arange(1, len(sorted_cmm) + 1) / len(sorted_cmm),
-            label='CMM (all)', color='green', linewidth=2)
-    ax.plot(sorted_cmm_filt, np.arange(1, len(sorted_cmm_filt) + 1) / len(sorted_cmm_filt),
-            label='CMM (filtered)', color='red', linewidth=2)
-    ax.set_xlabel('Error (m)')
-    ax.set_ylabel('Cumulative Probability')
-    ax.set_title('Cumulative Distribution Function')
-    ax.legend()
-    ax.grid(True, alpha=0.3)
-    ax.set_xscale('log')
-
-    # 3. Box plot
-    ax = axes[1, 0]
-    data_to_plot = [
-        np.log10(fmm_errors + 0.001),  # Log scale for box plot
-        np.log10(cmm_errors + 0.001),
-        np.log10(cmm_filtered_errors + 0.001)
-    ]
-    bp = ax.boxplot(data_to_plot, tick_labels=['FMM', 'CMM\n(all)', 'CMM\n(filtered)'], patch_artist=True)
-    colors = ['blue', 'green', 'red']
-    for patch, color in zip(bp['boxes'], colors):
-        patch.set_facecolor(color)
-        patch.set_alpha(0.6)
-    ax.set_ylabel('Error (log10 m)')
-    ax.set_title('Error Distribution (Box Plot)')
-    ax.grid(True, alpha=0.3, axis='y')
-
-    # 4. Statistics table
-    ax = axes[1, 1]
-    ax.axis('off')
-    stats_data = [
-        ['Method', 'Mean', 'Median', '90th %ile', '95th %ile', '<10m'],
-        ['FMM', f'{np.mean(fmm_errors):.1f}', f'{np.median(fmm_errors):.1f}',
-         f'{np.percentile(fmm_errors, 90):.1f}', f'{np.percentile(fmm_errors, 95):.1f}',
-         f'{100*np.sum(fmm_errors<10)/len(fmm_errors):.1f}%'],
-        ['CMM (all)', f'{np.mean(cmm_errors):.1f}', f'{np.median(cmm_errors):.1f}',
-         f'{np.percentile(cmm_errors, 90):.1f}', f'{np.percentile(cmm_errors, 95):.1f}',
-         f'{100*np.sum(cmm_errors<10)/len(cmm_errors):.1f}%'],
-        ['CMM (filtered)', f'{np.mean(cmm_filtered_errors):.1f}', f'{np.median(cmm_filtered_errors):.1f}',
-         f'{np.percentile(cmm_filtered_errors, 90):.1f}', f'{np.percentile(cmm_filtered_errors, 95):.1f}',
-         f'{100*np.sum(cmm_filtered_errors<10)/len(cmm_filtered_errors):.1f}%'],
-    ]
-    table = ax.table(cellText=stats_data, cellLoc='center', loc='center',
-                     colWidths=[0.2, 0.15, 0.15, 0.15, 0.15, 0.15])
-    table.auto_set_font_size(False)
-    table.set_fontsize(10)
-    table.scale(1, 2)
-    # Style header row
-    for i in range(6):
-        table[(0, i)].set_facecolor('#4CAF50')
-        table[(0, i)].set_text_props(weight='bold', color='white')
-
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
-    print(f"\nError distribution plot saved to: {output_path}")
+    fig.tight_layout()
+    plt.savefig(output_path, dpi=DPI)
+    print(f"Error CDF saved to: {output_path}")
+    plt.close(fig)
 
 
 def plot_roc_curve(cmm_results: List[Dict], output_path: Path, threshold_m: float = 10.0):
@@ -325,30 +284,30 @@ def plot_roc_curve(cmm_results: List[Dict], output_path: Path, threshold_m: floa
         thresholds.append(i)
 
     # Plot ROC curve
-    fig, ax = plt.subplots(figsize=(10, 8))
+    fig, ax = plt.subplots(figsize=(4.5, 3.8))
 
-    ax.plot(fpr_list, tpr_list, 'b-', linewidth=2, label='CMM ROC Curve')
-    ax.plot([0, 1], [0, 1], 'r--', linewidth=1, label='Random Classifier')
-
-    # Fill area under curve
-    ax.fill_between(fpr_list, tpr_list, alpha=0.3)
-
-    ax.set_xlabel('False Positive Rate (FPR)', fontsize=12)
-    ax.set_ylabel('True Positive Rate (TPR / Recall)', fontsize=12)
-    ax.set_title(f'CMM ROC Curve (Correct = Error < {threshold_m}m)\nSorted by Trustworthiness → Emission Probability',
-                fontsize=14)
-    ax.legend(fontsize=11)
-    ax.grid(True, alpha=0.3)
-    ax.set_xlim([0, 1])
-    ax.set_ylim([0, 1])
+    ax.plot(fpr_list, tpr_list, color=COLOR_CMM, linewidth=1.5, label="CMM (trustworthiness)")
 
     # Calculate AUC
     auc = np.trapezoid(tpr_list, fpr_list)
-    ax.text(0.6, 0.2, f'AUC = {auc:.4f}', fontsize=12,
-            bbox=dict(boxstyle='round', facecolor='wheat', alpha=0.5))
+    ax.plot([0, 1], [0, 1], "k--", linewidth=0.8, label=f"Random (AUC=0.500)")
 
-    plt.tight_layout()
-    plt.savefig(output_path, dpi=150, bbox_inches='tight')
+    ax.fill_between(fpr_list, tpr_list, alpha=0.12, color=COLOR_CMM)
+
+    ax.set_xlabel("False Positive Rate (FPR)")
+    ax.set_ylabel("True Positive Rate (TPR)")
+    ax.set_title(f"ROC Curve (error threshold = {threshold_m:.0f} m)")
+    ax.legend(loc="lower right")
+    ax.grid(True, alpha=0.3)
+    ax.set_xlim([0, 1])
+    ax.set_ylim([0, 1])
+    ax.set_aspect("equal")
+
+    ax.text(0.57, 0.18, f"AUC = {auc:.4f}", fontsize=8,
+            bbox=dict(boxstyle="round,pad=0.35", facecolor="white", alpha=0.85, edgecolor="0.7"))
+
+    fig.tight_layout()
+    plt.savefig(output_path, dpi=DPI)
     print(f"ROC curve saved to: {output_path}")
     print(f"AUC: {auc:.4f}")
 
@@ -365,9 +324,11 @@ def main():
     fmm_results_path = Path('dataset-hainan-06/mr/fmm_results_filtered.csv')
     gt_points_path = Path('dataset-hainan-06/cmm_input_points.csv')
 
-    # Output paths
-    plot_output = Path('dataset-hainan-06/mr/error_analysis.png')
-    roc_output = Path('dataset-hainan-06/mr/roc_curve.png')
+    # Output paths — save to paper's figs/ directory
+    figs_dir = Path("docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs")
+    figs_dir.mkdir(parents=True, exist_ok=True)
+    error_cdf_output = figs_dir / 'error_cdf_hist.png'
+    roc_output = figs_dir / 'ROC.png'
 
     print("Loading data...")
     cmm_results = load_cmm_results(cmm_results_path)
@@ -402,9 +363,9 @@ def main():
     cmm_filtered_errors = calculate_errors(cmm_filtered_pairs)
     print_statistics("CMM (filtered)", cmm_filtered_errors)
 
-    # Plot error distributions
-    print("\nGenerating error distribution plots...")
-    plot_error_distributions(fmm_errors, cmm_errors, cmm_filtered_errors, plot_output)
+    # Plot error CDF
+    print("\nGenerating error CDF...")
+    plot_error_distributions(fmm_errors, cmm_errors, cmm_filtered_errors, error_cdf_output)
 
     # Plot ROC curve
     print("\nGenerating ROC curve...")

@@ -15,10 +15,20 @@ import argparse
 from pathlib import Path
 from typing import Iterable
 
+import matplotlib
+matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import pdb
+
+DPI = 300
+COLOR_HIST = "#2166ac"
+COLOR_FIT = "#b2182b"
+plt.rcParams.update({
+    "font.size": 8, "axes.labelsize": 9, "axes.titlesize": 10,
+    "legend.fontsize": 7, "xtick.labelsize": 7, "ytick.labelsize": 7,
+    "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight",
+})
 
 
 def parse_list(value: str) -> np.ndarray:
@@ -58,7 +68,7 @@ def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=Path("output/sp_eu_abs_diff_hist.png"),
+        default=Path("docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/sp_eu_abs_diff_hist.png"),
         help="Output PNG path",
     )
     parser.add_argument("--bins", type=int, default=100, help="Number of histogram bins")
@@ -109,20 +119,20 @@ def main(argv: list[str] | None = None) -> None:
 
         fit_loc, fit_scale = stats.expon.fit(diffs)
         expon_dist = stats.expon(loc=fit_loc, scale=fit_scale)
-        pdb.set_trace()
     except Exception:
         expon_dist = None
 
-    fig, ax = plt.subplots(figsize=(7, 4))
+    fig, ax = plt.subplots(figsize=(5.5, 3.5))
     counts, bin_edges, _ = ax.hist(
         diffs,
         bins=args.bins,
         range=args.hist_range,
-        color="#4C78A8",
+        color=COLOR_HIST,
         edgecolor="white",
-        alpha=0.7,
+        linewidth=0.3,
+        alpha=0.75,
         density=False,
-        label="Histogram",
+        label="Observed",
     )
 
     x_min = 0.0 if args.hist_range is None else min(args.hist_range)
@@ -136,12 +146,12 @@ def main(argv: list[str] | None = None) -> None:
         pdf_vals[x_vals < fit_loc] = 0.0
     bin_width = float(np.mean(np.diff(bin_edges))) if len(bin_edges) > 1 else 1.0
     pdf_scaled = pdf_vals * diffs.size * bin_width
-    ax.plot(x_vals, pdf_scaled, color="#F58518", linewidth=2.0, label="Exponential fit")
+    ax.plot(x_vals, pdf_scaled, color=COLOR_FIT, linewidth=1.8, label="Exponential fit")
 
-    ax.set_title("Distribution of |sp_dist - eu_dist|")
-    ax.set_xlabel("|sp_dist - eu_dist|")
-    ax.set_ylabel("frequent")
-    ax.grid(axis="y", alpha=0.3)
+    ax.set_title(r"Distribution of $|d_{\mathrm{sp}} - d_{\mathrm{eu}}|$")
+    ax.set_xlabel(r"$|d_{\mathrm{sp}} - d_{\mathrm{eu}}|$")
+    ax.set_ylabel("Frequency")
+    ax.grid(True, alpha=0.3)
     ax.legend(loc="upper right")
 
     summary_text = (
@@ -153,19 +163,20 @@ def main(argv: list[str] | None = None) -> None:
         f"max: {stats_summary['max']:.4f}"
     )
     ax.text(
-        0.98,
-        0.5,
+        0.97,
+        0.55,
         summary_text,
         transform=ax.transAxes,
         ha="right",
         va="center",
-        fontsize=8,
-        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8),
+        fontsize=6.5,
+        family="monospace",
+        bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85, edgecolor="0.7"),
     )
 
     args.output.parent.mkdir(parents=True, exist_ok=True)
     fig.tight_layout()
-    fig.savefig(args.output, dpi=160)
+    fig.savefig(args.output, dpi=DPI)
     plt.close(fig)
     print(f"Saved histogram -> {args.output}")
 
