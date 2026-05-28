@@ -76,5 +76,25 @@ python experiments/scripts/exp3_parameter_sensitivity.py \
 
 ## Experiment setup
 1. **Trajectory Number**: for each set of sigma, at least 10 trajectories is needed and 1000 epochs for each trajectory. When generate the synthesic data, the ground_truth point in lla, the ground_truth road segment in the id/key of .shp should be both included. To analyze the effect of wrongly estimated sigma_rho on the matching results, a special set of data is needed: use the sigma=20m in the RAIM and WLS, but generate a series of psuedorange observation from 10m to 30m, thus the effects of wrong emission model due to over-confidence or over-conservative of sigma_rho on CMM can be obtained. 
-2. **Experiment Objectives**: experiment objectives is listed respectively: exp1 is to valid the model about covariance is correct rather than isotropic emission model; exp2 is to valid the performance of RAIM including its PL results in stanford plot and P_fa, P_ma for the fde part, remember PL is calculated with the fault-free observations-use the sets of pseudorange observation without the ones recognized as fault; exp3 is sensitive analysis of CMM vs. FMM on different sigma_rou and different sample rate-by drop gnss results. exp4 is to analyze the effect of wrong emission model due to wrong sigma_rho on CMM.
+2. **Experiment Objectives**: experiment objectives is listed respectively: exp1 is to valid the model about covariance is correct rather than isotropic emission model; exp2 is to valid the performance of RAIM including its PL results in stanford plot and P_fa, P_ma for the fde part, remember PL is calculated with the fault-free observations-use the sets of pseudorange observation without the ones recognized as fault; exp3 is sensitive analysis of CMM vs. FMM on different sigma_rou and different sample rate by dropping observations of every time interval seconds. exp4 is to analyze the effect of wrong emission model due to wrong sigma_rho on CMM.
+3. **Parameter Settings**: for both CMM and FMM, set the k=16, for CMM, set as follows:
+    <k>16</k>
+    <min_candidates>1</min_candidates>
+    <protection_level_multiplier>3</protection_level_multiplier>
+    <reverse_tolerance>0.0</reverse_tolerance>
+    <normalized>false</normalized>
+    <use_mahalanobis>true</use_mahalanobis>
+    <window_length>100</window_length>
+    <filtered>false</filtered>
+    <max_interval>180.0</max_interval>
+    <trustworthiness_threshold>0.0</trustworthiness_threshold>
+    <phmi>0.00001</phmi>
+    <lag_steps>5</lag_steps>
+    <phmi_pl_multiplier>1</phmi_pl_multiplier>
+    <h0_prior_log_odds>0</h0_prior_log_odds>
+    for fmm, set as follows:
+    <k>16</k>
+    <r>0.03</r>
+    <pf>0</pf>
+    <gps_error>0.001</gps_error>
 
