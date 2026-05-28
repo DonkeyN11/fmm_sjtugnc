@@ -55,14 +55,17 @@ def stanford_single(dataset_path: Path, output_dir: Path) -> dict:
     if merged.empty:
         return {}
 
-    # Compute horizontal error
-    err_x = merged["x"].values - merged["x_truth"].values
-    err_y = merged["y"].values - merged["y_truth"].values
+    # Compute horizontal error (convert degrees → meters)
+    mid_lat = np.radians(np.mean(merged["y_truth"].values))
+    m_per_deg_lon = 111320.0 * np.cos(mid_lat)
+    m_per_deg_lat = 111320.0
+    err_x = (merged["x"].values - merged["x_truth"].values) * m_per_deg_lon
+    err_y = (merged["y"].values - merged["y_truth"].values) * m_per_deg_lat
     errors = np.sqrt(err_x ** 2 + err_y ** 2)
 
-    # Protection level
+    # Protection level (convert degrees → meters)
     if "protection_level" in merged.columns:
-        pl = merged["protection_level"].values.astype(float)
+        pl = merged["protection_level"].values.astype(float) * max(m_per_deg_lon, m_per_deg_lat)
     else:
         pl = np.full_like(errors, np.nan)
 

@@ -87,10 +87,12 @@ def compute_all(dataset_dirs: List[Path], fmm_mr_path: Path | None = None
             obs_sorted = obs.sort_values(["id", "seq"]) if "id" in obs.columns else None
             truth_sorted = truth_pts.sort_values(["id", "seq"])
             if obs_sorted is not None and len(obs_sorted) == len(truth_sorted):
-                errors = np.sqrt(
-                    (obs_sorted["x"].values - truth_sorted["x"].values) ** 2 +
-                    (obs_sorted["y"].values - truth_sorted["y"].values) ** 2
-                )
+                mid_lat = np.radians(np.mean(truth_sorted["y"].values))
+                m_per_deg_lon = 111320.0 * np.cos(mid_lat)
+                m_per_deg_lat = 111320.0
+                dx = (obs_sorted["x"].values - truth_sorted["x"].values) * m_per_deg_lon
+                dy = (obs_sorted["y"].values - truth_sorted["y"].values) * m_per_deg_lat
+                errors = np.sqrt(dx ** 2 + dy ** 2)
             else:
                 errors = np.array([])
         else:
