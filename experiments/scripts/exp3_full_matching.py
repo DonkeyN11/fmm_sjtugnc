@@ -227,6 +227,26 @@ def haversine_deg_to_m(lon1, lat1, lon2, lat2):
     return math.sqrt(dx * dx + dy * dy)
 
 
+def load_reverse_map() -> Dict[str, str]:
+    """Load reverse edge pair mapping."""
+    map_path = Path(__file__).resolve().parents[1] / "config" / "reverse_edge_map.json"
+    if map_path.exists():
+        with open(map_path) as f:
+            return json.load(f)
+    return {}
+
+
+REVERSE_MAP = None  # lazy-loaded
+
+
+def edge_match(matched: str, truth: str) -> bool:
+    """Check if matched edge equals truth edge or its reverse counterpart."""
+    global REVERSE_MAP
+    if REVERSE_MAP is None:
+        REVERSE_MAP = load_reverse_map()
+    return str(matched) == str(truth) or REVERSE_MAP.get(str(matched)) == str(truth)
+
+
 def compute_metrics(data_dir: Path, mr_csv: Path, gt_points: Dict, gt_edges: Dict,
                     label: str) -> Dict:
     """Compute all metrics from match result CSV."""
@@ -262,7 +282,7 @@ def compute_metrics(data_dir: Path, mr_csv: Path, gt_points: Dict, gt_edges: Dic
 
             # Segment accuracy
             if key in gt_edges and cpath:
-                edge_correct.append(str(cpath) == str(gt_edges[key]))
+                edge_correct.append(edge_match(str(cpath), str(gt_edges[key])))
 
     if n_total == 0:
         return {"label": label, "error": "empty", "n": 0}
