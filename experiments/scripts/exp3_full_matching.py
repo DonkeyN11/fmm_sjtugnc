@@ -347,7 +347,8 @@ def compute_roc_auc(labels, scores):
 def plot_metrics(cmm_metrics: List[Dict], fmm_metrics: List[Dict], output_dir: Path):
     """Generate comparison figures."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    sigmas = sorted(set(m["label"] for m in cmm_metrics if "_" not in m["label"]),
+    sigmas = sorted(set(m["label"] for m in cmm_metrics
+                        if "fault" not in m["label"] and "occ" not in m["label"]),
                     key=lambda s: int(s.replace("sigma_", "")))
 
     def get(m_list, s, key, default=0):
@@ -362,36 +363,40 @@ def plot_metrics(cmm_metrics: List[Dict], fmm_metrics: List[Dict], output_dir: P
 
     # (a) Point error vs sigma
     ax1.plot(sigma_vals, [get(cmm_metrics, s, "point_error_mean") for s in sigmas],
-             "o-", color=COLOR_CMM, lw=1.2, ms=4, label="CMM")
+             "o-", color=COLOR_CMM, lw=1.2, ms=5, label="CMM")
     ax1.plot(sigma_vals, [get(fmm_metrics, s, "point_error_mean") for s in sigmas],
-             "s-", color=COLOR_FMM, lw=1.2, ms=4, label="FMM")
+             "s-", color=COLOR_FMM, lw=1.2, ms=5, label="FMM")
     ax1.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax1.set_ylabel("Mean error (m)")
     ax1.set_title("(a) Point Error"); ax1.legend(); ax1.grid(alpha=0.3)
+    ax1.set_xlim(0, 32)
 
     # (b) Segment accuracy
     ax2.plot(sigma_vals, [get(cmm_metrics, s, "seg_accuracy", 0)*100 for s in sigmas],
-             "o-", color=COLOR_CMM, lw=1.2, ms=4)
+             "o-", color=COLOR_CMM, lw=1.2, ms=5)
     ax2.plot(sigma_vals, [get(fmm_metrics, s, "seg_accuracy", 0)*100 for s in sigmas],
-             "s-", color=COLOR_FMM, lw=1.2, ms=4)
+             "s-", color=COLOR_FMM, lw=1.2, ms=5)
     ax2.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax2.set_ylabel("Accuracy (%)")
     ax2.set_title("(b) Segment Accuracy"); ax2.grid(alpha=0.3)
+    ax2.set_xlim(0, 32); ax2.set_ylim(0, 105)
 
     # (c) ECE (trustworthiness)
     ax3.plot(sigma_vals, [get(cmm_metrics, s, "ece_tw") for s in sigmas],
-             "o-", color=COLOR_CMM, lw=1.2, ms=4, label="CMM")
+             "o-", color=COLOR_CMM, lw=1.2, ms=5, label="CMM")
     ax3.plot(sigma_vals, [get(fmm_metrics, s, "ece_tw") for s in sigmas],
-             "s-", color=COLOR_FMM, lw=1.2, ms=4, label="FMM")
+             "s-", color=COLOR_FMM, lw=1.2, ms=5, label="FMM")
     ax3.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax3.set_ylabel("ECE")
     ax3.set_title("(c) ECE (Trustworthiness)"); ax3.legend(); ax3.grid(alpha=0.3)
+    ax3.set_xlim(0, 32); ax3.set_ylim(0, 0.6)
 
     # (d) ROC AUC
     ax4.plot(sigma_vals, [get(cmm_metrics, s, "roc_auc") for s in sigmas],
-             "o-", color=COLOR_CMM, lw=1.2, ms=4)
+             "o-", color=COLOR_CMM, lw=1.2, ms=5)
     ax4.plot(sigma_vals, [get(fmm_metrics, s, "roc_auc") for s in sigmas],
-             "s-", color=COLOR_FMM, lw=1.2, ms=4)
+             "s-", color=COLOR_FMM, lw=1.2, ms=5)
     ax4.axhline(0.5, color="gray", lw=0.8, ls="--")
     ax4.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax4.set_ylabel("AUC")
     ax4.set_title("(d) ROC AUC"); ax4.grid(alpha=0.3)
+    ax4.set_xlim(0, 32); ax4.set_ylim(0.4, 1.0)
 
     # (e) Reliability diagram for sigma=10
     for label, metrics, color in [("CMM", cmm_metrics, COLOR_CMM), ("FMM", fmm_metrics, COLOR_FMM)]:
