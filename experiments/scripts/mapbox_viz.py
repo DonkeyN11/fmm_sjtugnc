@@ -1,23 +1,14 @@
 #!/usr/bin/env python3
 """
-Interactive Mapbox visualization for synthetic experiment results.
+Interactive Mapbox GL viewer for comparing CMM/FMM results in the Hainan dataset.
 
-Visualizes:
-  - Synthetic observations with covariance ellipses (UTM→WGS84 reprojection)
-  - Ground truth path
-  - FDE detection status (color-coded)
-  - Protection Level circles
-  - CMM matching results (if available)
-  - Road network with hover-to-ID
-
-Usage:
-  python experiments/scripts/mapbox_viz.py \
-    --data-dir experiments/data/sigma_30/no_occlusion/with_fault \
-    --cmm-result /tmp/cmm_test/cmm_result.csv \
-    --output experiments/output/mapbox_sigma30_fault.html
+Features:
+  - CMM/FMM Result Visualization
+  - Trajectory ID & Sequence Search
+  - Road Network with Hover-to-ID
+  - Specific Edge Filtering (Top Right)
+  - Coordinate (Lon, Lat) Search & Marker (Bottom Right)
 """
-
-from __future__ import annotations
 
 import argparse
 import csv
@@ -27,64 +18,73 @@ import os
 import subprocess
 from pathlib import Path
 from string import Template
-from typing import Dict, List, Optional, Set, Tuple
+from typing import Dict, Iterable, List, Optional, Tuple, Set
 
 import numpy as np
 
+# Increase CSV field size limit for large candidate lists
 csv.field_size_limit(10 ** 7)
-MAPBOX_TOKEN = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
+
+# Token from environment variable (DO NOT hardcode credentials in source code)
+MAPBOX_DEFAULT_TOKEN = os.environ.get("MAPBOX_ACCESS_TOKEN", "")
 
 Coordinate = Tuple[float, float]
 Bounds = Tuple[float, float, float, float]
 
-# ── Color palette ──────────────────────────────────────────────────────────
-COLOR_OBS = "#17becf"        # Observations (cyan)
-COLOR_FDE_DETECTED = "#e74c3c"  # FDE triggered (red)
-COLOR_FDE_CLEAN = "#2ecc71"     # FDE clean (green)
-COLOR_TRUTH = "#f39c12"         # Ground truth path (orange)
-COLOR_CMM = "#ff7f0e"           # CMM match (orange)
-COLOR_PL = "#9b59b6"            # PL circle (purple)
-COLOR_ROAD = "#888888"          # Road network
-
 
 def parse_geometry(wkt: str) -> List[Coordinate]:
+    """Parse a WKT POINT or LINESTRING into a list of [lon, lat] coordinate pairs."""
     text = (wkt or "").strip().upper()
-    if not text: return []
+    if not text:
+        return []
+    
     if text.startswith("POINT"):
-        open_idx = text.find("("); close_idx = text.rfind(")")
+        open_idx = text.find("(")
+        close_idx = text.rfind(")")
         if open_idx == -1 or close_idx == -1: return []
-        parts = text[open_idx+1:close_idx].strip().split()
+        body = text[open_idx + 1 : close_idx]
+        parts = body.strip().split()
         if len(parts) >= 2:
-            try: return [(float(parts[0]), float(parts[1]))]
-            except ValueError: pass
+            try:
+                return [(float(parts[0]), float(parts[1]))]
+            except ValueError:
+                return []
+    
     if text.startswith("LINESTRING"):
-        open_idx = text.find("("); close_idx = text.rfind(")")
+        open_idx = text.find("(")
+        close_idx = text.rfind(")")
         if open_idx == -1 or close_idx == -1: return []
-        coords = []
-        for token in text[open_idx+1:close_idx].split(","):
+        body = text[open_idx + 1 : close_idx]
+        coords: List[Coordinate] = []
+        for token in body.split(","):
             parts = token.strip().split()
             if len(parts) >= 2:
-                try: coords.append((float(parts[0]), float(parts[1])))
-                except ValueError: pass
+                try:
+                    coords.append((float(parts[0]), float(parts[1])))
+                except ValueError:
+                    continue
         return coords
+    
     return []
 
 
-def reproject_utm_to_wgs84_coords(coords: np.ndarray) -> np.ndarray:
-    """Reproject UTM (EPSG:32649) → WGS84 lon/lat."""
-    import pyproj
-    t = pyproj.Transformer.from_crs("EPSG:32649", "EPSG:4326", always_xy=True)
-    out = np.zeros_like(coords)
-    for i in range(len(coords)):
-        out[i, 0], out[i, 1] = t.transform(coords[i, 0], coords[i, 1])
-    return out
+def to_float(value: Optional[str]) -> Optional[float]:
+    if value is None:
+        return None
+    try:
+        val = float(value)
+        if math.isfinite(val):
+            return val
+    except (TypeError, ValueError):
+        pass
+    return None
 
 
 def initial_bounds() -> Bounds:
     return (math.inf, math.inf, -math.inf, -math.inf)
 
 
-def update_bounds(bounds: Bounds, coords) -> Bounds:
+def update_bounds(bounds: Bounds, coords: Iterable[Coordinate]) -> Bounds:
     min_lon, min_lat, max_lon, max_lat = bounds
     for lon, lat in coords:
         if lon < min_lon: min_lon = lon
@@ -94,290 +94,833 @@ def update_bounds(bounds: Bounds, coords) -> Bounds:
     return min_lon, min_lat, max_lon, max_lat
 
 
-def load_observations(path: Path, bounds: Bounds) -> Tuple[List[Dict], Bounds]:
-    """Load synthetic observations (already in WGS84 lon/lat)."""
-    features = []
-    b = bounds
-    if not path.exists(): return features, b
+def covariance_ellipse(
+    center: Coordinate,
+    sde: float,
+    sdn: float,
+    sdne: float,
+    scale: float = 2.0,
+    segments: int = 64,
+) -> List[Coordinate]:
+    """Return polygon coordinates representing a covariance ellipse in degrees."""
+    lon0, lat0 = center
+    
+    # Covariance matrix in degrees (approx)
+    cov_matrix_deg = np.array([[sde * sde, sdne], [sdne, sdn * sdn]], dtype=float)
+    
+    try:
+        eigenvalues, eigenvectors = np.linalg.eigh(cov_matrix_deg)
+    except np.linalg.LinAlgError:
+        return []
+    
+    eigenvalues = np.maximum(eigenvalues, 0.0)
+    radii = np.sqrt(eigenvalues) * float(scale)
+    transform = eigenvectors @ np.diag(radii)
 
-    with path.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter=";")
+    coords: List[Coordinate] = []
+    for idx in range(segments):
+        angle = 2.0 * math.pi * idx / segments
+        unit = np.array([math.cos(angle), math.sin(angle)])
+        offset = transform @ unit
+        coords.append((lon0 + float(offset[0]), lat0 + float(offset[1])))
+    
+    if coords:
+        coords.append(coords[0])
+    return coords
+
+
+def load_observation_points(path: Path, ids: Set[str], bounds: Bounds) -> Tuple[List[Dict], Bounds]:
+    features: List[Dict] = []
+    updated_bounds = bounds
+    if not path.exists():
+        return features, updated_bounds
+
+    id_counters: Dict[str, int] = {}
+
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
+            traj_id = row.get("id", "").strip()
+            if ids and traj_id not in ids:
+                continue
+            
             try:
-                lon = float(row["x"])  # Already WGS84
+                lon = float(row["x"])
                 lat = float(row["y"])
-            except (KeyError, ValueError): continue
-
-            b = update_bounds(b, [(lon, lat)])
-
-            sde = float(row.get("sde", 0))
-            sdn = float(row.get("sdn", 0))
-            sdne = float(row.get("sdne", 0))
-            fde_detected = row.get("fde_detected", "0") == "1"
-
-            color = COLOR_FDE_DETECTED if fde_detected else COLOR_FDE_CLEAN
+            except (KeyError, ValueError, TypeError):
+                continue
+            
+            seq = id_counters.get(traj_id, 0)
+            id_counters[traj_id] = seq + 1
+                
+            center = (lon, lat)
+            updated_bounds = update_bounds(updated_bounds, [center])
+            
+            sde = to_float(row.get("sde"))
+            sdn = to_float(row.get("sdn"))
+            sdne = to_float(row.get("sdne"))
+            pl = to_float(row.get("protection_level"))
+            
             props = {
-                "id": row.get("id", ""),
+                "id": traj_id,
                 "kind": "observation",
-                "timestamp": row.get("timestamp", ""),
-                "sde": round(sde, 8), "sdn": round(sdn, 8), "sdne": round(sdne, 8),
-                "pl": round(float(row.get("protection_level", 0)), 8),
-                "fde_detected": fde_detected,
-                "fde_excluded": int(row.get("fde_excluded", 0)),
-                "color": color,
+                "seq": seq,
+                "timestamp": row.get("timestamp"),
+                "sde": sde,
+                "sdn": sdn,
+                "sdne": sdne,
+                "pl": pl
             }
+            
             features.append({
                 "type": "Feature",
                 "properties": props,
                 "geometry": {"type": "Point", "coordinates": [lon, lat]}
             })
-
-            # Covariance ellipse (already in degrees)
-            if sde > 0 and sdn > 0:
-                cov_deg = np.array([[sde**2, sdne], [sdne, sdn**2]])
-                try:
-                    eigvals, eigvecs = np.linalg.eigh(cov_deg)
-                    eigvals = np.maximum(eigvals, 0)
-                    radii = np.sqrt(eigvals) * 2.0
-                    T = eigvecs @ np.diag(radii)
-                    ellipse = []
-                    for a in np.linspace(0, 2*np.pi, 65):
-                        off = T @ np.array([math.cos(a), math.sin(a)])
-                        ellipse.append([lon+off[0], lat+off[1]])
-                    ellipse.append(ellipse[0])
+            
+            # Add ellipse if covariance is present
+            if sde is not None and sdn is not None and sdne is not None:
+                ellipse_coords = covariance_ellipse(center, sde, sdn, sdne)
+                if ellipse_coords:
                     features.append({
                         "type": "Feature",
                         "properties": {**props, "kind": "observation_cov"},
-                        "geometry": {"type": "Polygon", "coordinates": [ellipse]}
+                        "geometry": {"type": "Polygon", "coordinates": [ellipse_coords]}
                     })
-                except np.linalg.LinAlgError: pass
+                    
+    return features, updated_bounds
 
-    return features, b
 
+def load_match_results(path: Path, ids: Set[str], kind: str, bounds: Bounds) -> Tuple[List[Dict], Set[str], Bounds]:
+    features: List[Dict] = []
+    used_edges: Set[str] = set()
+    updated_bounds = bounds
+    if not path.exists():
+        return features, used_edges, updated_bounds
 
-def load_ground_truth(path: Path, bounds: Bounds) -> Tuple[List[Dict], Bounds]:
-    """Load ground truth LINESTRING as path polygons."""
-    features = []
-    b = bounds
-    if not path.exists(): return features, b
-
-    with path.open(newline="", encoding="utf-8") as f:
-        reader = csv.DictReader(f, delimiter=";")
+    with path.open(newline="", encoding="utf-8") as csv_file:
+        reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
-            coords_utm = parse_geometry(row.get("geom", ""))
-            if not coords_utm: continue
-            coords_wgs = reproject_utm_to_wgs84_coords(np.array(coords_utm))
-            points_wgs = [[c[0], c[1]] for c in coords_wgs]
-            b = update_bounds(b, points_wgs)
-            features.append({
-                "type": "Feature",
-                "properties": {"id": row["id"], "kind": "ground_truth"},
-                "geometry": {"type": "LineString", "coordinates": points_wgs}
-            })
-    return features, b
-
-
-def load_cmm_results(path: Path, bounds: Bounds) -> Tuple[List[Dict], Bounds]:
-    """Load CMM match result points."""
-    features = []
-    b = bounds
-    if not path.exists(): return features, b
-    with path.open(newline="", encoding="utf-8") as f:
-        for row in csv.DictReader(f, delimiter=";"):
-            coords = parse_geometry(row.get("pgeom", ""))
-            if not coords: continue
+            traj_id = row.get("id", "").strip()
+            if ids and traj_id not in ids:
+                continue
+            
+            pgeom_wkt = row.get("pgeom", "")
+            coords = parse_geometry(pgeom_wkt)
+            if not coords:
+                continue
+            
             lon, lat = coords[0]
-            b = update_bounds(b, [(lon, lat)])
+            updated_bounds = update_bounds(updated_bounds, [coords[0]])
+            
+            cpath = row.get("cpath", "").strip()
+            if cpath:
+                for edge in cpath.split(","):
+                    if edge.strip(): used_edges.add(edge.strip())
+            
             props = {
-                "id": row.get("id", ""), "kind": "cmm_point",
-                "seq": row.get("seq", ""), "cpath": row.get("cpath", ""),
-                "trustworthiness": round(float(row.get("trustworthiness", 0)), 4),
-                "ep": round(float(row.get("ep", 0)), 4),
-                "error": round(float(row.get("error", 0)), 2) if row.get("error") else None,
+                "id": traj_id,
+                "kind": f"{kind}_point",
+                "seq": int(to_float(row.get("seq")) or 0),
+                "timestamp": row.get("timestamp"),
+                "ep": to_float(row.get("ep")),
+                "tp": to_float(row.get("tp")),
+                "trustworthiness": to_float(row.get("trustworthiness")),
+                "error": to_float(row.get("error")),
+                "cpath": cpath
             }
+            
             features.append({
                 "type": "Feature",
                 "properties": props,
                 "geometry": {"type": "Point", "coordinates": [lon, lat]}
             })
-    return features, b
+            
+    return features, used_edges, updated_bounds
 
 
-def load_edges_geojson(shapefile: Path) -> Dict:
-    if not shapefile.exists(): return {"type": "FeatureCollection", "features": []}
-    tmp = "/tmp/edges_exp_viz.json"
-    cmd = ["ogr2ogr", "-f", "GeoJSON", "-sql", "SELECT fid as id, * FROM edges", tmp, str(shapefile)]
+def load_ground_truth_points(path: Path, ids: Set[str], bounds: Bounds) -> Tuple[List[Dict], Bounds]:
+    """Load ground truth as individual point features."""
+    features: List[Dict] = []
+    updated_bounds = bounds
+    if not path.exists():
+        return features, updated_bounds
+
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id", "").strip()
+            if ids and traj_id not in ids:
+                continue
+            try:
+                lon = float(row["x"])
+                lat = float(row["y"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
+            seq_val = int(float(row.get("seq", "0"))) if row.get("seq", "").strip() else 0
+            features.append({
+                "type": "Feature",
+                "properties": {
+                    "id": traj_id, "kind": "truth_point",
+                    "seq": seq_val, "timestamp": row.get("timestamp", ""),
+                },
+                "geometry": {"type": "Point", "coordinates": [lon, lat]}
+            })
+    return features, updated_bounds
+
+
+def load_ground_truth_path(path: Path, ids: Set[str], bounds: Bounds) -> Tuple[List[Dict], Bounds]:
+    """Load ground truth points grouped by trajectory as LineStrings."""
+    features: List[Dict] = []
+    updated_bounds = bounds
+    if not path.exists():
+        return features, updated_bounds
+
+    from collections import defaultdict
+    traj_points: Dict[str, List[Coordinate]] = defaultdict(list)
+
+    with path.open(newline="", encoding="utf-8") as f:
+        reader = csv.DictReader(f, delimiter=";")
+        for row in reader:
+            traj_id = row.get("id", "").strip()
+            if ids and traj_id not in ids:
+                continue
+            try:
+                lon = float(row["x"])
+                lat = float(row["y"])
+            except (KeyError, ValueError, TypeError):
+                continue
+            traj_points[traj_id].append((lon, lat))
+
+    for tid, coords in sorted(traj_points.items()):
+        if len(coords) < 2:
+            continue
+        updated_bounds = update_bounds(updated_bounds, coords)
+        features.append({
+            "type": "Feature",
+            "properties": {"id": tid, "kind": "ground_truth_path"},
+            "geometry": {"type": "LineString", "coordinates": [list(c) for c in coords]}
+        })
+    return features, updated_bounds
+
+
+def load_edges_geojson(shapefile: Path, used_edges: Optional[Set[str]]) -> Dict:
+    """Load road network and return as GeoJSON using ogr2ogr/ogrinfo to filter."""
+    if not shapefile.exists():
+        print(f"Road network not found at {shapefile}")
+        return {"type": "FeatureCollection", "features": []}
+
+    # 安全判断：如果为 None 则说明加载全部路网
+    if used_edges is not None:
+        print(f"Extracting road network for {len(used_edges)} edges...")
+    else:
+        print("Extracting entire road network... (This may take a moment)")
+    
+    # 构建 SQL 查询，这里允许 'fid' 映射为 'id' 供前端识别
+    sql = "SELECT fid as id, * FROM edges"
+    
+    # 只有当 used_edges 存在且不为空时，才添加 WHERE 过滤条件
+    if used_edges:
+        edge_list_str = ",".join(f"'{e}'" for e in used_edges)
+        sql += f" WHERE fid IN ({edge_list_str})"
+
+    temp_json = "/tmp/edges_filtered.json"
+    cmd = [
+        "ogr2ogr", "-f", "GeoJSON", 
+        "-sql", sql,
+        temp_json, str(shapefile)
+    ]
+    
     try:
         subprocess.run(cmd, check=True, capture_output=True)
-        with open(tmp) as f: data = json.load(f)
-        os.remove(tmp)
+        with open(temp_json, 'r') as f:
+            data = json.load(f)
+        os.remove(temp_json)
         return data
     except Exception as e:
-        print(f"  Warning: road network load failed: {e}")
+        print(f"Error loading road network: {e}")
         return {"type": "FeatureCollection", "features": []}
 
 
-def render_html(token: str, bounds: Bounds, obs_geo: Dict, truth_geo: Dict,
-                cmm_geo: Dict, road_geo: Dict, title: str) -> str:
+def render_html(
+    token: str,
+    bounds: Bounds,
+    obs_geojson: Dict,
+    cmm_geojson: Dict,
+    fmm_geojson: Dict,
+    road_geojson: Dict,
+    gt_geojson: Dict = None,
+    ids: List[str] = None
+) -> str:
     bounds_js = json.dumps([[bounds[0], bounds[1]], [bounds[2], bounds[3]]]) if math.isfinite(bounds[0]) else "null"
-
-    tpl = Template("""<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8"/><title>$TITLE</title>
-<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no"/>
+    
+    # 注意：在 Python 的 Template 中，JS 里的 ${var} 必须写成 $${var}，否则会导致 ValueError
+    template = Template("""<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>Hainan Map Match Viewer</title>
+<meta name="viewport" content="initial-scale=1,maximum-scale=1,user-scalable=no" />
 <script src="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.js"></script>
-<link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet"/>
+<link href="https://api.mapbox.com/mapbox-gl-js/v3.2.0/mapbox-gl.css" rel="stylesheet" />
 <style>
-body{margin:0;padding:0}#map{position:absolute;top:0;bottom:0;width:100%}
-#info{position:absolute;top:12px;left:12px;background:rgba(0,0,0,0.85);color:#fff;padding:14px;
-  font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;font-size:13px;
-  border-radius:8px;width:280px;z-index:1;box-shadow:0 4px 12px rgba(0,0,0,0.3)}
-.legend-item{display:flex;align-items:center;margin-bottom:4px}
-.legend-color{width:12px;height:12px;border-radius:50%;margin-right:8px;border:1px solid #fff}
-.style-btn{flex:1;background:#333;color:#999;border:1px solid #555;padding:4px 6px;
-  border-radius:4px;cursor:pointer;font-size:11px;transition:all 0.2s;margin:2px}
-.style-btn.active{background:#3887be;color:#fff;border-color:#3887be}
-.style-btn:hover{background:#444;color:#fff}
-</style></head><body>
+  body { margin: 0; padding: 0; }
+  #map { position: absolute; top: 0; bottom: 0; width: 100%; }
+  #info {
+    position: absolute;
+    top: 12px;
+    left: 12px;
+    background: rgba(0, 0, 0, 0.85);
+    color: #fff;
+    padding: 14px;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    font-size: 13px;
+    border-radius: 8px;
+    width: 300px;
+    z-index: 1;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+  }
+  .legend-item { display: flex; align-items: center; margin-bottom: 6px; }
+  .legend-color { width: 12px; height: 12px; border-radius: 50%; margin-right: 10px; border: 1px solid #fff; }
+  .search-section {
+    margin-top: 15px;
+    padding-top: 15px;
+    border-top: 1px solid #444;
+  }
+  .search-section h4 { margin: 0 0 10px 0; font-size: 14px; color: #eee; }
+  .input-group { display: flex; flex-direction: column; gap: 8px; margin-bottom: 12px; }
+  .input-row { display: flex; align-items: center; justify-content: space-between; }
+  .input-row label { flex: 0 0 60px; color: #bbb; }
+  .input-row input {
+    flex: 1;
+    background: #222;
+    border: 1px solid #444;
+    color: #fff;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+  }
+  .btn-group { display: flex; gap: 8px; }
+  button {
+    flex: 1;
+    background: #444;
+    color: #fff;
+    border: none;
+    padding: 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    transition: background 0.2s;
+  }
+  button:hover { background: #555; }
+  button.primary { background: #3887be; }
+  button.primary:hover { background: #2b6cb0; }
+  .stats { margin-top: 10px; font-size: 11px; color: #888; }
+  .style-toggle-group { display: flex; gap: 6px; margin-top: 10px; padding-top: 10px; border-top: 1px solid #444; }
+  .style-btn { flex: 1; background: #333; color: #999; border: 1px solid #555; padding: 5px 6px; border-radius: 4px; cursor: pointer; font-size: 11px; transition: all 0.2s; }
+  .style-btn:hover { background: #444; color: #fff; }
+  .style-btn.active { background: #3887be; color: #fff; border-color: #3887be; }
+</style>
+</head>
+<body>
 <div id="map"></div>
 <div id="info">
-  <strong style="font-size:16px">$TITLE</strong><br/>
-  <div style="color:#888;margin:8px 0">Experiment Results Viewer</div>
-  <div class="legend-item"><div class="legend-color" style="background:$OBS_COLOR"></div>Observation (FDE clean)</div>
-  <div class="legend-item"><div class="legend-color" style="background:$FDE_COLOR"></div>FDE Triggered</div>
-  <div class="legend-item"><div class="legend-color" style="background:$CMM_COLOR"></div>CMM Matched</div>
-  <div class="legend-item"><div style="width:12px;height:2px;background:#f39c12;margin-right:8px"></div>Ground Truth</div>
-  <div class="legend-item"><div style="width:12px;height:2px;background:#888;margin-right:8px"></div>Road Network</div>
-  <div style="margin-top:8px">
-    <label><input type="checkbox" id="toggle-obs" checked> Observations</label><br/>
-    <label><input type="checkbox" id="toggle-cov" checked> Cov Ellipses</label><br/>
-    <label><input type="checkbox" id="toggle-truth" checked> Ground Truth</label><br/>
-    <label><input type="checkbox" id="toggle-cmm" checked> CMM</label><br/>
-    <label><input type="checkbox" id="toggle-road"> Road Network</label>
+  <strong style="font-size: 16px;">Hainan Map Match</strong><br/>
+  <div style="color: #888; margin-bottom: 12px;">IDs: $IDS_LABEL</div>
+  
+  <div class="legend-item"><div class="legend-color" style="background:#17becf;"></div> Observations</div>
+  <div class="legend-item"><div class="legend-color" style="background:#ff7f0e;"></div> CMM Result</div>
+  <div class="legend-item"><div class="legend-color" style="background:#2ca02c;"></div> FMM Result</div>
+  <div class="legend-item"><div class="legend-color" style="background:#27ae60;"></div> GT Points</div>
+  <div class="legend-item"><div style="width: 12px; height: 3px; background:#2ecc71; margin-right: 10px;"></div> GT Path</div>
+  <div class="legend-item"><div style="width: 12px; height: 3px; background:#888; margin-right: 10px;"></div> Road Network</div>
+  
+  <div style="margin-top:12px; display: flex; flex-direction: column; gap: 4px;">
+    <label><input type="checkbox" id="toggle-obs" checked> Observations</label>
+    <label><input type="checkbox" id="toggle-cmm" checked> CMM</label>
+    <label><input type="checkbox" id="toggle-fmm" checked> FMM</label>
+    <label><input type="checkbox" id="toggle-gtp" checked> GT Points</label>
+    <label><input type="checkbox" id="toggle-gt" checked> GT Path</label>
+    <label><input type="checkbox" id="toggle-road" checked> Road Network</label>
   </div>
-  <div style="margin-top:10px;display:flex;gap:4px">
-    <button class="style-btn active" id="btn-sat">Satellite</button>
+
+  <div class="style-toggle-group">
+    <button class="style-btn active" id="btn-satellite">Satellite</button>
     <button class="style-btn" id="btn-light">Light</button>
   </div>
-</div>
-<script>
-mapboxgl.accessToken='$TOKEN';
-const map=new mapboxgl.Map({container:'map',style:'mapbox://styles/mapbox/satellite-streets-v12',
-  center:[110.4,20],zoom:12,pitch:0});
-const bounds=$BOUNDS;
-const obsGeo=$OBS_GEO;const truthGeo=$TRUTH_GEO;const cmmGeo=$CMM_GEO;const roadGeo=$ROAD_GEO;
-const STYLE_S='mapbox://styles/mapbox/satellite-streets-v12';
-const STYLE_L='mapbox://styles/mapbox/light-v11';
-let currentStyle=STYLE_S;let init=false;
 
-function addLayers(){
-  if(!map.getSource('obs'))map.addSource('obs',{type:'geojson',data:obsGeo});
-  if(!map.getSource('truth'))map.addSource('truth',{type:'geojson',data:truthGeo});
-  if(!map.getSource('cmm'))map.addSource('cmm',{type:'geojson',data:cmmGeo});
-  if(!map.getSource('road'))map.addSource('road',{type:'geojson',data:roadGeo});
-  if(!map.getLayer('road-layer'))map.addLayer({id:'road-layer',type:'line',source:'road',
-    paint:{'line-color':'#888','line-width':['interpolate',['linear'],['zoom'],10,1,16,4],'line-opacity':0.5}});
-  if(!map.getLayer('truth-layer'))map.addLayer({id:'truth-layer',type:'line',source:'truth',
-    paint:{'line-color':'#f39c12','line-width':3,'line-opacity':0.8}});
-  if(!map.getLayer('obs-point'))map.addLayer({id:'obs-point',type:'circle',source:'obs',
-    filter:['==',['get','kind'],'observation'],
-    paint:{'circle-radius':['interpolate',['linear'],['zoom'],10,2.5,16,7],
-      'circle-color':['get','color'],'circle-opacity':0.7,'circle-stroke-width':1,'circle-stroke-color':'#fff'}});
-  if(!map.getLayer('obs-cov'))map.addLayer({id:'obs-cov',type:'fill',source:'obs',
-    filter:['==',['get','kind'],'observation_cov'],
-    paint:{'fill-color':['get','color'],'fill-opacity':0.08}});
-  if(!map.getLayer('cmm-point'))map.addLayer({id:'cmm-point',type:'circle',source:'cmm',
-    paint:{'circle-radius':['interpolate',['linear'],['zoom'],10,3,16,8],
-      'circle-color':'$CMM_COLOR','circle-opacity':0.7,'circle-stroke-width':1.5,'circle-stroke-color':'#fff'}});
-}
-map.on('style.load',()=>{
-  if(!init&&bounds)map.fitBounds(bounds,{padding:50});
-  addLayers();
-  if(init)return;init=true;
-  const popup=new mapboxgl.Popup({closeButton:false,closeOnClick:false});
-  function addPopup(layerId){map.on('mouseenter',layerId,(e)=>{
-    map.getCanvas().style.cursor='pointer';const p=e.features[0].properties;
-    let h=`<strong>$${p.kind||'point'}</strong><br/>`;
-    for(const[k,v]of Object.entries(p)){if(v!=null)h+=`<strong>$${k}:</strong> $${typeof v==='number'&&!Number.isInteger(v)?v.toFixed(4):v}<br/>`;}
-    popup.setLngLat(e.lngLat).setHTML(h).addTo(map);
-  });map.on('mouseleave',layerId,()=>{map.getCanvas().style.cursor='';popup.remove();});}
-  addPopup('obs-point');addPopup('cmm-point');
-  document.getElementById('toggle-obs').addEventListener('change',e=>{
-    map.setLayoutProperty('obs-point','visibility',e.target.checked?'visible':'none');
-    map.setLayoutProperty('obs-cov','visibility',e.target.checked&&document.getElementById('toggle-cov').checked?'visible':'none');
+  <div class="search-section">
+    <h4>Search & Filter</h4>
+    <div class="input-group">
+      <div class="input-row">
+        <label>Traj ID</label>
+        <input type="text" id="search-id" placeholder="e.g. 11">
+      </div>
+      <div class="input-row">
+        <label>Seq</label>
+        <input type="number" id="search-seq" placeholder="e.g. 0">
+      </div>
+    </div>
+    <div class="btn-group">
+      <button class="primary" id="btn-filter">Filter</button>
+      <button id="btn-clear">Clear</button>
+    </div>
+    <div id="filter-stats" class="stats"></div>
+  </div>
+</div>
+
+<div id="filter-panel" style="position: absolute; top: 20px; right: 20px; z-index: 10; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: sans-serif; width: 230px;">
+  <h4 style="margin: 0 0 10px 0;">过滤特定路段</h4>
+  <label style="font-size: 13px; color: #555;">输入 Edge ID (用逗号分隔):</label><br>
+  <input type="text" id="edge-filter-input" placeholder="如: 1234, 5678" style="width: 100%; box-sizing: border-box; padding: 5px; margin-top: 5px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;">
+  <br>
+  <div style="display: flex; gap: 5px;">
+      <button id="btn-apply-filter" style="flex: 1; padding: 5px 15px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 4px;">筛选</button>
+      <button id="btn-clear-filter" style="flex: 1; padding: 5px 15px; cursor: pointer; background: #6c757d; color: white; border: none; border-radius: 4px;">清除</button>
+  </div>
+</div>
+
+<div id="coord-panel" style="position: absolute; bottom: 30px; right: 20px; z-index: 10; background: rgba(255, 255, 255, 0.9); padding: 15px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.3); font-family: sans-serif; width: 230px;">
+  <h4 style="margin: 0 0 10px 0;">坐标定位</h4>
+  <label style="font-size: 13px; color: #555;">输入 经度, 纬度:</label><br>
+  <input type="text" id="coord-input" placeholder="如: 110.444, 19.983" style="width: 100%; box-sizing: border-box; padding: 5px; margin-top: 5px; margin-bottom: 10px; border: 1px solid #ccc; border-radius: 4px;">
+  <br>
+  <div style="display: flex; gap: 5px;">
+    <button id="btn-locate" style="flex: 1; padding: 5px; cursor: pointer; background: #28a745; color: white; border: none; border-radius: 4px;">定位</button>
+    <button id="btn-clear-marker" style="flex: 1; padding: 5px; cursor: pointer; background: #dc3545; color: white; border: none; border-radius: 4px;">清除</button>
+  </div>
+</div>
+
+<script>
+  mapboxgl.accessToken = '$TOKEN';
+  const bounds = $BOUNDS;
+  const obsGeojson = $OBS_GEOJSON;
+  const cmmGeojson = $CMM_GEOJSON;
+  const fmmGeojson = $FMM_GEOJSON;
+  const roadGeojson = $ROAD_GEOJSON;
+  const gtGeojson = $GT_GEOJSON;
+
+  const map = new mapboxgl.Map({
+    container: 'map',
+    style: 'mapbox://styles/mapbox/satellite-streets-v12',
+    center: [110.4, 20.0],
+    zoom: 12,
+    pitch: 45
   });
-  document.getElementById('toggle-cov').addEventListener('change',e=>{
-    map.setLayoutProperty('obs-cov','visibility',e.target.checked&&document.getElementById('toggle-obs').checked?'visible':'none');
+
+  // 用于存放坐标定位的 Marker
+  let locationMarker = null;
+
+  // 图层样式常量
+  const STYLE_SATELLITE = 'mapbox://styles/mapbox/satellite-streets-v12';
+  const STYLE_LIGHT = 'mapbox://styles/mapbox/light-v11';
+  let currentMapStyle = STYLE_SATELLITE;
+  let isMapInitialized = false;
+
+  // 添加数据源和图层（每次切换样式后需重新添加）
+  function addSourcesAndLayers() {
+    // Sources
+    if (!map.getSource('obs')) map.addSource('obs', { type: 'geojson', data: obsGeojson });
+    if (!map.getSource('cmm')) map.addSource('cmm', { type: 'geojson', data: cmmGeojson });
+    if (!map.getSource('fmm')) map.addSource('fmm', { type: 'geojson', data: fmmGeojson });
+    if (!map.getSource('road')) map.addSource('road', { type: 'geojson', data: roadGeojson });
+    if (!map.getSource('gt')) map.addSource('gt', { type: 'geojson', data: gtGeojson });
+
+    // Ground Truth Layers
+    if (!map.getLayer('gt-layer')) {
+      map.addLayer({ id: 'gt-layer', type: 'line', source: 'gt',
+        filter: ['==', ['get', 'kind'], 'ground_truth_path'],
+        paint: { 'line-color': '#2ecc71', 'line-width': 3, 'line-opacity': 0.7 } });
+    }
+    if (!map.getLayer('gtp-layer')) {
+      map.addLayer({ id: 'gtp-layer', type: 'circle', source: 'gt',
+        filter: ['==', ['get', 'kind'], 'truth_point'],
+        paint: { 'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 6],
+                 'circle-color': '#27ae60', 'circle-opacity': 0.6,
+                 'circle-stroke-width': 1, 'circle-stroke-color': '#fff' } });
+    }
+
+    // Road Layers (Bottom)
+    if (!map.getLayer('road-layer')) {
+      map.addLayer({
+        id: 'road-layer',
+        type: 'line',
+        source: 'road',
+        paint: {
+          'line-color': '#888',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 1, 16, 4],
+          'line-opacity': 0.6
+        }
+      });
+    }
+
+    if (!map.getLayer('road-hover')) {
+      map.addLayer({
+        id: 'road-hover',
+        type: 'line',
+        source: 'road',
+        filter: ['==', ['get', 'id'], ''],
+        paint: {
+          'line-color': '#f00',
+          'line-width': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 6],
+          'line-opacity': 0.8
+        }
+      });
+    }
+
+    // Point Layers
+    if (!map.getLayer('obs-layer')) {
+      map.addLayer({
+        id: 'obs-layer',
+        type: 'circle',
+        source: 'obs',
+        filter: ['==', ['get', 'kind'], 'observation'],
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 2, 16, 6],
+          'circle-color': '#17becf',
+          'circle-opacity': 0.6,
+          'circle-stroke-width': 1,
+          'circle-stroke-color': '#fff'
+        }
+      });
+    }
+
+    if (!map.getLayer('obs-cov-layer')) {
+      map.addLayer({
+        id: 'obs-cov-layer',
+        type: 'fill',
+        source: 'obs',
+        filter: ['==', ['get', 'kind'], 'observation_cov'],
+        paint: {
+          'fill-color': '#17becf',
+          'fill-opacity': 0.1
+        }
+      });
+    }
+
+    if (!map.getLayer('cmm-layer')) {
+      map.addLayer({
+        id: 'cmm-layer',
+        type: 'circle',
+        source: 'cmm',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
+          'circle-color': '#ff7f0e',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': '#fff'
+        }
+      });
+    }
+
+    if (!map.getLayer('fmm-layer')) {
+      map.addLayer({
+        id: 'fmm-layer',
+        type: 'circle',
+        source: 'fmm',
+        paint: {
+          'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
+          'circle-color': '#2ca02c',
+          'circle-stroke-width': 1.5,
+          'circle-stroke-color': '#fff'
+        }
+      });
+    }
+  }
+
+  function updateStyleButtons() {
+    const btnSat = document.getElementById('btn-satellite');
+    const btnLight = document.getElementById('btn-light');
+    if (btnSat) btnSat.className = 'style-btn' + (currentMapStyle === STYLE_SATELLITE ? ' active' : '');
+    if (btnLight) btnLight.className = 'style-btn' + (currentMapStyle === STYLE_LIGHT ? ' active' : '');
+  }
+
+  function switchMapStyle(newStyle) {
+    if (currentMapStyle === newStyle) return;
+    currentMapStyle = newStyle;
+    updateStyleButtons();
+    map.setStyle(newStyle);
+  }
+
+  map.on('style.load', () => {
+    if (!isMapInitialized && bounds) map.fitBounds(bounds, { padding: 50 });
+
+    addSourcesAndLayers();
+    updateStyleButtons();
+
+    if (isMapInitialized) return;
+    isMapInitialized = true;
+
+    // ---- 以下为一次性初始化（Popup、Toggle、Filter 等 UI 交互） ----
+
+    // Popups
+    const popup = new mapboxgl.Popup({ closeButton: false, closeOnClick: false });
+
+    // Road Hover
+    map.on('mousemove', 'road-layer', (e) => {
+      if (e.features.length > 0) {
+        const feature = e.features[0];
+        map.setFilter('road-hover', ['==', ['get', 'id'], feature.properties.id]);
+        map.getCanvas().style.cursor = 'pointer';
+
+        popup.setLngLat(e.lngLat)
+          // 使用 $$ 转义防止 Python Template 报错
+          .setHTML(`<strong>Road Edge ID:</strong> $${feature.properties.id}`)
+          .addTo(map);
+      }
+    });
+
+    map.on('mouseleave', 'road-layer', () => {
+      map.setFilter('road-hover', ['==', ['get', 'id'], '']);
+      map.getCanvas().style.cursor = '';
+      popup.remove();
+    });
+
+    function addPopup(layerId) {
+      map.on('mouseenter', layerId, (e) => {
+        map.getCanvas().style.cursor = 'pointer';
+        const props = e.features[0].properties;
+        let content = `<strong>$${props.kind}</strong><br/>`;
+        for (const [key, val] of Object.entries(props)) {
+          if (val !== null && val !== undefined) {
+             let displayVal = (typeof val === 'number' && !Number.isInteger(val)) ? val.toFixed(6) : val;
+             content += `<strong>$${key}:</strong> $${displayVal}<br/>`;
+          }
+        }
+        popup.setLngLat(e.lngLat).setHTML(content).addTo(map);
+      });
+      map.on('mouseleave', layerId, () => {
+        map.getCanvas().style.cursor = '';
+        popup.remove();
+      });
+    }
+
+    addPopup('obs-layer');
+    addPopup('gtp-layer');
+    addPopup('cmm-layer');
+    addPopup('fmm-layer');
+
+    // Toggles
+    document.getElementById('toggle-obs').addEventListener('change', (e) => {
+      const visibility = e.target.checked ? 'visible' : 'none';
+      map.setLayoutProperty('obs-layer', 'visibility', visibility);
+      map.setLayoutProperty('obs-cov-layer', 'visibility', visibility);
+    });
+    document.getElementById('toggle-cmm').addEventListener('change', (e) => {
+      map.setLayoutProperty('cmm-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+    });
+    document.getElementById('toggle-fmm').addEventListener('change', (e) => {
+      map.setLayoutProperty('fmm-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+    });
+    document.getElementById('toggle-gtp').addEventListener('change', (e) => {
+      map.setLayoutProperty('gtp-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+    });
+    document.getElementById('toggle-gt').addEventListener('change', (e) => {
+      map.setLayoutProperty('gt-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+    });
+    document.getElementById('toggle-road').addEventListener('change', (e) => {
+      map.setLayoutProperty('road-layer', 'visibility', e.target.checked ? 'visible' : 'none');
+    });
+
+    // Style toggle button listeners
+    document.getElementById('btn-satellite').addEventListener('click', () => switchMapStyle(STYLE_SATELLITE));
+    document.getElementById('btn-light').addEventListener('click', () => switchMapStyle(STYLE_LIGHT));
+
+    // Filter Logic
+    const searchIdInput = document.getElementById('search-id');
+    const searchSeqInput = document.getElementById('search-seq');
+    const filterStats = document.getElementById('filter-stats');
+
+    function applyFilter() {
+      const idVal = searchIdInput.value.trim();
+      const seqVal = searchSeqInput.value.trim();
+
+      let filter = ['all'];
+      if (idVal) filter.push(['==', ['get', 'id'], idVal]);
+      if (seqVal) filter.push(['==', ['get', 'seq'], parseInt(seqVal)]);
+
+      const obsBaseFilter = ['==', ['get', 'kind'], 'observation'];
+      const obsCovBaseFilter = ['==', ['get', 'kind'], 'observation_cov'];
+      const gtpBaseFilter = ['==', ['get', 'kind'], 'truth_point'];
+
+      map.setFilter('obs-layer', filter.length > 1 ? [...filter, obsBaseFilter] : obsBaseFilter);
+      map.setFilter('obs-cov-layer', filter.length > 1 ? [...filter, obsCovBaseFilter] : obsCovBaseFilter);
+      map.setFilter('gtp-layer', filter.length > 1 ? [...filter, gtpBaseFilter] : gtpBaseFilter);
+      map.setFilter('cmm-layer', filter.length > 1 ? filter : null);
+      map.setFilter('fmm-layer', filter.length > 1 ? filter : null);
+
+      if (idVal || seqVal) {
+        const features = [
+          ...obsGeojson.features,
+          ...gtGeojson.features.filter(f => f.properties.kind === 'truth_point'),
+          ...cmmGeojson.features,
+          ...fmmGeojson.features
+        ].filter(f => {
+          let match = true;
+          if (idVal && f.properties.id !== idVal) match = false;
+          if (seqVal && f.properties.seq !== parseInt(seqVal)) match = false;
+          return match;
+        });
+
+        if (features.length > 0) {
+          const lons = features.map(f => f.geometry.coordinates[0]);
+          const lats = features.map(f => f.geometry.coordinates[1]);
+          const newBounds = [
+            [Math.min(...lons), Math.min(...lats)],
+            [Math.max(...lons), Math.max(...lats)]
+          ];
+          map.fitBounds(newBounds, { padding: 80, maxZoom: 17 });
+          filterStats.innerText = `Found $${features.length} points.`;
+        } else {
+          filterStats.innerText = "No points found.";
+        }
+      } else {
+        filterStats.innerText = "";
+        if (bounds) map.fitBounds(bounds, { padding: 50 });
+      }
+    }
+
+    document.getElementById('btn-filter').addEventListener('click', applyFilter);
+    document.getElementById('btn-clear').addEventListener('click', () => {
+      searchIdInput.value = "";
+      searchSeqInput.value = "";
+      applyFilter();
+    });
+
+    // --- 路由路段筛选逻辑 ---
+    const ROAD_LAYER_ID = 'road-layer';
+    const EDGE_ID_FIELD = 'id';
+
+    document.getElementById('btn-apply-filter').addEventListener('click', function() {
+        const inputText = document.getElementById('edge-filter-input').value;
+        if (!inputText.trim()) {
+            map.setFilter(ROAD_LAYER_ID, null);
+            return;
+        }
+
+        const targetIds = inputText.split(/[,，]/)
+            .map(item => parseInt(item.trim(), 10))
+            .filter(id => !isNaN(id));
+
+        if (targetIds.length > 0) {
+            map.setFilter(ROAD_LAYER_ID, [
+                'in',
+                ['get', EDGE_ID_FIELD],
+                ['literal', targetIds]
+            ]);
+        } else {
+            alert("请输入有效的数字 ID");
+        }
+    });
+
+    document.getElementById('btn-clear-filter').addEventListener('click', function() {
+        document.getElementById('edge-filter-input').value = '';
+        map.setFilter(ROAD_LAYER_ID, null);
+    });
+
+    // --- 新增：经纬度定位逻辑 ---
+    document.getElementById('btn-locate').addEventListener('click', function() {
+        const val = document.getElementById('coord-input').value.trim();
+        if (!val) return;
+
+        // 使用正则匹配中英文逗号
+        const parts = val.split(/[,，]/);
+        if (parts.length >= 2) {
+            const lon = parseFloat(parts[0].trim());
+            const lat = parseFloat(parts[1].trim());
+
+            if (!isNaN(lon) && !isNaN(lat)) {
+                // 如果已经有 marker，先移除
+                if (locationMarker) {
+                    locationMarker.remove();
+                }
+
+                // 添加新的红色 Marker 到地图
+                locationMarker = new mapboxgl.Marker({ color: '#dc3545' })
+                    .setLngLat([lon, lat])
+                    .addTo(map);
+
+                // 将视角平滑飞过去
+                map.flyTo({
+                    center: [lon, lat],
+                    zoom: 17, // 放大层级更适合查看精确点
+                    essential: true
+                });
+            } else {
+                alert('请输入有效的数字坐标！例如: 110.4, 20.0');
+            }
+        } else {
+            alert('请按格式输入：经度, 纬度');
+        }
+    });
+
+    document.getElementById('btn-clear-marker').addEventListener('click', function() {
+        document.getElementById('coord-input').value = '';
+        if (locationMarker) {
+            locationMarker.remove();
+            locationMarker = null;
+        }
+    });
   });
-  document.getElementById('toggle-truth').addEventListener('change',e=>
-    map.setLayoutProperty('truth-layer','visibility',e.target.checked?'visible':'none'));
-  document.getElementById('toggle-cmm').addEventListener('change',e=>
-    map.setLayoutProperty('cmm-point','visibility',e.target.checked?'visible':'none'));
-  document.getElementById('toggle-road').addEventListener('change',e=>
-    map.setLayoutProperty('road-layer','visibility',e.target.checked?'visible':'none'));
-  document.getElementById('btn-sat').addEventListener('click',()=>{currentStyle=STYLE_S;map.setStyle(STYLE_S);
-    document.getElementById('btn-sat').className='style-btn active';document.getElementById('btn-light').className='style-btn';});
-  document.getElementById('btn-light').addEventListener('click',()=>{currentStyle=STYLE_L;map.setStyle(STYLE_L);
-    document.getElementById('btn-light').className='style-btn active';document.getElementById('btn-sat').className='style-btn';});
-});
-</script></body></html>""")
-    return tpl.substitute(TOKEN=token, BOUNDS=bounds_js, TITLE=title,
-                          OBS_GEO=json.dumps(obs_geo), TRUTH_GEO=json.dumps(truth_geo),
-                          CMM_GEO=json.dumps(cmm_geo), ROAD_GEO=json.dumps(road_geo),
-                          OBS_COLOR=COLOR_FDE_CLEAN, FDE_COLOR=COLOR_FDE_DETECTED,
-                          CMM_COLOR=COLOR_CMM)
+</script>
+</body>
+</html>
+""")
+    return template.substitute(
+        TOKEN=token,
+        BOUNDS=bounds_js,
+        OBS_GEOJSON=json.dumps(obs_geojson),
+        CMM_GEOJSON=json.dumps(cmm_geojson),
+        FMM_GEOJSON=json.dumps(fmm_geojson),
+        ROAD_GEOJSON=json.dumps(road_geojson),
+        GT_GEOJSON=json.dumps(gt_geojson or {"type": "FeatureCollection", "features": []}),
+        IDS_LABEL=", ".join(ids) if ids else "All",
+    )
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Experiment Mapbox visualization")
-    parser.add_argument("--data-dir", type=Path, required=True,
-                        help="Dataset directory (e.g., experiments/data/sigma_10/no_occlusion/no_fault)")
-    parser.add_argument("--cmm-result", type=Path, default=None,
-                        help="CMM match result CSV (optional)")
-    parser.add_argument("--edges", type=Path, default=Path("input/map/hainan/edges.shp"))
-    parser.add_argument("--output", type=Path, default=Path("experiments/output/mapbox_viewer.html"))
-    parser.add_argument("--no-road", action="store_true", help="Skip road network (faster)")
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--cmm", default="dataset-hainan-06/mr/cmm_PL=10.csv")
+    parser.add_argument("--fmm", default="dataset-hainan-06/mr/fmm_results_filtered.csv")
+    parser.add_argument("--input", default="dataset-hainan-06/cmm_input_points.csv")
+    parser.add_argument("--edges", default="input/map/hainan/edges.shp")
+    parser.add_argument("--ground-truth", default=None, help="Ground truth points CSV")
+    parser.add_argument("--ids", help="Comma separated trajectory IDs")
+    parser.add_argument("--output", default="python_dataset/pl=10/mapbox_hainan_viewer.html")
     args = parser.parse_args()
 
-    if not MAPBOX_TOKEN:
-        print("WARNING: MAPBOX_ACCESS_TOKEN not set. Set it to render Mapbox tiles.")
-
-    obs_path = args.data_dir / "observations.csv"
-    gt_path = args.data_dir / "ground_truth.csv"
-    if not obs_path.exists():
-        raise SystemExit(f"observations.csv not found in {args.data_dir}")
-
+    selected_ids = set(args.ids.split(",")) if args.ids else set()
     bounds = initial_bounds()
 
-    print("Loading observations...")
-    obs_features, bounds = load_observations(obs_path, bounds)
+    print("Loading observation points...")
+    obs_features, bounds = load_observation_points(Path(args.input), selected_ids, bounds)
 
-    print("Loading ground truth...")
-    truth_features, bounds = load_ground_truth(gt_path, bounds)
+    print("Loading ground truth points...")
+    gtp_features, bounds = load_ground_truth_points(Path(args.ground_truth) if args.ground_truth else Path("."), selected_ids, bounds)
 
-    cmm_features = []
-    if args.cmm_result and args.cmm_result.exists():
-        print("Loading CMM results...")
-        cmm_features, bounds = load_cmm_results(args.cmm_result, bounds)
+    print("Loading ground truth path...")
+    gt_features, bounds = load_ground_truth_path(Path(args.ground_truth) if args.ground_truth else Path("."), selected_ids, bounds)
 
-    road_geo = {"type": "FeatureCollection", "features": []}
-    if not args.no_road:
-        print("Loading road network...")
-        road_geo = load_edges_geojson(args.edges)
+    print("Loading CMM results...")
+    cmm_features, cmm_edges, bounds = load_match_results(Path(args.cmm), selected_ids, "cmm", bounds)
 
-    title = f"Experiment: {args.data_dir.name}"
+    print("Loading FMM results...")
+    fmm_features, fmm_edges, bounds = load_match_results(Path(args.fmm), selected_ids, "fmm", bounds)
 
-    html = render_html(MAPBOX_TOKEN, bounds,
-                       {"type": "FeatureCollection", "features": obs_features},
-                       {"type": "FeatureCollection", "features": truth_features},
-                       {"type": "FeatureCollection", "features": cmm_features},
-                       road_geo, title)
+    # 在这里传入 None，表示提取所有的路网（不根据 matching 结果过滤）
+    road_geojson = load_edges_geojson(Path(args.edges), None)
 
-    args.output.parent.mkdir(parents=True, exist_ok=True)
-    args.output.write_text(html, encoding="utf-8")
-    print(f"\n  Saved: {args.output}")
-    print(f"  Observations: {len(obs_features)} features")
-    print(f"  Open with: firefox {args.output}")
+    obs_geojson = {"type": "FeatureCollection", "features": obs_features}
+    gt_geojson = {"type": "FeatureCollection", "features": gtp_features + gt_features}
+    cmm_geojson = {"type": "FeatureCollection", "features": cmm_features}
+    fmm_geojson = {"type": "FeatureCollection", "features": fmm_features}
+
+    html = render_html(MAPBOX_DEFAULT_TOKEN, bounds, obs_geojson, cmm_geojson, fmm_geojson, road_geojson, gt_geojson, list(selected_ids))
+    
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(html, encoding="utf-8")
+    print(f"Visualization saved to {output_path}")
 
 
 if __name__ == "__main__":
