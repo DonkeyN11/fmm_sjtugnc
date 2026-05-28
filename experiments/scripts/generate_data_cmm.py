@@ -35,7 +35,7 @@ import math
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 from statistics import NormalDist
@@ -92,12 +92,13 @@ class TrajectoryConfig:
     sample_rate_hz: float
     base_epoch: float
     seed: int
-    sigma_pr: float
+    sigma_pr: float                       # Pseudorange noise sigma (m)
     num_sats: int
-    # New fields for occlusion and fault injection
-    occlusion_angle_deg: float = 0.0       # 0 = no occlusion
+    sigma_pr_wls: float = 0.0             # WLS assumed sigma (0 = same as sigma_pr)
+    # Occlusion and fault injection
+    occlusion_angle_deg: float = 0.0
     occlusion_elevation_cutoff: float = 30.0
-    fault_probability: float = 0.0         # 0 = no fault injection
+    fault_probability: float = 0.0
     fault_magnitude_min: float = 100.0
     fault_magnitude_max: float = 500.0
 
@@ -490,19 +491,22 @@ def _inject_fault_into_pseudorange(
 def _wls_position(
     truth_pos: np.ndarray,
     sat_positions: np.ndarray,
-    sigma_pr: float,
-    rng: np.random.Generator,
+    sigma_pr: float,             # Actual pseudorange noise sigma
+    sigma_pr_wls: float = 0.0,   # Assumed sigma for WLS/cov/PL (0 = use sigma_pr)
+    rng: np.random.Generator = None,
     max_iter: int = 8,
     **kwargs,  # fault_probability, fault_magnitude_min, fault_magnitude_max
 ) -> Tuple[np.ndarray, float, np.ndarray, np.ndarray | None, dict]:
-    """WLS positioning with FDE (Fault Detection & Exclusion).
+    """WLS positioning with FDE. PL computed from fault-free observations.
 
-    FDE algorithm:
-      1. Solve WLS with all satellites
-      2. Global test: SSE vs chi2(dof, 1-Pfa) — if SSE < threshold, solution is clean
-      3. If fault detected: local w-test per satellite, exclude max |w_i|
-      4. Re-solve WLS with reduced set, repeat until clean or < 5 satellites
+    sigma_pr: actual pseudorange noise sigma (used for noise generation)
+    sigma_pr_wls: assumed sigma for WLS covariance/PL/FDE (0 = use sigma_pr)
+      When sigma_pr_wls != sigma_pr, the covariance/PL are wrong →
+      over-confident (sigma_pr_wls < sigma_pr) or over-conservative (>).
     """
+    if sigma_pr_wls <= 0.0:
+        sigma_pr_wls = sigma_pr
+
     num_sats = sat_positions.shape[0]
     if num_sats < 4:
         raise ValueError("Need at least 4 satellites for WLS")
@@ -581,7 +585,8 @@ def _wls_position(
             raw_SSE = float(residuals.T @ residuals)
         else:
             raw_SSE = 0.0
-        normalized_SSE = raw_SSE / (sigma_pr ** 2) if sigma_pr > 0 else raw_SSE
+        # Normalize by assumed sigma (for mismatch experiments)
+        normalized_SSE = raw_SSE / (sigma_pr_wls ** 2) if sigma_pr_wls > 0 else raw_SSE
 
         sigma0_sq = raw_SSE / dof if dof > 0 else 1.0
         sigma0 = math.sqrt(max(sigma0_sq, 1e-8))
@@ -608,8 +613,8 @@ def _wls_position(
         for i in range(n_active):
             s_ii = S[i, i]
             if s_ii > 1e-12:
-                # w-test normalization: residual_i / (sigma_pr * sqrt(S_ii))
-                w_scores[i] = abs(residuals[i]) / (sigma_pr * math.sqrt(s_ii))
+                # w-test normalization: residual_i / (sigma_wls * sqrt(S_ii))
+                w_scores[i] = abs(residuals[i]) / (sigma_pr_wls * math.sqrt(s_ii))
 
         worst_local_idx = int(np.argmax(w_scores))
         worst_global_idx = int(active_idx[worst_local_idx])
@@ -617,7 +622,7 @@ def _wls_position(
         fde_iterations += 1
 
     # --- Final result ---
-    cov_full = (sigma_pr ** 2) * Q if Q is not None else np.full((4, 4), np.nan)
+    cov_full = (sigma_pr_wls ** 2) * Q if Q is not None else np.full((4, 4), np.nan)
     cov_xyz = cov_full[:3, :3]
 
     fde_info = {
@@ -795,8 +800,11 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             base_x, base_y, seg_idx = _interpolate_along(chosen_coords, float(dist_m), cumulative, seg_lengths)
             truth_coords.append((base_x, base_y))
             truth_pos = np.array([base_x, base_y, 0.0], dtype=float)
+            sigma_wls = config.sigma_pr_wls if config.sigma_pr_wls > 0 else config.sigma_pr
             est_pos, clock_bias, cov_xyz, H, fault_meta = _wls_position(
-                truth_pos, sat_positions, config.sigma_pr, rng,
+                truth_pos, sat_positions, config.sigma_pr,
+                sigma_pr_wls=sigma_wls,
+                rng=rng,
                 fault_probability=config.fault_probability,
                 fault_magnitude_min=config.fault_magnitude_min,
                 fault_magnitude_max=config.fault_magnitude_max,
@@ -883,6 +891,7 @@ def _make_tasks(
     fault_probability: float = 0.0,
     fault_magnitude_min: float = 100.0,
     fault_magnitude_max: float = 500.0,
+    sigma_pr_wls: float = 0.0,
 ) -> List[TrajectoryConfig]:
     master_rng = np.random.default_rng(seed)
     tasks: List[TrajectoryConfig] = []
@@ -906,6 +915,7 @@ def _make_tasks(
                 fault_probability=fault_probability,
                 fault_magnitude_min=fault_magnitude_min,
                 fault_magnitude_max=fault_magnitude_max,
+                sigma_pr_wls=sigma_pr_wls,
             )
         )
     return tasks
@@ -931,7 +941,12 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
                         help="Minimum step fault magnitude (m).")
     parser.add_argument("--fault-magnitude-max", type=float, default=500.0,
                         help="Maximum step fault magnitude (m).")
-    parser.add_argument("--calib-ratio", type=float, default=0.2, help="Calibration split ratio.")
+    parser.add_argument("--sigma-pr-wls", type=float, default=0.0,
+                        help="Assumed sigma for WLS covariance/PL (0=same as pseudorange sigma).")
+    parser.add_argument("--split", action="store_true", default=False,
+                        help="Split trajectories into calibration/test sets (default: no split).")
+    parser.add_argument("--calib-ratio", type=float, default=0.2,
+                        help="Calibration split ratio (only used with --split).")
     parser.add_argument("--min-sigma-pr", type=float, default=MIN_SIGMA_PR, help="Min PR sigma (m).")
     parser.add_argument("--max-sigma-pr", type=float, default=MAX_SIGMA_PR, help="Max PR sigma (m).")
     parser.add_argument("--output-dir", type=Path, default=Path("python/cmm_data"),
@@ -970,7 +985,7 @@ def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -
     METERS_PER_DEG_LAT = 111320.0
 
     header = [
-        "id", "timestamp", "x", "y",
+        "id", "seq", "timestamp", "x", "y",
         "sde", "sdn", "sdu", "sdne", "sdeu", "sdun", "protection_level",
         "fde_detected", "fde_excluded", "fde_sse", "fde_threshold",
     ]
@@ -1000,6 +1015,7 @@ def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -
                 writer.writerow(
                     [
                         traj.traj_id,
+                        obs.seq,
                         f"{obs.timestamp:.6f}",
                         f"{lon:.8f}",
                         f"{lat:.8f}",
@@ -1071,6 +1087,10 @@ def _write_ground_truth_csv(results: List[TrajectoryResult], destination: Path) 
 
 
 def _write_ground_truth_points(results: List[TrajectoryResult], destination: Path) -> None:
+    """Write per-point ground truth in WGS84 lon/lat to match observations.csv."""
+    import pyproj
+    utm_epsg = 32649
+    transformer = pyproj.Transformer.from_crs(f"EPSG:{utm_epsg}", "EPSG:4326", always_xy=True)
     header = ["id", "seq", "timestamp", "x", "y"]
     destination.parent.mkdir(parents=True, exist_ok=True)
     with destination.open("w", encoding="utf-8", newline="") as fh:
@@ -1078,13 +1098,14 @@ def _write_ground_truth_points(results: List[TrajectoryResult], destination: Pat
         writer.writerow(header)
         for traj in sorted(results, key=lambda item: item.traj_id):
             for seq, (coord, ts) in enumerate(zip(traj.truth_coords, traj.timestamps)):
+                lon, lat = transformer.transform(coord[0], coord[1])
                 writer.writerow(
                     [
                         traj.traj_id,
                         seq,
                         f"{ts:.6f}",
-                        f"{coord[0]:.8f}",
-                        f"{coord[1]:.8f}",
+                        f"{lon:.8f}",
+                        f"{lat:.8f}",
                     ]
                 )
 
@@ -1203,6 +1224,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         fault_probability=args.fault_probability,
         fault_magnitude_min=args.fault_magnitude_min,
         fault_magnitude_max=args.fault_magnitude_max,
+        sigma_pr_wls=args.sigma_pr_wls,
     )
 
     output_dir = args.output_dir.resolve()
@@ -1219,30 +1241,41 @@ def main(argv: Sequence[str] | None = None) -> int:
         ) as executor:
             results = list(executor.map(_generate_single, tasks))
 
-    sigma_to_trajs: Dict[float, List[int]] = {}
-    for traj in results:
-        sigma_to_trajs.setdefault(traj.sigma_pr, []).append(traj.traj_id)
+    # --- Calibration / test split (only when --split is active) ---
     calib_ids: List[int] = []
     test_ids: List[int] = []
-    split_rng = np.random.default_rng(args.seed)
-    for sigma, trajs in sorted(sigma_to_trajs.items(), key=lambda item: item[0]):
-        shuffled = list(trajs)
-        split_rng.shuffle(shuffled)
-        split_idx = max(1, int(len(shuffled) * args.calib_ratio))
-        calib_ids.extend(shuffled[:split_idx])
-        test_ids.extend(shuffled[split_idx:])
-    calib_ids = sorted(set(calib_ids))
-    test_ids = sorted(set(test_ids))
+    if args.split:
+        sigma_to_trajs: Dict[float, List[int]] = {}
+        for traj in results:
+            sigma_to_trajs.setdefault(traj.sigma_pr, []).append(traj.traj_id)
+        split_rng = np.random.default_rng(args.seed)
+        for sigma, trajs in sorted(sigma_to_trajs.items(), key=lambda item: item[0]):
+            shuffled = list(trajs)
+            split_rng.shuffle(shuffled)
+            split_idx = max(1, int(len(shuffled) * args.calib_ratio))
+            calib_ids.extend(shuffled[:split_idx])
+            test_ids.extend(shuffled[split_idx:])
+        calib_ids = sorted(set(calib_ids))
+        test_ids = sorted(set(test_ids))
 
-    _write_observation_csv(results, output_dir / "observations.csv")
-    _write_ground_truth_csv(results, output_dir / "ground_truth.csv")
+    # --- Parallel I/O: write all output files concurrently ---
+    write_tasks = [
+        (_write_observation_csv, results, output_dir / "observations.csv"),
+        (_write_ground_truth_csv, results, output_dir / "ground_truth.csv"),
+        (_write_metadata, results, args, output_dir / "metadata.json"),
+        (_write_cmm_trajectory_csv, results, output_dir / "cmm_trajectory.csv"),
+    ]
     if args.export_points:
-        _write_ground_truth_points(results, output_dir / "ground_truth_points.csv")
-    _write_metadata(results, args, output_dir / "metadata.json")
-    _write_cmm_trajectory_csv(results, output_dir / "cmm_trajectory.csv")
+        write_tasks.append((_write_ground_truth_points, results, output_dir / "ground_truth_points.csv"))
     if args.export_constellation:
-        _write_constellation_csv(results, output_dir / "constellation.csv")
-    _write_split_csvs(calib_ids, test_ids, output_dir)
+        write_tasks.append((_write_constellation_csv, results, output_dir / "constellation.csv"))
+    if args.split:
+        write_tasks.append((_write_split_csvs, calib_ids, test_ids, output_dir))
+
+    with ThreadPoolExecutor(max_workers=len(write_tasks)) as pool:
+        futures = [pool.submit(func, *func_args) for func, *func_args in write_tasks]
+        for future in futures:
+            future.result()  # propagate exceptions from any writer
 
     print(f"Generated {len(results)} trajectories in {output_dir}")
     print("  - observations.csv       (input for `cmm` with --gps_point)")
@@ -1253,6 +1286,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print("  - constellation.csv      (virtual satellite geometry)")
     print("  - metadata.json          (generation summary)")
     print("  - cmm_trajectory.csv     (per-trajectory data for CMMTrajectory)")
+    if args.split:
+        print("  - calibration_trajs.csv  (calibration set)")
+        print("  - test_trajs.csv         (test set)")
     return 0
 
 

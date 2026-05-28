@@ -22,6 +22,7 @@ import argparse
 import subprocess
 import sys
 import json
+from concurrent.futures import Future, ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import List, Dict
 
@@ -31,7 +32,7 @@ GENERATOR = SCRIPT_DIR / "generate_data_cmm.py"
 PROJECT_ROOT = SCRIPT_DIR.parents[1]
 
 
-def run_generation(output_dir: Path, extra_args: List[str], description: str):
+def run_generation(output_dir: Path, extra_args: List[str], description: str, jobs: int = 1):
     """Run generate_data_cmm.py with given args."""
     print(f"\n{'=' * 70}")
     print(f"  {description}")
@@ -41,7 +42,7 @@ def run_generation(output_dir: Path, extra_args: List[str], description: str):
     cmd = [
         sys.executable, str(GENERATOR),
         "--output-dir", str(output_dir),
-        "-j", "1",  # Single process to avoid issues
+        "--jobs", str(jobs),
     ] + extra_args
 
     print(f"  CMD: {' '.join(cmd)}")
@@ -68,6 +69,8 @@ def main():
                         help="Road network shapefile.")
     parser.add_argument("--jobs", type=int, default=8, help="Number of parallel workers.")
     parser.add_argument("--seed", type=int, default=42, help="Master random seed.")
+    parser.add_argument("--split", action="store_true", default=False,
+                        help="Generate calibration/test split files.")
     parser.add_argument("--step", nargs="*", choices=["sigma_levels", "occlusion", "fault",
                         "occlusion_fault", "full_sweep"],
                         default=None,
@@ -86,6 +89,8 @@ def main():
         "--num-sats", "8",
         "--seed", str(args.seed + 1),
     ]
+    if args.split:
+        base_args.append("--split")
 
     steps = args.step or ["sigma_levels", "occlusion", "fault", "occlusion_fault", "full_sweep"]
 
@@ -94,18 +99,35 @@ def main():
     n_traj_per_level = 20
 
     if "sigma_levels" in steps:
-        for sigma in sigma_levels:
-            sigma_dir = base_dir / f"sigma_{sigma:02d}" / "no_occlusion" / "no_fault"
-            desc = f"sigma={sigma}m, count={n_traj_per_level}, no occlusion, no fault"
-
-            success = run_generation(sigma_dir, base_args + [
-                "--min-sigma-pr", str(sigma),
-                "--max-sigma-pr", str(sigma),
-                "--count", str(n_traj_per_level),
-                "--points", "1000",
-            ], desc)
-            if not success:
-                print(f"  WARNING: Generation failed for sigma={sigma}")
+        sigma_jobs = max(1, min(len(sigma_levels), args.jobs))
+        # Each subprocess uses 1 internal worker; parallelism from concurrent subprocesses
+        futures_map: Dict[Future, int] = {}
+        with ThreadPoolExecutor(max_workers=sigma_jobs) as pool:
+            for sigma in sigma_levels:
+                sigma_dir = base_dir / f"sigma_{sigma:02d}" / "no_occlusion" / "no_fault"
+                desc = f"sigma={sigma}m, count={n_traj_per_level}, no occlusion, no fault"
+                future = pool.submit(
+                    run_generation,
+                    sigma_dir,
+                    base_args + [
+                        "--min-sigma-pr", str(sigma),
+                        "--max-sigma-pr", str(sigma),
+                        "--count", str(n_traj_per_level),
+                        "--points", "1000",
+                    ],
+                    desc,
+                    jobs=1,  # internal single-process; concurrency at batch level
+                )
+                futures_map[future] = sigma
+            for future in as_completed(futures_map):
+                sigma = futures_map[future]
+                try:
+                    success = future.result()
+                except Exception as exc:
+                    print(f"  WARNING: Generation failed for sigma={sigma}: {exc}")
+                    continue
+                if not success:
+                    print(f"  WARNING: Generation failed for sigma={sigma}")
 
     # ── Step 2: sigma=30 with occlusion ─────────────────────────────────────
     if "occlusion" in steps:
@@ -117,7 +139,7 @@ def main():
             "--points", "1000",
             "--occlusion-angle", "45",
             "--occlusion-elevation-cutoff", "30",
-        ], "sigma=30m, occlusion=45°, no fault")
+        ], "sigma=30m, occlusion=45°, no fault", jobs=args.jobs)
 
     # ── Step 3: sigma=30 with fault ─────────────────────────────────────────
     if "fault" in steps:
@@ -130,7 +152,7 @@ def main():
             "--fault-probability", "0.3",
             "--fault-magnitude-min", "100",
             "--fault-magnitude-max", "500",
-        ], "sigma=30m, fault P=0.3, magnitude U(100,500)m")
+        ], "sigma=30m, fault P=0.3, magnitude U(100,500)m", jobs=args.jobs)
 
     # ── Step 4: sigma=30 with both occlusion and fault ──────────────────────
     if "occlusion_fault" in steps:
@@ -145,7 +167,7 @@ def main():
             "--fault-probability", "0.3",
             "--fault-magnitude-min", "100",
             "--fault-magnitude-max", "500",
-        ], "sigma=30m, occlusion=45°, fault P=0.3, magnitude U(100,500)m")
+        ], "sigma=30m, occlusion=45°, fault P=0.3, magnitude U(100,500)m", jobs=args.jobs)
 
     # ── Step 5: Full sigma sweep (10 trajs per level) ───────────────────────
     if "full_sweep" in steps:
@@ -156,7 +178,7 @@ def main():
             "--max-sigma-pr", "30",
             "--count", str(n_levels * 10),  # 10 per level
             "--points", "1000",
-        ], "Full sigma sweep 1→30m, 10 trajectories/level")
+        ], "Full sigma sweep 1→30m, 10 trajectories/level", jobs=args.jobs)
 
     # ── Write sweep summary ─────────────────────────────────────────────────
     summary_path = base_dir / "sweep_summary.json"
