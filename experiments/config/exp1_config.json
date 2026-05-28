@@ -1,0 +1,17 @@
+{
+  "experiment": "exp1_covariance_validation",
+  "data_generator": "experiments/scripts/generate_data_cmm.py",
+  "generation_params": {
+    "count": 3,
+    "points": 200,
+    "speed_mps": 12.0,
+    "sample_rate_hz": 1.0,
+    "num_sats": 8,
+    "shapefile": "input/map/hainan/edges.shp",
+    "sigma_levels": [5, 10, 20],
+    "occlusion_angle_deg": 0,
+    "fault_probability": 0,
+    "seed_base": 42
+  },
+  "metrics": ["KS_statistic_cov", "KS_statistic_iso", "chi2_histogram", "PP_plot", "whitened_errors", "rayleigh_CDF"]
+}
