@@ -198,30 +198,36 @@ def load_match_results(path: Path, ids: Set[str], kind: str, bounds: Bounds) -> 
     if not path.exists():
         return features, used_edges, updated_bounds
 
+    # Use monotonic per-trajectory seq instead of file seq (CMM resets at sub-trajectories)
+    id_counters: Dict[str, int] = {}
+
     with path.open(newline="", encoding="utf-8") as csv_file:
         reader = csv.DictReader(csv_file, delimiter=";")
         for row in reader:
             traj_id = row.get("id", "").strip()
             if ids and traj_id not in ids:
                 continue
-            
+
             pgeom_wkt = row.get("pgeom", "")
             coords = parse_geometry(pgeom_wkt)
             if not coords:
                 continue
-            
+
             lon, lat = coords[0]
             updated_bounds = update_bounds(updated_bounds, [coords[0]])
-            
+
             cpath = row.get("cpath", "").strip()
             if cpath:
                 for edge in cpath.split(","):
                     if edge.strip(): used_edges.add(edge.strip())
-            
+
+            seq = id_counters.get(traj_id, 0)
+            id_counters[traj_id] = seq + 1
+
             props = {
                 "id": traj_id,
                 "kind": f"{kind}_point",
-                "seq": int(to_float(row.get("seq")) or 0),
+                "seq": seq,
                 "timestamp": row.get("timestamp"),
                 "ep": to_float(row.get("ep")),
                 "tp": to_float(row.get("tp")),
@@ -229,18 +235,24 @@ def load_match_results(path: Path, ids: Set[str], kind: str, bounds: Bounds) -> 
                 "error": to_float(row.get("error")),
                 "cpath": cpath
             }
-            
+
             features.append({
                 "type": "Feature",
                 "properties": props,
                 "geometry": {"type": "Point", "coordinates": [lon, lat]}
             })
-            
+
     return features, used_edges, updated_bounds
 
 
-def load_ground_truth_points(path: Path, ids: Set[str], bounds: Bounds) -> Tuple[List[Dict], Bounds]:
-    """Load ground truth as individual point features."""
+def load_ground_truth_points(path: Path, ids: Set[str], bounds: Bounds,
+                             obs_seq_map: Dict[Tuple[str, str], int] | None = None
+                             ) -> Tuple[List[Dict], Bounds]:
+    """Load ground truth as individual point features.
+
+    If obs_seq_map is provided, GT points use the observation's monotonic seq
+    (matched by id+timestamp) instead of the GT file's own seq.
+    """
     features: List[Dict] = []
     updated_bounds = bounds
     if not path.exists():
@@ -258,12 +270,19 @@ def load_ground_truth_points(path: Path, ids: Set[str], bounds: Bounds) -> Tuple
             except (KeyError, ValueError, TypeError):
                 continue
             updated_bounds = update_bounds(updated_bounds, [(lon, lat)])
-            seq_val = int(float(row.get("seq", "0"))) if row.get("seq", "").strip() else 0
+
+            # Use observation's seq when available (aligned by normalized timestamp)
+            ts_val = str(round(float(row.get("timestamp", "0"))))
+            if obs_seq_map and (traj_id, ts_val) in obs_seq_map:
+                seq_val = obs_seq_map[(traj_id, ts_val)]
+            else:
+                seq_val = int(float(row.get("seq", "0"))) if row.get("seq", "").strip() else 0
+
             features.append({
                 "type": "Feature",
                 "properties": {
                     "id": traj_id, "kind": "truth_point",
-                    "seq": seq_val, "timestamp": row.get("timestamp", ""),
+                    "seq": seq_val, "timestamp": ts_val,
                 },
                 "geometry": {"type": "Point", "coordinates": [lon, lat]}
             })
@@ -895,8 +914,18 @@ def main():
     print("Loading observation points...")
     obs_features, bounds = load_observation_points(Path(args.input), selected_ids, bounds)
 
+    # Build (id, timestamp) -> seq mapping from observations for GT alignment.
+    # Normalize timestamps to handle format differences (e.g. "1750306259.0" vs "1750306259").
+    obs_seq_map = {}
+    for f in obs_features:
+        p = f["properties"]
+        ts_norm = str(round(float(p.get("timestamp", "0"))))
+        obs_seq_map[(p["id"], ts_norm)] = p["seq"]
+
     print("Loading ground truth points...")
-    gtp_features, bounds = load_ground_truth_points(Path(args.ground_truth) if args.ground_truth else Path("."), selected_ids, bounds)
+    gtp_features, bounds = load_ground_truth_points(
+        Path(args.ground_truth) if args.ground_truth else Path("."),
+        selected_ids, bounds, obs_seq_map)
 
     print("Loading ground truth path...")
     gt_features, bounds = load_ground_truth_path(Path(args.ground_truth) if args.ground_truth else Path("."), selected_ids, bounds)
