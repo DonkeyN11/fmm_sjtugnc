@@ -19,25 +19,54 @@ experiments/
       with_occlusion/with_fault/   #   Occlusion + fault combined
     sigma_mismatch/                # Sigma mismatch datasets for Exp4
       pr10_wls20/ ~ pr30_wls20/    #   pr = true pseudorange noise, wls = assumed
-  scripts/
-    generate_data_cmm.py           # Enhanced data generator (~1120 lines)
-    batch_generate.py              # Orchestrates all data generation
-    run_cmm_matching.py            # Standalone CMM batch runner
-    utils.py                       # Shared I/O, metrics, plotting helpers
-    mapbox_viz.py                  # Mapbox 3D visualization with 6 toggleable layers
-    exp1_covariance_validation.py  # Chi2 histogram, P-P, whitened, Rayleigh CDF
-    exp2_stanford_pl.py            # Stanford plots + P_md/P_fa per condition
-    exp3_full_matching.py          # Sigma sweep + sample rate sensitivity
-    exp3_parameter_sensitivity.py  # Legacy: point error vs sigma, accuracy vs sigma
-    exp4_sigma_mismatch.py         # Wrong emission model analysis
-    exp5_degraded_conditions.py    # Fault/occlusion robustness at sigma=30
+  scripts/                         # All experiment & analysis scripts (22 files)
   output/
     1_covariance_validation/       # Per-sigma 4-panel validation figures + KS summary
     2_stanford/                    # Per-condition Stanford plots + P_md/P_fa table
     3_full_matching/               # Sigma sweep + sample rate figures + CSV summaries
     4_sigma_mismatch/              # Mismatch analysis figures + CSV
     5_degraded/                    # Degraded condition comparison figures + CSV
+    spp_error/                     # SPP vs RTK error analysis figures + CSV
 ```
+
+## Scripts Reference
+
+### Data Generation
+| Script | Purpose |
+|--------|---------|
+| `generate_data_cmm.py` | Enhanced synthetic data generator (WLS+RAIM, occlusion, fault injection) |
+| `batch_generate.py` | Orchestrates all data generation steps in parallel |
+| `extract_spp_for_cmm.py` | Parse NMEA SPP output → CMM-format CSV with covariance |
+| `NMEA2cmm.py` | Alternative NMEA-to-CMM converter |
+| `process_hainan_dataset_lla_rigid.py` | Full Hainan dataset processing pipeline (SPP→CMM→FMM/CMM matching→Mapbox) |
+
+### Synthetic Experiments (Exp1–5)
+| Script | Experiment | Purpose |
+|--------|-----------|---------|
+| `exp1_covariance_validation.py` | Exp1 | χ² histogram, P-P, whitened errors, Rayleigh CDF |
+| `exp2_stanford_pl.py` | Exp2 | Stanford plots + $P_{\text{md}}$/$P_{\text{fa}}$ across conditions |
+| `exp3_full_matching.py` | Exp3 | Sigma sweep + sample rate sensitivity (CMM vs FMM) |
+| `exp4_sigma_mismatch.py` | Exp4 | Wrong emission model effects (over-confident vs over-conservative) |
+| `exp5_degraded_conditions.py` | Exp5 | Robustness under fault/occlusion at σ=30m |
+
+### Real-Vehicle SPP/RTK Analysis (Exp6)
+| Script | Purpose |
+|--------|---------|
+| `exp6_compare_spp_rtk.py` | Time-align SPP positions vs RTK ground truth, compute error statistics |
+| `exp6_stanford_spp_rtk.py` | Stanford plot: SPP error vs RAIM PL from `cmm_input_points.csv` |
+| `plot_spp_error.py` | 6-panel SPP error summary figure |
+| `plot_spp_per_traj.py` | Per-trajectory SPP error time-series + histogram figures |
+
+### Infrastructure & Visualization
+| Script | Purpose |
+|--------|---------|
+| `utils.py` | Shared I/O, metrics (ECE, ROC/AUC), plotting helpers |
+| `compute_raim_pl.py` | RAIM PL from RINEX 3.04 observations (canonical copy) |
+| `merge_raim_pl.py` | Merge RAIM PL into CMM input CSV |
+| `run_cmm_matching.py` | Standalone CMM batch runner |
+| `mapbox_viz.py` | Mapbox 3D visualization: CMM/FMM results + GT + road network |
+| `mapbox_spp_rtk.py` | Mapbox visualization: SPP + covariance ellipses vs RTK ground truth |
+| `fig_stanford_combined.py` | Combined 4-panel Stanford figure for paper |
 
 ---
 
