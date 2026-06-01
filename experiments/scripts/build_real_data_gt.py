@@ -109,54 +109,52 @@ def main():
             rtk_data[tid] = parse_rtk_nmea_ordered(str(f))
             print(f"Traj {tid}: {len(rtk_data[tid][0])} RTK epochs")
 
-    # ── Load SPP as ordered lists per trajectory ──
+    # ── Load SPP as ordered lists with original timestamp string ──
     spp_data = {}
     obs_file = DATA_DIR / "cmm_input_points.csv"
     with open(obs_file, newline="") as f:
         for row in csv.DictReader(f, delimiter=";"):
             tid = int(row["id"])
             spp_data.setdefault(tid, []).append({
-                "ts": round(float(row["timestamp"])),
-                "x": row["x"], "y": row["y"],
+                "ts_int": round(float(row["timestamp"])),
+                "ts_str": row["timestamp"],
             })
 
-    # ── Align by seq offset ──
+    # ── Timestamp-based alignment (NOT seq-based — SPP has gaps) ──
+    # Build RTK dict[ts_int] = (lon, lat) for O(1) lookup
     gt_rows = []
     for tid in sorted(rtk_data.keys()):
         if tid not in spp_data:
             continue
         rtk_ts, rtk_lons, rtk_lats = rtk_data[tid]
-        rtk_set = set(rtk_ts)
+        rtk_dict = {ts: (lon, lat) for ts, lon, lat in zip(rtk_ts, rtk_lons, rtk_lats)}
         spp_list = spp_data[tid]
 
-        # Find offset: first SPP timestamp that exists in RTK
-        offset = None
-        for i, sp in enumerate(spp_list):
-            if sp["ts"] in rtk_set:
-                offset = i
-                break
-
-        if offset is None:
-            print(f"Traj {tid}: no time overlap, skipping")
-            continue
-
-        # Pair by seq: SPP[offset + k] ↔ RTK[k]
         matched = 0
-        for k in range(len(rtk_ts)):
-            spp_idx = offset + k
-            if spp_idx >= len(spp_list):
-                break
+        gt_seq = 0
+        for sp in spp_list:
+            ts_int = sp["ts_int"]
+            # Exact match first, then ±1s tolerance
+            if ts_int in rtk_dict:
+                lon, lat = rtk_dict[ts_int]
+            elif (ts_int + 1) in rtk_dict:
+                lon, lat = rtk_dict[ts_int + 1]
+            elif (ts_int - 1) in rtk_dict:
+                lon, lat = rtk_dict[ts_int - 1]
+            else:
+                continue  # no RTK data near this SPP epoch
+
             gt_rows.append({
                 "id": str(tid),
-                "seq": str(k),
-                "timestamp": spp_list[spp_idx]["ts"],
-                "x": str(rtk_lons[k]),
-                "y": str(rtk_lats[k]),
+                "seq": str(gt_seq),
+                "timestamp": sp["ts_str"],
+                "x": str(lon),
+                "y": str(lat),
             })
+            gt_seq += 1
             matched += 1
 
-        print(f"Traj {tid}: offset={offset}, matched={matched} "
-              f"(SPP range [{offset}, {offset+matched}), RTK range [0, {matched}))")
+        print(f"Traj {tid}: matched={matched}/{len(spp_list)} SPP epochs have RTK")
 
     # ── Write ──
     out = DATA_DIR / "ground_truth_points.csv"
