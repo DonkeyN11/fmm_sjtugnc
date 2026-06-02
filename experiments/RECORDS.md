@@ -166,7 +166,9 @@ FMM bins: <0.1=6,   0.5-0.7=51,     >0.7=2638
 - ECE≈0.15 only because most epochs land in the [0.9, 1.0] bin where accuracy is 0.837, so |0.95-0.837|=0.11 — a single-bin artifact
 - FMM is practically uncalibrated: claims ~100% confidence but is wrong 16.3% of the time
 
-**Conclusion: The softmax posterior trustworthiness with L=5, k=16 does NOT function as a mismatch detector on dense urban networks with good GNSS (SPP ~2m).**
+**Conclusion: The softmax posterior trustworthiness with L=0, k=16 does NOT function as a mismatch detector on dense urban networks with good GNSS (SPP ~2m).**
+
+**Update:** Re-ran CMM with explicit `lag=0` — results unchanged (ECE=0.491, AUC=0.315). Lag is NOT the cause of trust compression.
 
 ### Output Files
 ```
@@ -181,16 +183,35 @@ experiments/output/exp6_real/traj11_stats.csv    # Numeric summary
 
 ## 2025-06-02 Afternoon Schedule
 
-### Goal: Improve CMM Trustworthiness Calibration on Real Data
-
-Investigate three levers:
+### Schedule Item 1: Improve CMM Trustworthiness Calibration on Real Data
 
 #### 1. Lag Steps Sweep
-- **Hypothesis**: Larger L accumulates more future evidence → better disambiguation → trust concentrates near 1.0 for correct matches
-- **Test**: Run CMM on traj 11 with L ∈ {0, 5, 10, 20, 30, 50}
-- **Metrics**: Edge accuracy, ECE, AUC, trust distribution (mean/median/IQR) vs L
-- **Expected**: ECE ↓ and AUC ↑ as L grows; trust spread should widen beyond [0.3, 0.7]
-- **Caveat**: Larger L increases matching latency; upper bound by sub-trajectory length
+- **Status**: Lag=0 tested — no improvement. Larger lag unlikely to help (trust compression is from softmax, not evidence window). **Skip.**
+
+#### 2. H0 Lambda as Alternative Trust Metric
+- **Hypothesis**: h0_lambda accumulates log-likelihood ratio over the full trajectory, providing a trajectory-global confidence score that may be better calibrated than per-epoch softmax
+- **Test**: Extract h0_lambda from CMM `cmm_result.csv`; compute ECE/AUC using h0_lambda as the score
+- **Note**: h0_lambda needs normalization (sigmoid or clamping) to map from [0, ∞) to [0, 1]
+
+#### 3. Alternative Normalizations of Candidate Scores
+- **Hypothesis**: Softmax over k=16 compresses trust when candidates are equally plausible. Alternative normalizations:
+  - **Top-2 ratio**: tw = p_1 / (p_1 + p_2) — measures winner's dominance
+  - **Entropy-based**: tw = 1 - H/H_max — normalized information gain (already in delta_entropy column)
+  - **Raw log-likelihood**: tw = sigmoid(score_max - score_mean)
+- **Test**: Parse `candidates` column from cmm_result.csv to reconstruct per-epoch candidate scores, recompute trust under each normalization
+- **Metrics**: ECE, AUC, trust distribution shape for each variant
+
+### Schedule Item 2: Complete GT Road Segments for All 7 Trajectories
+
+- [ ] Traj 12 (id=12): 724 epochs — label road edges in Mapbox
+- [ ] Traj 13 (id=13): 2,391 epochs — label road edges
+- [ ] Traj 14 (id=14): 1,370 epochs — label road edges
+- [ ] Traj 21 (id=21): 3,565 epochs — label road edges
+- [ ] Traj 22 (id=22): 2,490 epochs — label road edges
+- [ ] Traj 23 (id=23): 2,721 epochs — label road edges
+- [ ] Type edge IDs into `build_gt_segments.py` (same format as traj 11)
+- [ ] Re-run `exp6_real_accuracy.py` on all 7 trajectories combined
+- [ ] Generate full real-vehicle comparison figure (CMM vs FMM across all trajectories)
 
 #### 2. H0 Lambda as Alternative Trust Metric
 - **Hypothesis**: h0_lambda accumulates log-likelihood ratio over the full trajectory, providing a trajectory-global confidence score that may be better calibrated than per-epoch softmax
