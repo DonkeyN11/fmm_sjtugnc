@@ -181,16 +181,88 @@ experiments/output/exp6_real/traj11_stats.csv    # Numeric summary
 
 ---
 
-## 2025-06-02 Afternoon Schedule
+---
 
-### Schedule Item 1: Improve CMM Trustworthiness Calibration on Real Data
+## 2025-06-02 Completed
 
-#### 1. Lag Steps Sweep
-- **Status**: Lag=0 tested — no improvement. Larger lag unlikely to help (trust compression is from softmax, not evidence window). **Skip.**
+### Root Cause Analysis of CMM Trustworthiness Failure on Real Data
 
-#### 2. H0 Lambda as Alternative Trust Metric
-- **Hypothesis**: h0_lambda accumulates log-likelihood ratio over the full trajectory, providing a trajectory-global confidence score that may be better calibrated than per-epoch softmax
-- **Test**: Extract h0_lambda from CMM `cmm_result.csv`; compute ECE/AUC using h0_lambda as the score
+**Initial state:** CMM ECE=0.49, AUC=0.32, TW compressed at ~0.5.
+
+**Investigation path:**
+
+1. **Lag=0 tested** → no improvement. Trust compression is NOT from lag.
+
+2. **H0 lambda = 1.0 for ALL epochs** → root cause found:
+   - `h0_lambda` accumulation code gated behind `if (lag_steps > 0)` at line 1632
+   - With lag=0, lambda never grows → α_t = 0.5 for every epoch → trust halved
+   - `h0_prior_log_odds` was dead code (hardcoded to 0.0 at lines 1495,1549,1612)
+   - **Fix:** moved H0 accumulation outside lag gate + wired config parameter
+
+3. **After H0 fix:** CMM ECE improved from **0.49 → 0.11** (beats FMM's 0.15)
+
+4. **Candidate deduplication:** found 5 duplicates at same coordinate (per-edge dedup reduces 5.1→3.9 avg candidates)
+
+5. **n_best_trustworthiness near 1.0 but TW=0.5** → discrepancy explained by H0 discount
+
+6. **Deep-dive into seq 2128 mismatch** → found three interacting issues:
+   - **PHMI EP redistribution** dilutes raw EP among inside-PL candidates
+   - **Forward-sum cumu** (log_sum_exp) at line 1970: junction edges receive inflated probability from multiple converging branches → false path switch
+   - **15% reverse guard loophole**: allows unlimited cumulative reverse travel if each step <15%
+
+7. **Per-epoch EP/TP debug** added via fprintf for future investigation
+
+### Bugs Fixed Today
+| # | Bug | Location | Fix |
+|---|-----|----------|-----|
+| 1 | H0 lambda never grows with lag=0 | Line 1632 | Moved accumulation outside lag gate |
+| 2 | h0_prior_log_odds dead parameter | Lines 1495,1549,1612 | Wired to config |
+| 3 | Per-edge candidate duplication | Lines ~952 | One candidate per edge (best metric) |
+
+### Bugs Identified (Pending Fix)
+| # | Bug | Priority |
+|---|-----|:---:|
+| 1 | Forward-sum cumu inflates junction edges → false switches | High |
+| 2 | H0 lambda explodes unbounded → α_t saturates at 1.0 | Medium |
+| 3 | 15% reverse guard allows cumulative reverse travel | Medium |
+
+### Results Summary
+| Metric | Before | After H0 Fix | FMM |
+|--------|:---:|:---:|:---:|
+| ECE | 0.491 | **0.113** | 0.152 |
+| Edge accuracy | 94.5% | 94.5% | 83.7% |
+| TW mean | 0.46 | **0.92** | 0.98 |
+| Position error (mean) | 4.6m | 4.6m | 7.4m |
+
+---
+
+## 2025-06-03 Schedule
+
+### Priority 1: Fix Forward-Sum Cumu → Viterbi Max
+- Modify `cmm_algorithm.cpp:1970`: split `cumu_prob` (Viterbi) and `forward_cumu` (forward-sum)
+- Path finding uses Viterbi max → eliminates junction switch errors
+- Trust/entropy continue using forward-sum → preserves posterior interpretation
+- Re-run traj 11 matching, verify seq 2128 corrected
+- Re-run full accuracy analysis
+
+### Priority 2: H0 Lambda Clamping
+- Clamp λ_t to [0.1, 10] → α_t ∈ [0.09, 0.91]
+- Makes discount respond to per-epoch PL quality instead of saturating
+
+### Priority 3: Reverse Travel Guard Fix
+- Accumulate reverse distance across consecutive same-edge epochs
+- Trigger when cumulative exceeds 15% threshold
+
+### Priority 4: Complete GT Road Segments (Traj 12-23)
+- Label road edges in Mapbox for remaining 6 trajectories
+- Type into `build_gt_segments.py`
+
+### Priority 5: Rebuild and Verify
+- Rebuild CMM with all fixes
+- Run full CMM+FMM matching on all 7 real trajectories
+- Compute segment accuracy, ECE, AUC
+- Generate paper figures
+- Update `Trustworthiness Evaluation Framework.tex` Section 6
 - **Note**: h0_lambda needs normalization (sigmoid or clamping) to map from [0, ∞) to [0, 1]
 
 #### 3. Alternative Normalizations of Candidate Scores
@@ -226,3 +298,93 @@ experiments/output/exp6_real/traj11_stats.csv    # Numeric summary
 - **Test**: Parse `candidates` column from cmm_result.csv to reconstruct per-epoch candidate scores, recompute trust under each normalization
 - **Metrics**: ECE, AUC, trust distribution shape for each variant
 
+
+---
+
+## Viterbi vs Forward Plan (Pending)
+
+### Discovery: seq 2128 mismatch caused by forward-sum cumu
+
+At seq 2127 (cpath=149100, cumu=-1202.21), the transition to seq 2128 shows:
+- 149100→149100 best branch: **-1203.74** (would win under Viterbi)
+- 149100→8048  branch: -1208.41
+- CSV result at seq 2128: **cpath=8048 cumu=-1208.13**
+
+Root cause at [cmm_algorithm.cpp:1970](src/mm/cmm/cmm_algorithm.cpp#L1970):
+```cpp
+// Uses forward-sum (log_sum_exp of all incoming branches), not Viterbi max
+node_b.cumu_prob = log_sum_prev_probs + node_b.ep;
+```
+
+Edge 8048 at junction receives branches from multiple converging edges → forward sum inflates its cumu → beats 149100 which only gets self-branches. The backtrack pointer uses Viterbi max (line 1957), but the cumu used for the NEXT epoch is forward-sum — inconsistency.
+
+### Proposed Fix
+
+Store both from the same `incoming_log_probs`:
+
+| Field | Algorithm | Used for |
+|-------|-----------|----------|
+| `cumu_prob` | Viterbi max | Backtrack, optimal path selection |
+| `forward_cumu` | Forward sum (log_sum_exp) | Softmax, trustworthiness, entropy |
+
+Line 1970 change:
+```cpp
+node_b.cumu_prob   = best_log_branch_prob + node_b.ep;   // Viterbi for path
+node_b.forward_cumu = log_sum_prev_probs   + node_b.ep;   // Forward for trust
+```
+
+Trustworthiness computation uses `forward_cumu` — preserves proper posterior interpretation.
+
+### Expected Impact
+- Path finding: Viterbi max prevents junction bias
+- Trust/entropy: unchanged, still uses proper forward marginal
+- ECE: path accuracy should improve (fewer switch errors like seq 2128)
+- Side effects: need to verify no other code paths depend on cumu_prob being forward-sum
+
+---
+
+## H0 Lambda Clamping (Pending)
+
+### Issue
+
+Current λ_t grows unbounded: LR ≈ 10⁵/epoch → λ_t explodes after 1-2 epochs → α_t saturates at 1.0. The discount only affects epoch 0.
+
+### Proposed Fix
+
+Clamp λ_t to bounded range e.g. [0.1, 10]:
+
+```
+α_t = clamp(λ_t / (1 + λ_t), 0.09, 0.91)
+```
+
+With clamping, each epoch's `frac_inside_pl` drives α_t meaningfully:
+- High PL coverage → α_t rises toward 0.91 (confident)
+- Low PL coverage → α_t falls toward 0.09 (suspicious)
+- Neutral: `h0_prior_log_odds = 0` → λ₀ = 1, α₀ = 0.5
+
+This makes the H0 discount react to per-epoch PL quality instead of saturating immediately.
+
+---
+
+## Reverse Travel Guard Loophole (Pending)
+
+### Discovery: seq 603-635 false lock on 101366
+
+CMM stays on edge 101366 in reverse direction even though vehicle is physically on unmodeled road 11158. Trust jumps to 1.0 at seq 607 because EP=1.0 (vehicle close to 101366 geometry) and TP=1.0 (per-epoch reverse falsely allowed).
+
+### Root Cause
+
+The 15% per-step offset guard at [line 1729](src/mm/cmm/cmm_algorithm.cpp#L1729):
+
+```
+Each epoch: offset regression = 30m, edge length = 300m
+30/300 = 10% < 15% → guard triggers → SP=0 → TP=1.0
+```
+
+The guard treats each individual reverse step as "projection noise" and allows unlimited cumulative reverse travel if each step is small enough.
+
+### Proposed Fixes
+
+1. **Accumulate reverse distance** across consecutive same-edge epochs; trigger when cumulative regression exceeds 15% threshold
+2. **Reduce threshold** to 2-3m absolute (for genuine projection noise at vertices)
+3. **Check vehicle heading** against edge digitization direction; block when consistently opposite
