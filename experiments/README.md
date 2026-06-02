@@ -144,7 +144,7 @@ All experiments use the same HMM and matching parameters:
 <max_interval>180.0</max_interval>
 <trustworthiness_threshold>0.0</trustworthiness_threshold>
 <phmi>0.00001</phmi>
-<lag_steps>5</lag_steps>
+<lag_steps>0</lag_steps>
 <phmi_pl_multiplier>1</phmi_pl_multiplier>
 <h0_prior_log_odds>0</h0_prior_log_odds>
 ```
