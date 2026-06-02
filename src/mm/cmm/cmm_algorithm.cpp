@@ -949,6 +949,34 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                     process_node(edge->target, true);
                 }
 
+                // ── Deduplicate: keep only the best-metric candidate per edge ──
+                // Without this, each edge generates up to 3 candidates (Mahalanobis
+                // projection + source node + target node), inflating the effective k
+                // and compressing softmax trust to ~1/K_effective ≈ 0.5.
+                // Rule: one candidate per edge → keep best Mahalanobis metric.
+                {
+                    std::map<NETWORK::EdgeIndex, size_t> best_per_edge;
+                    for (size_t i = 0; i < candidate_pool.size(); ++i) {
+                        const auto &c = candidate_pool[i];
+                        if (c.candidate.edge == nullptr) continue;
+                        NETWORK::EdgeIndex eidx = c.candidate.edge->index;
+                        auto it = best_per_edge.find(eidx);
+                        if (it == best_per_edge.end()) {
+                            best_per_edge[eidx] = i;
+                        } else if (c.metric < candidate_pool[it->second].metric) {
+                            best_per_edge[eidx] = i;
+                        }
+                    }
+                    if (best_per_edge.size() < candidate_pool.size()) {
+                        std::vector<CandidateWithMetric> deduped;
+                        deduped.reserve(best_per_edge.size());
+                        for (const auto &kv : best_per_edge) {
+                            deduped.push_back(std::move(candidate_pool[kv.second]));
+                        }
+                        candidate_pool.swap(deduped);
+                    }
+                }
+
                 const size_t desired_candidates = std::max(config.k, config.min_candidates);
                 if (!candidate_pool.empty()) {
                     std::sort(candidate_pool.begin(), candidate_pool.end(),
@@ -1464,7 +1492,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         // λ_t = λ₀ · Π_{τ=0}^{t} LR_τ   (cumulative likelihood ratio)
         // α_t = λ_t / (1 + λ_t)          (posterior P(H0 | z_{0:t}))
         std::vector<double> h0_log_lambdas;     // log(λ_t) per original index
-        double h0_log_lambda = 0.0;              // current log(λ_t), starts from λ₀=1
+        double h0_log_lambda = config.h0_prior_log_odds;  // current log(λ_t)
 
         TGLayer* last_valid_layer = &tg_ptr->get_layers()[0];
         int last_valid_real = start_real_idx;
@@ -1518,7 +1546,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 }
                 // Reset H0 lambda for new sub-trajectory
                 h0_log_lambdas.clear();
-                h0_log_lambda = 0.0;
+                h0_log_lambda = config.h0_prior_log_odds;
 
                 last_valid_layer = &tg_ptr->get_layers()[0];
                 last_valid_real = next_real;
@@ -1581,7 +1609,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     }
                     // Reset H0 lambda for new sub-trajectory
                     h0_log_lambdas.clear();
-                    h0_log_lambda = 0.0;
+                    h0_log_lambda = config.h0_prior_log_odds;
 
                     last_valid_layer = &tg_ptr->get_layers()[0];
                     last_valid_real = next_real;
@@ -1600,11 +1628,13 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 last_valid_layer = &tg_ptr->get_layers().back();
                 last_valid_real = next_real;
 
-                // ── Push to smoothing buffer and apply fixed-lag smoothing ──
-                if (config.lag_steps > 0) {
-                    // Compute fraction of candidates within PHMI-effective PL
-                    // for sequential Bayesian H0 hypothesis test.
-                    // effective_pl = raw_PL_deg * phmi_pl_multiplier
+                // ── Accumulate global H0 lambda (always, not gated by lag_steps) ──
+                // Bayesian sequential test:
+                //   LR_t = P(z_t | H0) / P(z_t | ¬H0) = frac_inside / PHMI
+                //   λ_t = λ_{t-1} × LR_t
+                //   α_t = λ_t / (1 + λ_t) discounts trust at output (line 1371).
+                // Fix: moved outside lag_steps gate so it runs with lag=0 too.
+                {
                     double raw_pl = (next_real < static_cast<int>(traj.protection_levels.size()))
                         ? traj.protection_levels[next_real] : 0.0;
                     double effective_pl = raw_pl * config.phmi_pl_multiplier;
@@ -1618,28 +1648,33 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     double frac_inside =
                         (n_total > 0) ? static_cast<double>(n_inside_pl) / n_total : 1.0;
 
-                    // Store tp matrix + frac_inside_pl
-                    lag_buffer.back().tp_to_next = std::move(tp_raw_smoothing);
-                    lag_buffer.back().frac_inside_pl = frac_inside;
-                    lag_buffer.push_back({last_valid_layer, {}, 1.0});
-
-                    // ── Accumulate global H0 lambda ──
-                    // Bayesian sequential test:
-                    //   LR_t = P(z_t | H0) / P(z_t | ¬H0) = frac_inside / PHMI
-                    //   λ_t = λ_{t-1} × LR_t
-                    // Using config.phmi as the GNSS integrity risk baseline.
-                    // frac_inside is clamped to [PHMI/1e3, 1-PHMI/1e3] to avoid
-                    // log(0) and preserve per-epoch LR discrimination.
                     double phmi_floor = std::max(config.phmi / 1000.0, 1.0e-10);
                     double f_clamp = std::max(phmi_floor,
                         std::min(1.0 - phmi_floor, frac_inside));
                     double h0_lr = f_clamp / config.phmi;
                     h0_log_lambda += std::log(h0_lr);
-
-                    // Store λ_t for this epoch (align with original_index later)
                     h0_log_lambdas.push_back(h0_log_lambda);
+                }
 
-                    // When buffer has lag_steps+1 entries, smooth the oldest layer
+                // ── Push to smoothing buffer and apply fixed-lag smoothing ──
+                if (config.lag_steps > 0) {
+                    double raw_pl = (next_real < static_cast<int>(traj.protection_levels.size()))
+                        ? traj.protection_levels[next_real] : 0.0;
+                    double effective_pl = raw_pl * config.phmi_pl_multiplier;
+                    int n_inside_pl = 0, n_total = 0;
+                    for (size_t b = 0; b < next_layer.size(); ++b) {
+                        TGNode& nb = next_layer[b];
+                        if (nb.c == nullptr) continue;
+                        n_total++;
+                        if (nb.c->dist <= effective_pl) n_inside_pl++;
+                    }
+                    double frac_inside =
+                        (n_total > 0) ? static_cast<double>(n_inside_pl) / n_total : 1.0;
+
+                    lag_buffer.back().tp_to_next = std::move(tp_raw_smoothing);
+                    lag_buffer.back().frac_inside_pl = frac_inside;
+                    lag_buffer.push_back({last_valid_layer, {}, 1.0});
+
                     if (lag_buffer.size() > static_cast<size_t>(config.lag_steps)) {
                         apply_lag_smoothing(lag_buffer);
                         lag_buffer.pop_front();
