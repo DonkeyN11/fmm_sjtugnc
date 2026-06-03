@@ -31,7 +31,9 @@ struct TGNode {
   TGNode *prev; /**< previous optimal candidate */
   double ep; /**< emission probability */
   double tp; /**< transition probability from previous optimal candidate */
-  double cumu_prob; /**< current node's accumulative probability */
+	double cumu_prob; /**< Viterbi max accumulative probability (for backtrack) */
+	double forward_cumu; /**< forward-sum accumulative probability (for posterior/trust) */
+	double reverse_dist; /**< cumulative reverse distance on same edge */
   double sp_dist; /**< shorest path distance from previous optimal
                        candidate to current node */
   double trustworthiness; /**< filtering posterior: normalized P(state_t | obs_{1:t}) */

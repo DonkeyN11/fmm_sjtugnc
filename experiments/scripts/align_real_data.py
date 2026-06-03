@@ -81,6 +81,15 @@ def main():
                   ["id", "timestamp"],
                   ["x", "y"])
 
+    # Load GT road segments (keyed by id, seq — same as uni_seq ordering)
+    print("Loading GT edges...")
+    gt_edges = {}  # (id, uni_seq) -> edge_id
+    gt_path = DATA_DIR / "ground_truth.csv"
+    if gt_path.exists():
+        with open(gt_path, newline="") as f:
+            for row in csv.DictReader(f, delimiter=";"):
+                gt_edges[(row["id"].strip(), int(row["seq"]))] = row["edge_id"].strip()
+
     # ── Collect all unique (id, timestamp) keys ──
     all_keys = set(obs.keys()) | set(cmm.keys()) | set(fmm.keys()) | set(gt.keys())
     print(f"\nTotal unique (id, ts) keys: {len(all_keys)}")
@@ -93,7 +102,6 @@ def main():
         for key in traj_keys:
             _, ts = key
             row = {"id": tid, "uni_seq": uni_seq, "timestamp": ts}
-            uni_seq += 1
 
             # SPP observation
             o = obs.get(key, {})
@@ -124,8 +132,10 @@ def main():
             g = gt.get(key, {})
             row["gt_x"] = g.get("x", "")
             row["gt_y"] = g.get("y", "")
+            row["gt_edge"] = gt_edges.get((tid, uni_seq), "")
 
             rows.append(row)
+            uni_seq += 1
 
     # ── Write aligned CSV ──
     out = DATA_DIR / "aligned.csv"
@@ -134,7 +144,7 @@ def main():
               "cmm_x", "cmm_y", "cmm_tw", "cmm_cpath",
               "cmm_status", "cmm_delta_entropy", "cmm_posterior_entropy",
               "fmm_x", "fmm_y", "fmm_tw", "fmm_cpath",
-              "gt_x", "gt_y"]
+              "gt_x", "gt_y", "gt_edge"]
     with open(out, "w", newline="") as f:
         w = csv.DictWriter(f, fieldnames=fields, delimiter=";")
         w.writeheader()

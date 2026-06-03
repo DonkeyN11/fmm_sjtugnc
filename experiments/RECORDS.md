@@ -238,20 +238,44 @@ experiments/output/exp6_real/traj11_stats.csv    # Numeric summary
 
 ## 2025-06-03 Schedule
 
-### Priority 1: Fix Forward-Sum Cumu → Viterbi Max
+### Priority 1: Fix Forward-Sum Cumu → Viterbi Max ✅ DONE
 - Modify `cmm_algorithm.cpp:1970`: split `cumu_prob` (Viterbi) and `forward_cumu` (forward-sum)
 - Path finding uses Viterbi max → eliminates junction switch errors
 - Trust/entropy continue using forward-sum → preserves posterior interpretation
-- Re-run traj 11 matching, verify seq 2128 corrected
-- Re-run full accuracy analysis
+- **Result**: Seq 2128 now correctly stays on 149100. Edge accuracy 94.5%→94.7%, ECE 0.113→0.100.
 
-### Priority 2: H0 Lambda Clamping
-- Clamp λ_t to [0.1, 10] → α_t ∈ [0.09, 0.91]
-- Makes discount respond to per-epoch PL quality instead of saturating
+### Priority 2: H0 Lambda Clamping ⏸️ DEPRIORITIZED
 
-### Priority 3: Reverse Travel Guard Fix
+#### Analysis of H0 Lambda Mechanism
+
+The current formulation:
+```
+LR_t = frac_inside / PHMI
+```
+has a **category error**: `frac_inside` (road network coverage) divided by `PHMI` (satellite integrity risk) is not a valid Bayesian likelihood ratio. The numerator and denominator operate in different probability spaces:
+
+- $P(z_t \mid H_0)$ should be: probability of observing this GNSS position given the vehicle IS on some road
+- `frac_inside` answers: what fraction of retrieved candidates are inside the PL?
+
+On open-sky SPP, `frac_inside ≈ 1.0` always → λ_t explodes → α_t → 1.0. The mechanism only detects "is the GNSS faulted?" not "is the road network missing?"
+
+#### Proposed Three-Factor Discount Framework
+
+| Factor | Detects | Low when |
+|--------|---------|----------|
+| α_gnss (existing) | GNSS satellite fault | RAIM residual test fails |
+| α_geom (new) | Absent road / wrong edge shape | GNSS trajectory curve ≠ matched road geometry |
+| α_vel (new) | Absent road / reverse travel | SP velocity ÷ observed velocity implausible |
+
+Velocity should be a **discount factor** not an emission model term: if velocity goes into EP, softmax normalizes it away when only one candidate exists. As a multiplicative α, it survives softmax.
+
+**Decision**: Record as future work (paper Section 6 limitations). Not implementing now — requires window-length design, curve similarity metric selection (Fréchet vs Hausdorff), and velocity smoothing. Significant new feature, not a quick fix.
+
+### Priority 3: Reverse Travel Guard Fix 🔧 STARTING
 - Accumulate reverse distance across consecutive same-edge epochs
 - Trigger when cumulative exceeds 15% threshold
+- Directly addresses seq 605-635 false lock on 101366 in reverse direction
+- Re-run traj 11 matching, verify fix
 
 ### Priority 4: Complete GT Road Segments (Traj 12-23)
 - Label road edges in Mapbox for remaining 6 trajectories
@@ -388,3 +412,18 @@ The guard treats each individual reverse step as "projection noise" and allows u
 1. **Accumulate reverse distance** across consecutive same-edge epochs; trigger when cumulative regression exceeds 15% threshold
 2. **Reduce threshold** to 2-3m absolute (for genuine projection noise at vertices)
 3. **Check vehicle heading** against edge digitization direction; block when consistently opposite
+
+---
+
+## Background State for Anti-Overconfidence (Pending)
+
+### Problem
+Label bias: softmax at epoch with all low-EP candidates gives winner TW=1.0 (e.g., traj 13 seq 2399: max EP=1e-5, TW=1.0). PHMI doesn't help — all candidates share the same inside-PL pool.
+
+### Fix
+Wire the existing `background_log_prob` config parameter (default -8.0) into the per-epoch softmax. At each epoch, insert one pseudo-candidate with score = `background_log_prob` representing "not on any mapped road." When all real candidates have low EP, the background absorbs mass and winner's TW drops.
+
+### Notes
+- CRF global normalization doesn't solve this either when k=1
+- Background state is the correct approach, works for any k
+- Parameter already exists in config, just needs wiring into softmax
