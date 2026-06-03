@@ -427,3 +427,88 @@ Wire the existing `background_log_prob` config parameter (default -8.0) into the
 - CRF global normalization doesn't solve this either when k=1
 - Background state is the correct approach, works for any k
 - Parameter already exists in config, just needs wiring into softmax
+
+---
+
+## 2025-06-03 Completed
+
+### Viterbi-Max Cumu Fix ✅
+- Split `cumu_prob` (Viterbi max for path) and `forward_cumu` (forward-sum for trust/entropy)
+- Line 1970: `node_b.cumu_prob = best_log_branch_prob + ep; node_b.forward_cumu = log_sum_prev_probs + ep`
+- Added `forward_cumu` + `reverse_dist` fields to TGNode struct
+- **Result**: seq 2128 stays on 149100, edge accuracy 94.5→94.8%
+
+### Reverse Travel Guard ⚠️ Partially Effective
+- Cumulative reverse tracking with `min(30m, 15% edge length)` threshold
+- Works for short edges but not for long edges (3790m edge 101366: 30m/epoch < 30m cap but cumulative never triggers)
+- The real problem at seq 603-635 is NOT reverse — vehicle moves forward on parallel unmodeled road
+
+### All 7 Trajectories GT Segments ✅
+- Traj 11, 12, 13, 14, 21, 22, 23 all labeled in `GT_segments.txt`
+- Parsed into `build_gt_segments.py`, generated `ground_truth.csv` (16,155 rows)
+- `exp6_real_accuracy.py` rewritten for multi-trajectory analysis
+
+### Full Real-Vehicle Results (All 7 Traj)
+
+| Traj | Eval | CMM | FMM |
+|:---:|:---:|:---:|:---:|
+| 11 | 2,439 | 94.5% | 87.4% |
+| 12 | 133 | 100% | 0.0% |
+| 13 | 1,908 | 99.1% | 94.2% |
+| 14 | 352 | 100% | 79.5% |
+| 21 | 3,581 | 98.6% | 92.2% |
+| 22 | 2,123 | 83.1% | 83.8% |
+| 23 | 2,720 | 95.4% | 87.8% |
+| **All** | **13,256** | **94.8%** | **88.1%** |
+
+| Metric | CMM | FMM |
+|--------|:---:|:---:|
+| Edge accuracy | 94.8% | 88.1% |
+| Position error (mean) | 5.4 m | 9.4 m |
+| Position error (P95) | 13.2 m | 40.3 m |
+| ECE | 0.087 | 0.107 |
+| AUC | 0.646 | 0.965 |
+
+### Key Discussions
+
+**H0 Lambda Mechanism Analysis:**
+- Current `LR_t = frac_inside / PHMI` is a category error — numerator (road coverage) and denominator (satellite integrity) are in different probability spaces
+- Proposed three-factor discount: α_gnss (existing) + α_geom (shape similarity) + α_vel (velocity check)
+- α_geom/α_vel deferred as future work — significant new features
+
+**Label Bias / Softmax Overconfidence:**
+- Traj 13 seq 2399: max EP=1e-5 but TW=1.0 because softmax picks best of bad lot
+- PHMI doesn't help when all candidates share same inside-PL pool
+- CRF global normalization doesn't solve it with k=1
+- Fix: wire `background_log_prob` into softmax as pseudo-candidate representing "not on any mapped road"
+
+**Alignment Bug Fixes:**
+- `uni_seq` off-by-one in `align_real_data.py` — seq incremented before GT lookup
+- Mismatch CSV was stale from old CMM run — regenerated from current aligned.csv
+
+---
+
+## 2025-06-04 Schedule
+
+### Priority 1: Background State for Softmax Anti-Overconfidence
+- Wire `background_log_prob` config parameter into per-epoch softmax normalization
+- Insert one pseudo-candidate per epoch with fixed log-prob representing "vehicle not on any mapped road"
+- **Find proper background_log_prob value**: sweep values in {-2, -4, -6, -8, -10} and measure ECE/AUC on real data
+- Test at traj 13 seq 2399: verify TW drops when all road candidates have low EP
+- Expected: ECE ↓, AUC ↑, trust suppression at off-road epochs
+
+### Priority 2: H0 Prior Log Odds — Fix Dead Parameter
+- Wire `h0_prior_log_odds` to actual initialization (line 1467 was fixed, verify sub-trajectory resets at 1521/1584)
+- Test with `h0_prior_log_odds=10` → α₀≈1.0, no initial trust penalty
+
+### Priority 3: Clean Up & Commit
+- Remove remaining debug code if any
+- Commit all fixes to feature branch
+- Update paper Section 6 with real-vehicle results
+
+### Remaining Problems (Deferred)
+| # | Problem | Status |
+|---|---------|--------|
+| 1 | α_geom + α_vel discount framework | Future work (paper limitations) |
+| 2 | 15% reverse guard too permissive for long edges | Existing guard helps; remainder is shapefile completeness |
+| 3 | FMM bad results on traj 12 (0%) | FMM config/hardware issue with very short sub-trajs |
