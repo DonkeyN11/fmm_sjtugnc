@@ -1475,7 +1475,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         for (size_t k = 0; k < tc_raw[start_real_idx].size(); ++k) {
             start_layer.push_back(TGNode{
                 &tc_raw[start_real_idx][k], nullptr, log_eps_raw[start_real_idx][k], 0,
-                -std::numeric_limits<double>::infinity(), 0, 0
+                -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), 0, 0
             });
         }
         tg_ptr->get_layers().push_back(std::move(start_layer));
@@ -1534,7 +1534,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 for (size_t k = 0; k < tc_raw[next_real].size(); ++k) {
                     new_start_layer.push_back(TGNode{
                         &tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
-                        -std::numeric_limits<double>::infinity(), 0, 0
+                        -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), 0, 0
                     });
                 }
                 tg_ptr->get_layers().push_back(std::move(new_start_layer));
@@ -1555,7 +1555,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
             TGLayer next_layer;
             for (size_t k=0; k<tc_raw[next_real].size(); ++k) {
-                next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
+                next_layer.push_back(TGNode{&tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0, -std::numeric_limits<double>::infinity(),
                                            -std::numeric_limits<double>::infinity(), 0, 0});
             }
 
@@ -1596,7 +1596,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     for (size_t k = 0; k < tc_raw[next_real].size(); ++k) {
                         restart_layer.push_back(TGNode{
                             &tc_raw[next_real][k], nullptr, log_eps_raw[next_real][k], 0,
-                            -std::numeric_limits<double>::infinity(), 0, 0
+                            -std::numeric_limits<double>::infinity(), -std::numeric_limits<double>::infinity(), 0, 0
                         });
                     }
                     tg_ptr->get_layers().push_back(std::move(restart_layer));
@@ -1726,13 +1726,15 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
         // projection artifacts rather than reverse travel. Perpendicular projection
         // near polyline vertices can produce offset oscillations even when the
         // vehicle moves forward. This threshold is independent of reverse_tolerance.
-        if ((ca->offset - cb->offset) <= ca->edge->length * 0.15) {
+        double offset_diff = ca->offset - cb->offset;
+        double pct = offset_diff / ca->edge->length * 100.0;
+        if (offset_diff <= ca->edge->length * 0.15) {
             return 0.0;
         }
         // Second guard: if reverse_tolerance is configured, allow additional reverse.
         if (reverse_tolerance > 0) {
             double reverse_limit = ca->edge->length * reverse_tolerance + 1e-7;
-            if ((ca->offset - cb->offset) <= reverse_limit) {
+            if (offset_diff <= reverse_limit) {
                 return 0.0;
             }
         }
@@ -1783,10 +1785,10 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
     for (size_t i = 0; i < layer->size(); ++i) {
         auto &node = (*layer)[i];
         if (node.ep > -std::numeric_limits<double>::infinity()) {
-            node.cumu_prob = node.ep;
-            layer_log_probs.push_back(node.cumu_prob);
+            node.cumu_prob = node.ep; node.forward_cumu = node.ep;
+            layer_log_probs.push_back(node.forward_cumu);
         } else {
-            node.cumu_prob = -std::numeric_limits<double>::infinity();
+            node.cumu_prob = -std::numeric_limits<double>::infinity(); node.forward_cumu = -std::numeric_limits<double>::infinity();
         }
         node.tp = 1.0; 
         node.prev = nullptr;
@@ -1803,7 +1805,7 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
         for (size_t i = 0; i < layer->size(); ++i) {
             auto &node = (*layer)[i];
             if (node.cumu_prob > -std::numeric_limits<double>::infinity()) {
-                double log_norm = node.cumu_prob - log_sum;
+                double log_norm = node.forward_cumu - log_sum;
                 double p_norm = std::exp(log_norm);
                 node.trustworthiness = p_norm;  // filtering posterior
                 if (p_norm > 0.0) {
@@ -1865,6 +1867,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     std::vector<double> sum_tp_raw_A(prev_count, 0.0);
     std::vector<std::vector<double>> tp_raw_matrix(prev_count, std::vector<double>(next_count, 0.0));
     std::vector<std::vector<double>> sp_dist_matrix(prev_count, std::vector<double>(next_count, -1.0));
+    std::vector<std::vector<double>> rev_dist_matrix(prev_count, std::vector<double>(next_count, 0.0));
 
     for (size_t a = 0; a < prev_count; ++a) {
         TGNode &node_a = (*la_ptr)[a];
@@ -1872,11 +1875,31 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
         for (size_t b = 0; b < next_count; ++b) {
             if ((*lb_ptr)[b].c == nullptr) continue;
-            double sp_dist = get_sp_dist(node_a.c, (*lb_ptr)[b].c, config.reverse_tolerance);
+            const Candidate *ca = node_a.c;
+            const Candidate *cb = (*lb_ptr)[b].c;
+            double sp_dist = get_sp_dist(ca, cb, config.reverse_tolerance);
+
+            // ── Cumulative reverse travel guard ──
+            // Same-edge offset regression: accumulate across consecutive epochs.
+            // Uses min(30m, 15% of edge length) as threshold — projection noise
+            // at vertices is <5m, while 30m is clearly real reverse travel.
+            // The 15% cap handles very short edges (<200m).
+            double cumul_rev = 0.0;
+            if (sp_dist >= 0 && ca->edge != nullptr && cb->edge != nullptr &&
+                ca->edge->id == cb->edge->id && ca->offset > cb->offset) {
+                double step_rev = ca->offset - cb->offset;
+                cumul_rev = node_a.reverse_dist + step_rev;
+                double max_reverse = std::min(30.0, ca->edge->length * 0.15);
+                if (cumul_rev > max_reverse) {
+                    sp_dist = -1.0;  // cumulative reverse exceeds threshold → block
+                }
+            }
+
             if (sp_dist >= 0) {
                 double tp_raw = TransitionGraph::calc_tp(sp_dist, eu_dist);
                 tp_raw_matrix[a][b] = tp_raw;
                 sp_dist_matrix[a][b] = sp_dist;
+                rev_dist_matrix[a][b] = cumul_rev;
                 sum_tp_raw_A[a] += tp_raw;
             }
         }
@@ -1908,6 +1931,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         double best_log_branch_prob = -std::numeric_limits<double>::infinity();
         double best_log_tp_norm = -std::numeric_limits<double>::infinity();
         double best_sp_dist = 0.0;
+        double best_rev_dist = 0.0;
 
         for (size_t a = 0; a < prev_count; ++a) {
             TGNode &node_a = (*la_ptr)[a];
@@ -1924,6 +1948,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
                 // 在对数空间内安全相加
                 double log_branch_prob = node_a.cumu_prob + log_tp_norm;
+
                 incoming_log_probs.push_back(log_branch_prob);
 
                 // 记录 Viterbi 最优前驱，用于 backtrack
@@ -1932,6 +1957,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                     best_prev = &node_a;
                     best_log_tp_norm = log_tp_norm;
                     best_sp_dist = sp_dist_matrix[a][b];
+                    best_rev_dist = rev_dist_matrix[a][b];
                 }
             }
         }
@@ -1941,14 +1967,19 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
             double log_sum_prev_probs = log_sum_exp(incoming_log_probs);
             layer_prior_log_probs.push_back(log_sum_prev_probs);  // 记录先验
 
-            node_b.cumu_prob = log_sum_prev_probs + node_b.ep;
+            // Viterbi max: single best path score (for backtrack / optimal path)
+            node_b.cumu_prob = best_log_branch_prob + node_b.ep;
+            // Forward sum: marginal over all incoming paths (for posterior / trust)
+            node_b.forward_cumu = log_sum_prev_probs + node_b.ep;
             if (best_prev != nullptr) {
                 node_b.prev = best_prev;
                 node_b.tp = std::exp(best_log_tp_norm);
                 node_b.sp_dist = best_sp_dist;
+                node_b.reverse_dist = best_rev_dist;
             }
         } else {
             node_b.cumu_prob = -std::numeric_limits<double>::infinity();
+            node_b.forward_cumu = -std::numeric_limits<double>::infinity();
         }
     }
 
@@ -1956,8 +1987,8 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     std::vector<double> layer_log_probs;
     for (size_t b = 0; b < next_count; ++b) {
         TGNode &node_b = (*lb_ptr)[b];
-        if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
-            layer_log_probs.push_back(node_b.cumu_prob);
+        if (node_b.forward_cumu > -std::numeric_limits<double>::infinity()) {
+            layer_log_probs.push_back(node_b.forward_cumu);
         }
     }
 
@@ -1969,8 +2000,8 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
         for (size_t b = 0; b < next_count; ++b) {
             TGNode &node_b = (*lb_ptr)[b];
-            if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
-                double log_norm = node_b.cumu_prob - log_sum;
+            if (node_b.forward_cumu > -std::numeric_limits<double>::infinity()) {
+                double log_norm = node_b.forward_cumu - log_sum;
                 double p_norm = std::exp(log_norm);
                 node_b.trustworthiness = p_norm;  // filtering posterior
                 if (p_norm > 0.0) {
@@ -2006,7 +2037,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     has_valid_candidate = false;
     for (size_t b = 0; b < next_count; ++b) {
         TGNode &node_b = (*lb_ptr)[b];
-        if (node_b.cumu_prob > -std::numeric_limits<double>::infinity()) {
+        if (node_b.forward_cumu > -std::numeric_limits<double>::infinity()) {
             node_b.posterior_entropy = layer_entropy;
             node_b.delta_entropy = delta_layer_entropy;
             has_valid_candidate = true;
