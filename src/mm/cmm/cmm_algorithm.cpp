@@ -1332,7 +1332,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         int end_real_idx = sub_indices.back();
         
         TGOpath tg_opath = tg_ptr->backtrack();
-        
+
         if (tg_opath.empty()) {
             final_results.push_back(create_fallback_result(start_real_idx, end_real_idx, MatchStatus::FAILED_DISCONNECTED));
             return;
@@ -1971,6 +1971,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
             node_b.cumu_prob = best_log_branch_prob + node_b.ep;
             // Forward sum: marginal over all incoming paths (for posterior / trust)
             node_b.forward_cumu = log_sum_prev_probs + node_b.ep;
+
             if (best_prev != nullptr) {
                 node_b.prev = best_prev;
                 node_b.tp = std::exp(best_log_tp_norm);
