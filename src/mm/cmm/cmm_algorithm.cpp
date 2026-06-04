@@ -579,7 +579,7 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double max_interval_arg,
                                                    double trustworthiness_threshold_arg,
                                                    double map_error_std_arg,
-                                                   double background_log_prob_arg,
+                                                   double background_prob_arg,
                                                    double phmi_arg,
                                                    int lag_steps_arg,
                                                    double phmi_pl_multiplier_arg,
@@ -596,7 +596,7 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       max_interval(max_interval_arg),
       trustworthiness_threshold(trustworthiness_threshold_arg),
       map_error_std(map_error_std_arg),
-      background_log_prob(background_log_prob_arg),
+      background_prob(background_prob_arg),
       phmi(phmi_arg),
       lag_steps(lag_steps_arg),
       phmi_pl_multiplier(phmi_pl_multiplier_arg),
@@ -613,7 +613,7 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("gap_bridging {} max_gap_distance {}", enable_gap_bridging, max_gap_distance);
     SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold {}",
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
-    SPDLOG_INFO("map_error_std {} background_log_prob {} phmi {} lag_steps {}", map_error_std, background_log_prob, phmi, lag_steps);
+    SPDLOG_INFO("map_error_std {} background_prob {} phmi {} lag_steps {}", map_error_std, background_prob, phmi, lag_steps);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -640,7 +640,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
 
     // New parameters for additive map noise and background noise normalization
     double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
-    double background_log_prob = xml_data.get("config.parameters.background_log_prob", -20.0);
+    double background_prob = xml_data.get("config.parameters.background_prob", 0.1);
 
     // Fixed-lag smoothing: 0 = realtime filtering, N = delay N steps
     int lag_steps = xml_data.get("config.parameters.lag_steps", 0);
@@ -654,7 +654,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     filtered,
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob, phmi, lag_steps,
+                                    map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds};
 }
 
@@ -682,7 +682,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
 
     // New parameters for additive map noise and background noise normalization
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
-    double background_log_prob = arg_data.count("background_log_prob") ? arg_data["background_log_prob"].as<double>() : -20.0;
+    double background_prob = arg_data.count("background_prob") ? arg_data["background_prob"].as<double>() : 0.1;
     int lag_steps = arg_data.count("lag_steps") ? arg_data["lag_steps"].as<int>() : 0;
     double phmi_pl_multiplier = arg_data.count("phmi_pl_multiplier") ? arg_data["phmi_pl_multiplier"].as<double>() : 5.0;
     double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
@@ -692,7 +692,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     filtered,
                                     enable_gap, max_gap, min_gps_error,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, background_log_prob, phmi, lag_steps,
+                                    map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds};
 }
 
@@ -725,7 +725,7 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("0.0"))
         ("map_error_std", "Map error standard deviation in degrees for additive noise (default 5e-5 ≈ 5m)",
          cxxopts::value<double>()->default_value("5.0e-5"))
-        ("background_log_prob", "Background noise log probability for normalization (default -20.0)",
+        ("background_prob", "Background state linear probability for off-road/unmapped-road (default 0.1)",
          cxxopts::value<double>()->default_value("-20.0"))
         ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
          cxxopts::value<double>()->default_value("1.0e-5"))
@@ -748,7 +748,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
     oss << "--trustworthiness_threshold (optional) <double>: trustworthiness posterior [0,1] threshold for filtering (0.0)\n";
     oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
-    oss << "--background_log_prob (optional) <double>: Background noise log probability for normalization (-20.0)\n";
+    oss << "--background_prob (optional) <double>: Background state linear probability for off-road/unmapped-road (0.1)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
     oss << "--lag_steps (optional) <int>: Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)\n";
 }
@@ -1189,6 +1189,29 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
             }
         }
 
+        // ── 3. Background state: constant-discount off-road pseudo-candidate ──
+        // Appends a background candidate representing "vehicle not on any mapped road."
+        // Real candidates are scaled by (1 - bg_prob) to make room; bg gets bg_prob.
+        // This preserves PHMI normalization (inside/outside PL split) and adds an
+        // anti-label-bias guard: when all road candidates have low EP, the background
+        // absorbs probability mass and prevents softmax overconfidence.
+        if (config.background_prob > 0.0 && config.background_prob < 1.0) {
+            double bg_log = std::log(config.background_prob);
+            double real_scale = 1.0 - config.background_prob;
+            for (auto &lep : log_emission_probs) {
+                if (lep > -std::numeric_limits<double>::infinity()) {
+                    lep = std::log(std::exp(lep) * real_scale);
+                }
+            }
+            Candidate bg{};
+            bg.index = next_candidate_index++;
+            bg.edge = nullptr;  // null edge → skipped in TP computation (off-road)
+            bg.offset = 0.0;
+            bg.dist = std::numeric_limits<double>::infinity();
+            selected_candidates.push_back(std::move(bg));
+            log_emission_probs.push_back(bg_log);
+        }
+
         SPDLOG_TRACE("Point {}: {} candidates kept", i, selected_candidates.size());
         result.candidates.push_back(std::move(selected_candidates));
         result.emission_probabilities.push_back(std::move(log_emission_probs));
@@ -1338,6 +1361,28 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             return;
         }
 
+        // ── Compute path posterior P(H* | z_{1:T}) = w(H*) / Z ──
+        // w(H*) = exp(δ_T(x_T*))  — Viterbi terminal cumu_prob
+        // Z = Σ_i α_T(i)          — forward probability at final layer
+        double path_posterior = 0.0;
+        {
+            const auto &last_layer = tg_ptr->get_layers().back();
+            std::vector<double> final_forward;
+            for (const auto &node : last_layer) {
+                if (node.forward_cumu > -std::numeric_limits<double>::infinity())
+                    final_forward.push_back(node.forward_cumu);
+            }
+            double Z_log = final_forward.empty()
+                ? -std::numeric_limits<double>::infinity()
+                : log_sum_exp(final_forward);
+            double w_log = tg_opath.back()->cumu_prob;
+            if (Z_log > -std::numeric_limits<double>::infinity() &&
+                w_log > -std::numeric_limits<double>::infinity()) {
+                double log_post = std::max(-745.0, w_log - Z_log);
+                path_posterior = std::exp(log_post);
+            }
+        }
+
         // Build a continuous trajectory for the sub-segment to ensure correct distance calculations
         CMMTrajectory segment_traj;
         segment_traj.id = traj.id;
@@ -1387,17 +1432,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             double sp = (i == 0) ? 0.0 : node->sp_dist;
             double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
 
-            double trust = node->trustworthiness;
-
-            // Apply trajectory-global H0 posterior discount: trust' = α_t × trust
-            // λ_t = exp(h0_lambda_vec[i]) for i>0, λ₀=exp(0) for i=0
-            if (h0_lambda_vec != nullptr && config.phmi > 0 && config.lag_steps >= 0) {
-                double log_lambda_i = (i > 0 && i - 1 < h0_lambda_vec->size())
-                    ? (*h0_lambda_vec)[i - 1] : 0.0;
-                double lambda_i = std::exp(std::max(-700.0, std::min(700.0, log_lambda_i)));
-                double alpha_i = lambda_i / (1.0 + lambda_i);
-                trust *= alpha_i;
-            }
+            // TW = P(H* | z_{1:T}) = w(H*) / Z  (path posterior, same for all epochs)
+            double trust = path_posterior;
 
             double h0_lambda_val = (h0_lambda_vec != nullptr && i > 0 && i - 1 < h0_lambda_vec->size())
                 ? std::exp(std::max(-700.0, std::min(700.0, (*h0_lambda_vec)[i - 1]))) : 1.0;
@@ -1781,16 +1817,37 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
 
     std::vector<double> layer_log_probs;
 
-    // 1. 初始化首层的 cumu_prob (此时 EP 已经在外部做过 1-PHMI 的归一化分配)
+    // 1. 初始化首层的 cumu_prob 和 forward_cumu
+    //    δ₁(i) = π(i) · e₁(i)  with π(i) = 1/K (uniform prior over real road candidates)
+    //    α₁(i) = π(i) · e₁(i)  (forward = same as Viterbi at first layer)
+    //    Background pseudo-candidate (c==nullptr) gets no π multiplier — its prior
+    //    is embedded in its emission probability.
+    size_t num_real = 0;
+    for (const auto &node : *layer) {
+        if (node.c != nullptr && node.ep > -std::numeric_limits<double>::infinity())
+            ++num_real;
+    }
+    double log_uniform_prior = (num_real > 0)
+        ? -std::log(static_cast<double>(num_real)) : 0.0;
+
     for (size_t i = 0; i < layer->size(); ++i) {
         auto &node = (*layer)[i];
         if (node.ep > -std::numeric_limits<double>::infinity()) {
-            node.cumu_prob = node.ep; node.forward_cumu = node.ep;
+            if (node.c != nullptr) {
+                // Real road candidate: δ₁(i) = log(1/K) + log(e₁(i))
+                node.cumu_prob = log_uniform_prior + node.ep;
+                node.forward_cumu = log_uniform_prior + node.ep;
+            } else {
+                // Background pseudo-candidate: no π multiplier
+                node.cumu_prob = node.ep;
+                node.forward_cumu = node.ep;
+            }
             layer_log_probs.push_back(node.forward_cumu);
         } else {
-            node.cumu_prob = -std::numeric_limits<double>::infinity(); node.forward_cumu = -std::numeric_limits<double>::infinity();
+            node.cumu_prob = -std::numeric_limits<double>::infinity();
+            node.forward_cumu = -std::numeric_limits<double>::infinity();
         }
-        node.tp = 1.0; 
+        node.tp = 1.0;
         node.prev = nullptr;
     }
 
@@ -1939,11 +1996,10 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
             double tp_raw = tp_raw_matrix[a][b];
             double sum_tp_raw = sum_tp_raw_A[a];
-            (void)sum_tp_raw; // suppressed: only used in normalization (currently bypassed)
 
-            if (tp_raw > 0) {
-                // TEST: bypass per-predecessor normalization, use raw tp directly
-                double linear_tp_norm = tp_raw;
+            if (tp_raw > 0 && sum_tp_raw > 0) {
+                // Row-normalize: for source a, Σ_j a(a,j) = 1
+                double linear_tp_norm = tp_raw / sum_tp_raw;
                 double log_tp_norm = std::log(linear_tp_norm);
 
                 // 在对数空间内安全相加

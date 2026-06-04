@@ -137,7 +137,7 @@ struct CovarianceMapMatchConfig {
                            double max_interval_arg = 180.0, /* in seconds */
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double map_error_std_arg = 5.0e-6, /* in degrees */
-                           double background_log_prob_arg = -8.0, /* log-prob of background noise */
+                           double background_prob_arg = 0.1, /* linear prob of off-road background state */
                            double phmi_arg = 1.0e-5,
                            int lag_steps_arg = 0,
                            double phmi_pl_multiplier_arg = 5.0,
@@ -164,7 +164,7 @@ struct CovarianceMapMatchConfig {
 
     // --- New Parameters for Additive Map Noise and Background Noise ---
     double map_error_std;               /**< Map error standard deviation in degrees (default 5e-5 ≈ 5m). Added to GPS variance. */
-    double background_log_prob;         /**< Background noise log probability (default -20.0). Used as "null hypothesis" in normalization. */
+    double background_prob;             /**< Background state linear probability (default 0.1). Probability that vehicle is not on any mapped road edge. */
     int lag_steps;                      /**< Fixed-lag smoothing steps: 0=realtime filtering, N=delay N steps for backward evidence */
     double h0_prior_log_odds;           /**< Log-odds of null hypothesis prior: log(P(H0)/P(¬H0)). Default 0 (λ₀=1). */
 
