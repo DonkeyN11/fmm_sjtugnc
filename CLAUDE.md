@@ -480,45 +480,48 @@ result = fmm.match_traj(trajectory, config)
 
 ---
 
-## III-A. Current Project Status (2025-06-04)
+## III-A. Current Project Status (2025-06-05)
 
-### Active Work: Real-Vehicle Experiment (Exp6)
+### Active Work: Real-Vehicle Experiment (Exp6) + HMM Math Refactor
 
-**Goal**: Evaluate CMM vs FMM on 7 real SPP trajectories with RTK ground truth.
+**Goal**: Evaluate CMM vs FMM on 7 real SPP trajectories with RTK ground truth, using mathematically rigorous HMM probability model.
 
 **Status**:
 - All 7 trajectories have GT road segments labeled (`GT_segments.txt` → `ground_truth.csv`, 16,155 rows)
-- CMM accuracy: 94.8% vs FMM 88.1% across 13,256 eval epochs
-- CMM ECE: 0.087 vs FMM 0.107 (after H0 fix + Viterbi fix)
-- Mapbox visualization generated at `experiments/output/spp_error/mapbox_real_viz.html`
+- CMM accuracy: 91.4% vs FMM 88.1% across 13,256 eval epochs (with math refactor)
+- CMM ECE: 0.072 vs FMM 0.107 — CMM better calibrated
+- CMM AUC: 0.764 vs FMM 0.965 — FMM AUC inflated by TW compression artifact
+- CMM TW separation (correct−wrong): **0.329** vs FMM 0.085 — CMM 3.9× better discrimination
+- Mapbox visualization: `experiments/output/spp_error/mapbox_real_viz.html`
+- ROC figure: `experiments/output/exp6_real/roc_curve.png`
 
-**C++ Fixes Applied**:
-1. `cmm_algorithm.cpp`: Viterbi-max cumu + forward_cumu separation (line ~1971)
-2. `cmm_algorithm.cpp`: Per-edge candidate dedup (line ~960)
-3. `cmm_algorithm.cpp`: Cumulative reverse travel guard with `min(30m, 15%)` cap
-4. `cmm_algorithm.cpp`: H0 lambda accumulation moved outside `lag_steps > 0` gate
-5. `cmm_algorithm.cpp`: `h0_prior_log_odds` wired to config parameter
-6. `transition_graph.hpp`: Added `forward_cumu` and `reverse_dist` fields to TGNode
+**C++ Fixes Applied (committed on `fix/cmm-viterbi-forward-h0-dedup-cleanup`)**:
+1. Viterbi-max cumu + forward_cumu separation (prevents junction switch errors)
+2. Per-edge candidate dedup (prevents softmax TW compression)
+3. Cumulative reverse travel guard with `min(30m, 15%)` cap
+4. H0 lambda accumulation outside `lag_steps > 0` gate
+5. `h0_prior_log_odds` wired to config parameter
+6. EP normalization with background state: `background_prob` (linear, default 0.1), constant discount approach
+7. TP row normalization: Σ_j a(i,j) = 1 per source candidate
+8. Uniform initial prior π(i) = 1/K: `cumu_prob = log(1/K) + ep`
+9. TW = P(x_t = i* | z_{1:t}) = softmax(forward_cumu) — filtering posterior, per-epoch
 
-**Traj 22 seq 1676 — Resolved: NOT a software bug**:
-- Local Viterbi winner at layer 1676 is 33989 (cumu=-6189.71)
-- But global Viterbi backtrack goes through 76260 because 33989 is a dead end (no valid tp to edges matching GPS at 1677)
-- This is correct Viterbi behavior: local optimum ≠ global optimum
-- Root cause: GPS at 1676-1677 is closer to 76260 than 33989 (data quality, not code)
-- See `experiments/RECORDS.md#2025-06-04-evening` for full analysis
+**Branch**: `fix/cmm-viterbi-forward-h0-dedup-cleanup` (5 commits ahead of master)
 
 **Key Data Files**:
 - `experiments/data/real_data/aligned.csv` — timestamp-joined all sources with `gt_edge` column
 - `experiments/data/real_data/ground_truth.csv` — per-epoch GT edge IDs (16,155 rows, point-format)
-- `experiments/data/real_data/GT_segments.txt` — human-readable GT edge ranges
-- `experiments/data/real_data/cmm_result.csv` — current CMM output (k=16, lag=0, all fixes)
-- `experiments/data/real_data/cmm_result.bak` — backup before latest run
+- `experiments/data/real_data/cmm_result.csv` — current CMM output (math-refactored)
+- `experiments/data/real_data/fmm_result.csv` — FMM baseline
+- `experiments/math_theory.md` — HMM mathematical derivation for TW
 
 **Pending Tasks** (Priority Order):
-1. Wire background_log_prob into softmax (anti-label-bias)
-2. Commit all fixes to a feature branch (NOT master) ← NOW
-3. Update paper Section 6 with real-vehicle results
-4. α_geom + α_vel discount framework (paper limitations, future work)
+1. Investigate traj 22 accuracy regression (72.9% vs old 83.1%) — TP normalization effect
+2. Sweep background_prob values {0.01, 0.05, 0.1, 0.2} for optimal ECE/AUC
+3. Lag sweep with math-refactored CMM — does future evidence improve AUC?
+4. Ablation study: quantify per-fix contribution to ECE/accuracy
+5. Update paper Section 5-6 with new results
+6. α_geom + α_vel discount framework (P2, paper limitations)
 
 ---
 

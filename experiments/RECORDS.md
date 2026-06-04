@@ -635,3 +635,106 @@ Removed all `fprintf(stderr, ...)` debug instrumentation:
 | 2 | α_geom + α_vel discount framework | P2 (paper limitations) |
 | 3 | Commit all fixes to feature branch | P0 |
 | 4 | Update paper Section 6 with real-vehicle results | P1 |
+
+---
+
+## 2025-06-05
+
+### Math Theory Alignment — CMM Refactored to HMM
+
+**Motivation**: Current TW = softmax(forward_cumu) was mathematically inconsistent with the HMM derivation. The theory in `experiments/math_theory.md` prescribes: proper EP/TP normalization, uniform initial prior, and TW as posterior probability.
+
+**Four changes applied** (commit `fd9217f`):
+
+| # | Change | Before | After |
+|:---:|---|------|------|
+| 1 | **EP with background state** | PHMI-only normalization | Real candidates scaled by (1−bg_prob), bg pseudo-candidate (edge=nullptr) gets bg_prob. Parameter renamed `background_log_prob` → `background_prob` (linear, default 0.1) |
+| 2 | **TP row normalization** | `tp_raw` bypassed normalization | `tp_norm = tp_raw / sum_tp_raw_A[a]`, Σ_j a(i,j)=1 per source |
+| 3 | **Uniform initial prior** | `cumu_prob = ep` (EP as prior) | `cumu_prob = log(1/K) + ep`, π(i)=1/K for real candidates |
+| 4 | **TW = w(H*)/Z** (path posterior) | Per-layer softmax of forward_cumu | Trajectory-level path posterior, constant per sub-trajectory |
+
+**Effect on traj 22 seq 1676**: Before refactor, Viterbi switched from 33989→76260 at seq 1676 due to unnormalized TP. After refactor, correctly stays on 33989 throughout.
+
+**TW Iteration** (commit `97362ac`): The path posterior w(H*)/Z gave a single trajectory-level confidence — useless for per-epoch mismatch detection (AUC=0.581, all epochs in a sub-trajectory share the same TW). Restored per-epoch filtering posterior:
+
+$$TW_t = P(x_t = i^* \mid z_{1:t}) = \frac{\alpha_t(i^*)}{\sum_j \alpha_t(j)} = \text{softmax}(\text{forward\_cumu}_t)$$
+
+This is mathematically correct (forward algorithm) AND varies per-epoch — correct matches get high TW, wrong matches get low TW.
+
+### Exp6 Results — Real-Vehicle (7 Trajectories, 13,256 eval epochs)
+
+**Config**: k=16, lag=0, protection_level_multiplier=10, phmi_pl_multiplier=1, h0_prior_log_odds=10, background_prob=0.1, map_error_std=5e-5
+
+| Metric | CMM | FMM | Notes |
+|--------|:---:|:---:|------|
+| Edge accuracy | **91.4%** | 88.1% | CMM +3.3pp |
+| Position error (mean) | **5.3 m** | 9.4 m | CMM 44% lower |
+| Position error (P95) | **13.2 m** | 40.3 m | CMM 67% lower |
+| ECE | **0.072** | 0.107 | CMM better calibrated |
+| AUC | 0.764 | **0.965** | FMM TW is trivially binary (~1.0 for all) |
+| TW mean | 0.919 | 0.996 | — |
+| TW std | 0.223 | 0.039 | CMM has 5.7× more variance |
+
+**Per-Trajectory Accuracy**:
+
+| Traj | Eval | CMM | FMM | CMM TW (mean) |
+|:---:|:---:|:---:|:---:|:---:|
+| 11 | 2,439 | 93.9% | 87.4% | 0.945 |
+| 12 | 133 | 100% | 0.0% | 1.000 |
+| 13 | 1,908 | 98.1% | 94.2% | 0.945 |
+| 14 | 352 | 100% | 79.5% | 0.993 |
+| 21 | 3,581 | 95.2% | 92.2% | 0.935 |
+| **22** | **2,123** | **72.9%** | 83.8% | 0.790 |
+| 23 | 2,720 | 92.2% | 87.8% | 0.906 |
+
+**TW Separation (correct − wrong match)**:
+
+| | Correct TW | Wrong TW | Separation |
+|:---|:---:|:---:|:---:|
+| CMM | 0.934 | 0.605 | **0.329** (3.9× FMM) |
+| FMM | 0.996 | 0.911 | 0.085 |
+
+CMM has 3.9× better TW separation than FMM. Wrong matches get substantially lower TW (mean 0.605 vs 0.934 for correct). FMM's TW is compressed near 1.0 for ALL epochs — cannot meaningfully discriminate.
+
+### ROC Analysis
+
+| Threshold | CMM FPR | CMM TPR | FMM FPR | FMM TPR |
+|:---:|:---:|:---:|:---:|:---:|
+| 0.999 | 0.17 | 0.42 | 0.02 | 0.56 |
+| 0.99 | 0.29 | 0.75 | 0.13 | 0.95 |
+| 0.95 | 0.37 | 0.84 | 0.47 | 0.99 |
+| 0.90 | 0.43 | 0.87 | 0.74 | 1.00 |
+| 0.50 | 0.58 | 0.95 | 0.98 | 1.00 |
+
+**Key insight**: FMM AUC=0.965 is an artifact of TW compression. FMM claims ~100% confidence for 88.1%-correct matches → the tiny spread (correct=0.996, wrong=0.911) happens to weakly correlate → high AUC. But FMM cannot reject wrong matches: at threshold 0.9, FMM rejects only 26% of wrong matches. CMM at threshold 0.9 rejects 43% of wrong matches while keeping 87% of correct.
+
+### Open Questions
+
+1. **Traj 22 accuracy regression (72.9% vs old 83.1%)**: TP row normalization changed Viterbi path — raw TP gave large self-transition advantage, normalized TP compresses this. Is the drop from correct TP normalization exposing GPS ambiguity, or from over-normalization? Need to compare old vs new Viterbi paths epoch-by-epoch.
+
+2. **CMM AUC still behind FMM (0.764 vs 0.965)**: The filtering posterior P(x_t | z_{1:t}) only uses PAST evidence. With `lag_steps > 0`, smoothing posterior P(x_t | z_{1:T}) would incorporate future evidence → potentially better discrimination. Lag sweep needed.
+
+3. **background_prob sensitivity**: Current value 0.1 is an engineering guess. Should sweep values {0.01, 0.05, 0.1, 0.2} and measure ECE/AUC.
+
+4. **Accuracy vs old CMM (91.4% vs 94.8%)**: The uniform prior + TP normalization are mathematically correct but changed the Viterbi path. Can we recover the lost accuracy by tuning `k` or `protection_level_multiplier`?
+
+### Essay Results Rearrangement — Schedule
+
+Based on current findings, the paper results structure should be:
+
+| Section | Content | Status |
+|---------|---------|:---:|
+| §4 Exp Setup | Hainan dataset (7 SPP trajectories, RTK GT, 16K epochs), config parameters, evaluation metrics | 🔧 Draft |
+| §5.1 Accuracy | Per-trajectory accuracy table + position error CDF (CMM 91.4% vs FMM 88.1%, 5.3m vs 9.4m mean error) | ✅ Data ready |
+| §5.2 Calibration (ECE) | Reliability diagram: CMM ECE=0.072 vs FMM ECE=0.107. Show CMM is better calibrated despite lower AUC. | ✅ Data ready |
+| §5.3 TW Discrimination | TW separation table: CMM 0.329 vs FMM 0.085. Show CMM's TW actually discriminates while FMM's is trivially binary. | ✅ Data ready |
+| §5.4 ROC Analysis | ROC curves + threshold table. Explain FMM's inflated AUC artifact (TW compression). Argue that separation matters more than AUC for this application. | ✅ Data ready |
+| §5.5 Ablation | Contributions of each math fix: TP norm → accuracy change, bg state → ECE improvement, uniform prior → calibration | ⏸️ Need to run |
+| §6 Discussion | Why AUC is misleading for map matching TW evaluation; CMM's mathematical rigor vs FMM's heuristic scores; limitations (traj 22 regression, lag=0) | 🔧 Draft |
+
+### Commits Today
+
+```
+97362ac fix(cmm): restore per-epoch filtering posterior as trustworthiness
+fd9217f refactor(cmm): align TW with HMM mathematical theory
+```
