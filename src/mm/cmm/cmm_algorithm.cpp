@@ -1361,28 +1361,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             return;
         }
 
-        // ── Compute path posterior P(H* | z_{1:T}) = w(H*) / Z ──
-        // w(H*) = exp(δ_T(x_T*))  — Viterbi terminal cumu_prob
-        // Z = Σ_i α_T(i)          — forward probability at final layer
-        double path_posterior = 0.0;
-        {
-            const auto &last_layer = tg_ptr->get_layers().back();
-            std::vector<double> final_forward;
-            for (const auto &node : last_layer) {
-                if (node.forward_cumu > -std::numeric_limits<double>::infinity())
-                    final_forward.push_back(node.forward_cumu);
-            }
-            double Z_log = final_forward.empty()
-                ? -std::numeric_limits<double>::infinity()
-                : log_sum_exp(final_forward);
-            double w_log = tg_opath.back()->cumu_prob;
-            if (Z_log > -std::numeric_limits<double>::infinity() &&
-                w_log > -std::numeric_limits<double>::infinity()) {
-                double log_post = std::max(-745.0, w_log - Z_log);
-                path_posterior = std::exp(log_post);
-            }
-        }
-
         // Build a continuous trajectory for the sub-segment to ensure correct distance calculations
         CMMTrajectory segment_traj;
         segment_traj.id = traj.id;
@@ -1432,8 +1410,10 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             double sp = (i == 0) ? 0.0 : node->sp_dist;
             double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
 
-            // TW = P(H* | z_{1:T}) = w(H*) / Z  (path posterior, same for all epochs)
-            double trust = path_posterior;
+            // TW = P(x_t = i* | z_{1:t}) — filtering posterior of the Viterbi winner.
+            // Computed by the forward algorithm: α_t(i) / Σ_j α_t(j) = softmax(forward_cumu).
+            // This is a per-epoch, per-candidate probability that varies with local evidence.
+            double trust = node->trustworthiness;
 
             double h0_lambda_val = (h0_lambda_vec != nullptr && i > 0 && i - 1 < h0_lambda_vec->size())
                 ? std::exp(std::max(-700.0, std::min(700.0, (*h0_lambda_vec)[i - 1]))) : 1.0;
