@@ -133,20 +133,89 @@ All experiments use the same HMM and matching parameters:
 
 ### CMM Configuration
 ```xml
-<k>16</k>
-<min_candidates>1</min_candidates>
-<protection_level_multiplier>3</protection_level_multiplier>
-<reverse_tolerance>0.0</reverse_tolerance>
-<normalized>false</normalized>
-<use_mahalanobis>true</use_mahalanobis>
-<window_length>100</window_length>
-<filtered>false</filtered>
-<max_interval>180.0</max_interval>
-<trustworthiness_threshold>0.0</trustworthiness_threshold>
-<phmi>0.00001</phmi>
-<lag_steps>0</lag_steps>
-<phmi_pl_multiplier>1</phmi_pl_multiplier>
-<h0_prior_log_odds>0</h0_prior_log_odds>
+<?xml version="1.0" encoding="UTF-8"?>
+<config>
+  <input>
+    <network>
+      <file>input/map/hainan/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+
+    <ubodt>
+      <file>input/map/hainan_ubodt_indexed.bin</file>
+    </ubodt>
+
+    <gps>
+      <file>experiments/data/real_data/cmm_input_points.csv</file>
+      <id>id</id>
+      <x>x</x>
+      <y>y</y>
+      <timestamp>timestamp</timestamp>
+      <sde>sde</sde>
+      <sdn>sdn</sdn>
+      <sdu>sdu</sdu>
+      <sdne>sdne</sdne>
+      <sdeu>sdeu</sdeu>
+      <sdun>sdun</sdun>
+      <protection_level>protection_level</protection_level>
+    </gps>
+  </input>
+
+  <output>
+    <file>experiments/data/real_data/cmm_result.csv.csv</file>
+    <point_mode>true</point_mode>
+    <fields>
+      <seq/>
+      <timestamp/>
+      <ogeom/>
+      <cpath/>
+      <tpath/>
+      <opath/>
+      <pgeom/>
+      <!-- <eu_dist/> -->
+      <!-- <sp_dist/> -->
+      <ep/>
+      <tp/>
+      <trustworthiness/>
+      <n_best_trustworthiness/>
+      <candidates/>
+      <status/>
+      <delta_entropy/>
+      <posterior_entropy/>
+      <h0_lambda/>
+      <cumu_prob/>
+      <!-- <error/> -->
+    </fields>
+  </output>
+
+  <parameters>
+    <k>16</k>
+    <min_candidates>1</min_candidates>
+    <protection_level_multiplier>10</protection_level_multiplier>
+    <reverse_tolerance>0.0</reverse_tolerance>
+    <normalized>false</normalized>
+    <use_mahalanobis>true</use_mahalanobis>
+    <window_length>100</window_length>
+    <filtered>false</filtered>
+    <max_interval>180.0</max_interval>
+    <trustworthiness_threshold>10.0</trustworthiness_threshold>
+    <phmi>0.00001</phmi>
+    <lag_steps>0</lag_steps>
+    <phmi_pl_multiplier>1</phmi_pl_multiplier>
+    <h0_prior_log_odds>10</h0_prior_log_odds>
+  </parameters>
+
+  <other>
+    <log_level>2</log_level>
+    <use_omp>true</use_omp>
+    <step>500</step>
+    <convert_to_projected>false</convert_to_projected>
+    <margin_used_trustworthiness>false</margin_used_trustworthiness>
+  </other>
+</config>
+
 ```
 
 ### FMM Configuration

@@ -512,3 +512,126 @@ Wire the existing `background_log_prob` config parameter (default -8.0) into the
 | 1 | α_geom + α_vel discount framework | Future work (paper limitations) |
 | 2 | 15% reverse guard too permissive for long edges | Existing guard helps; remainder is shapefile completeness |
 | 3 | FMM bad results on traj 12 (0%) | FMM config/hardware issue with very short sub-trajs |
+
+---
+
+## 2025-06-04 Morning
+
+### Mismatch Analysis — All 7 Trajectories
+- Generated `all_mismatches.csv` (687 mismatches across 5 trajectories)
+- Traj 22 worst (359 mismatches, 83.1% CMM accuracy)
+- Top pattern: 76260↔33989 flip-flop (200 epochs)
+
+### Deep Dive: Traj 22 seq 1676 76260 vs 33989
+
+**User's question**: Why does CMM choose 76260 (reverse direction) over 33989 (correct forward direction) at seq 1676, when reverse_tolerance=0 should block reverse travel?
+
+**Investigation findings**:
+
+1. **Seq 1675→1676 is a sub-trajectory boundary**: seq 1675 has non-empty tpath (end of sub-trajectory A). The prev layer with 33989@cumu=-6188.18 is the last layer of sub-trajectory A.
+
+2. **Viterbi layer computation is correct**: `FINAL_WINNER edge=33989 cumu=-6189.71` at the layer where prev has 33989@-6188. The layer-level Viterbi max correctly picks 33989 over 76260 (-6195.40).
+
+3. **CSV shows wrong result**: `cpath=76260 cumu=-6195.40` in cmm_result.csv at seq 1676. The cumu value (-6195.40) matches a non-winning candidate (b=76260), not the Viterbi winner (-6189.71).
+
+4. **Root cause is in sub-trajectory gap-bridging**: The discrepancy between layer computation (correct) and CSV output (wrong) indicates that `process_sub_segment` or the gap-bridging logic is selecting the wrong node for the CSV output. This is a sub-trajectory boundary handling bug, not a Viterbi or TP bug.
+
+5. **76040 is NOT in reverse on its own edge**: The 76260 candidate at seq 1676 has same-edge self-transition TP=1.0 from 76260@seq1675 (at the junction point). The projection on 76260 stays at the same junction coordinate, so offset doesn't change → no reverse detected. The candidate is "stuck" at a junction, which is a separate geometric issue.
+
+### C++ Fixes Applied Today
+| # | Fix | Status |
+|---|-----|--------|
+| 1 | Viterbi-max cumu + forward-cumu separation | ✅ Working |
+| 2 | Per-edge candidate dedup | ✅ Working |
+| 3 | Cumulative reverse guard (30m cap + 15% edge) | ✅ Applied but not exercised |
+| 4 | H0 lambda accumulation outside lag gate | ✅ Applied earlier |
+| 5 | h0_prior_log_odds wired | ✅ Applied earlier |
+
+### Debug Code Active in C++ (MUST REMOVE)
+- `cmm_algorithm.cpp`: `FINAL_WINNER` fprintf near line 2092, `EPOCH_1676` fprintf near line 1987
+- `transition_graph.cpp`: Clean (debug removed)
+- **BEFORE next session**: remove all `fprintf(stderr, ...)` debug lines
+
+### Next Session Priority 1: Fix Sub-Trajectory Boundary Bug
+- The Viterbi layer for seq 1676 correctly selects 33989 (cumu=-6189.71)
+- But process_sub_segment outputs 76260 (cumu=-6195.40) in the CSV
+- Investigate: does the gap-bridging use a different node selection than the layer Viterbi?
+- Track: where does `tg_opath` get its nodes for the boundary layer?
+- Verify: does `process_sub_segment` call `backtrack()` correctly across sub-trajectory boundaries?
+
+### Remaining Issues
+| # | Issue | Priority |
+|---|-------|:---:|
+| 1 | Sub-trajectory boundary: CSV shows wrong winner | P0 |
+| 2 | Background state for softmax (anti-label-bias) | P1 |
+| 3 | α_geom + α_vel discount framework | P2 (paper limitations) |
+| 4 | Remove debug fprintf calls | P0 (before commit) |
+| 5 | Commit all fixes to feature branch | P1 |
+
+---
+
+## 2025-06-04 Evening
+
+### Root Cause Analysis: Traj 22 seq 1676 — 33989 vs 76260
+
+**Two-phase investigation** with instrumented debug fprintf in `backtrack()`, `process_sub_segment()`, and gap detection.
+
+#### Phase 1 — Gap Detection
+
+- **GAP_DETECTED: 0** across all 7 trajectories. The sub-trajectory at 1675→1676 is NOT caused by speed/time gap detection (line 1516).
+- **PROCESS_SUB_SEGMENT: 8** (not 11). Traj 22 has **1 single sub-segment** (2551 layers, no split).
+- The transition 1675→1676 is processed normally through `update_layer_cmm`.
+
+#### Phase 2 — EPOCH_1676 Viterbi Layer Analysis
+
+The EPOCH_1676 debug (triggered when prev layer has 33989@cumu≈-6188) reveals the 16-candidate layer at seq 1676:
+
+| Candidate | cumu (Viterbi max) | Best branch | EP (log) |
+|-----------|:---:|---|---|
+| **b=33989** | **-6189.71** (LOCAL WINNER) | 33989→33989 tp=0.993 | -1.519 |
+| b=76260 | -6195.40 | 33989→76260 tp=0.00165 | -0.803 |
+
+**Layer 1676 local winner: 33989.** Viterbi max correctly picks 33989 because self-transition tp=0.993 beats cross-edge tp=0.00165.
+
+#### Why BACKTRACK Returns 76260 (the REAL answer)
+
+The **global Viterbi path** (from backward trace) goes through 76260 at layer 1676:
+
+```
+Layer 1677: 76260@cumu=-6195.79, prev → 76260@layer 1676
+Layer 1676: 76260@cumu=-6195.40, prev → 33989@layer 1675
+Layer 1675: 33989@cumu=-6188.18
+```
+
+At layer 1677, branches to 76260:
+- From **76260@1676**: self-tp=1.0, branch=-6195.40
+- From **33989@1676**: cross-tp to 76260 is blocked (no valid path / TP=0)
+- 33989's +5.69 cumu advantage is useless — it has **no valid transition** to the best-matching edge at 1677
+
+**Conclusion: This is NOT a software bug. The Viterbi + backtrack both work correctly.**
+
+The local Viterbi winner at layer 1676 (33989) is a **dead end** — it cannot transition to any node at 1677 that has competitive EP. The global Viterbi path correctly jumps from 33989→76260 at 1675→1676, even though the TP penalty is heavy (0.00165), because subsequent epochs on 76260 compensate.
+
+The real issue is a **data quality problem**: GPS at seq 1676 is closer to edge 76260 (ep=0.448) than to edge 33989 (ep=0.219), and the GPS at seq 1677 is even more biased toward 76260 (ep=0.672). The Viterbi follows the evidence correctly.
+
+#### Key Insight: Local vs Global Viterbi Optimum
+
+The `FINAL_WINNER` debug at line 2092 prints the LOCAL max-cumu candidate at each layer as it's computed. But `backtrack()` traces the GLOBAL optimum backward from the last layer. A local winner (33989 at 1676) may not lie on the global optimum path if it becomes a dead end (no valid tp to competitive candidates at 1677). This is **correct Viterbi behavior** — the algorithm finds the single best path through the full trellis, not per-layer winners.
+
+The disconnect between "FINAL_WINNER edge=33989" and "CSV shows 76260" that RECORDS.md reported was therefore a **misinterpretation** of the debug output: FINAL_WINNER shows the local layer optimum, while the CSV (via backtrack) shows the global path.
+
+### Code Cleanup
+
+Removed all `fprintf(stderr, ...)` debug instrumentation:
+- `transition_graph.cpp`: BACKTRACK dump, BACKTRACK_WINNER, BACKTRACK_PREV (lines 160-169, 182-183, 191-192)
+- `cmm_algorithm.cpp`: PROCESS_SUB_SEGMENT dump, GAP_DETECTED log, EPOCH_1676 block, FINAL_WINNER block
+- `transition_graph.cpp`: removed `#include <cstdio>` (added for fprintf)
+
+### Updated Remaining Issues
+
+| # | Issue | Priority |
+|---|-------|:---:|
+| 1 | Wire `background_log_prob` into softmax (anti-label-bias) | P1 |
+| 2 | α_geom + α_vel discount framework | P2 (paper limitations) |
+| 3 | Commit all fixes to feature branch | P0 |
+| 4 | Update paper Section 6 with real-vehicle results | P1 |
