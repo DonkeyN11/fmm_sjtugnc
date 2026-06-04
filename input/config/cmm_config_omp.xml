@@ -70,6 +70,8 @@
     <lag_steps>0</lag_steps>
     <phmi_pl_multiplier>1</phmi_pl_multiplier>
     <h0_prior_log_odds>10</h0_prior_log_odds>
+    <background_prob>0.1</background_prob>
+    <map_error_std>5.0e-5</map_error_std>
   </parameters>
 
   <other>
