@@ -32,12 +32,12 @@
       <ep/>
       <tp/>
       <trustworthiness/>
-      <n_best_trustworthiness/>
+      <!-- <n_best_trustworthiness/> -->
       <eu_dist/>
       <sp_dist/>
       <timestamp/>
     </fields>
-    <file>experiments/data/real_data/fmm_result.csv</file>
+    <file>experiments/data/real_data/fmm_result_test.csv</file>
   </output> 
 
   <other>

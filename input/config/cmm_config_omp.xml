@@ -29,7 +29,7 @@
   </input>
 
   <output>
-    <file>experiments/data/real_data/cmm_result.csv</file>
+    <file>experiments/data/real_data/cmm_result_test.csv</file>
     <point_mode>true</point_mode>
     <fields>
       <seq/>
