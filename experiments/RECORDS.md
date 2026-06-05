@@ -738,3 +738,47 @@ Based on current findings, the paper results structure should be:
 97362ac fix(cmm): restore per-epoch filtering posterior as trustworthiness
 fd9217f refactor(cmm): align TW with HMM mathematical theory
 ```
+
+---
+
+## 2026-06-05 (Today's Schedule)
+
+### Priority 1: Traj 22 Wrong-Direction False Lock (epochs 1800–2052)
+
+CMM systematically locks onto wrong-direction edges for ~250 consecutive epochs while FMM correctly tracks GT. Three distinct wrong-edge segments observed:
+
+| Epoch Range | CMM cpath | FMM cpath | GT | TW (CMM) |
+|:---|:---|:---|:---|:---|
+| 1800–1819 | 76260 | 33989 | 33989 | 0.19→0.99 |
+| 1839–1934 | 29612 | 33989 | 33989 | 0.01→0.99 |
+| 1989–2052 | 33910/149619/29612 | 57626/33989 | 57626/33989 | 0.00→0.99 |
+
+**Key observations**:
+- CMM TW often stays high (>0.99) even on wrong matches — the filtering posterior is overconfident
+- The wrong edges are all on the **opposite side of a dual carriageway** or parallel roads
+- FMM consistently stays on the correct side despite similar input
+- The background_prob=0.1 does NOT prevent overconfidence when all correct-candidate EPs are high
+
+**Investigation plan**:
+1. Extract per-candidate EP/TP at epochs 1800, 1839, 1989 — why does the Viterbi switch?
+2. Check if TP row normalization over-penalizes self-transitions on long edges vs. cross-edge jumps
+3. Test with `reverse_tolerance > 0` or increased `background_prob` to see if wrong-direction lock breaks
+4. Compare EP distribution between correct edge (33989) and wrong edge (76260) — is the Mahalanobis model favoring the wrong geometry?
+5. Consider geometry-based anti-wrong-way guard: if consecutive epochs consistently move opposite to edge digitization direction, block the transition
+
+### Priority 2: background_prob Sweep
+
+Sweep `background_prob` ∈ {0.01, 0.05, 0.1, 0.2, 0.5} and measure ECE/AUC/accuracy on all 7 trajectories. Goal: find optimal value that balances anti-overconfidence without degrading accuracy.
+
+### Priority 3: Essay Results Reorganization
+
+Based on current findings, reorganize paper Section 5:
+
+| Section | Content | Status |
+|---------|---------|:---:|
+| §5.1 Accuracy | Per-traj accuracy table + position error CDF | ✅ |
+| §5.2 Calibration | ECE + reliability diagram — CMM 0.072 vs FMM 0.107 | ✅ |
+| §5.3 TW Discrimination | Separation analysis: CMM 0.329 vs FMM 0.085 | ✅ |
+| §5.4 ROC Analysis | ROC curves + threshold table + FMM inflation artifact | ✅ |
+| §5.5 Failure Cases | Traj 22 wrong-direction false lock (epochs 1800-2052), traj 22 seq 1676 dead-end Viterbi | 🔧 Need analysis |
+| §5.6 Ablation | Per-fix contribution to ECE/accuracy (TP norm, bg state, uniform prior) | ⏸️ |

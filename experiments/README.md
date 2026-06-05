@@ -184,7 +184,7 @@ All experiments use the same HMM and matching parameters:
       <status/>
       <delta_entropy/>
       <posterior_entropy/>
-      <h0_lambda/>
+      <!-- <h0_lambda/> -->
       <cumu_prob/>
       <!-- <error/> -->
     </fields>
