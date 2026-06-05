@@ -726,7 +726,7 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("map_error_std", "Map error standard deviation in degrees for additive noise (default 5e-5 ≈ 5m)",
          cxxopts::value<double>()->default_value("5.0e-5"))
         ("background_prob", "Background state linear probability for off-road/unmapped-road (default 0.1)",
-         cxxopts::value<double>()->default_value("-20.0"))
+         cxxopts::value<double>()->default_value("0.1"))
         ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
          cxxopts::value<double>()->default_value("1.0e-5"))
         ("lag_steps", "Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)",
