@@ -6,7 +6,8 @@ tmp/
 build_debug/
 dataset-hainan/
 dataset-hainan-06/
-input/
+input/map/
+input/trajectory/
 .claude/
 .playwright-cli/
 docs/literatures/

@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<config>
+  <input>
+    <ubodt>
+      <file>input/map/haikou_ubodt.txt</file>
+    </ubodt>
+    <network>
+      <file>input/map/haikou/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+    <gps>
+      <!-- <file>input/trajectory/zhai/rtk_data/20240228/trips_converted.csv</file> -->
+      <file>input/trajectory/all_2hour_data/10thLine.csv</file>
+      <id>id</id>
+    </gps>
+  </input>
+  <parameters>
+    <k>4</k>
+    <r>0.4</r>
+    <pf>0</pf>
+    <gps_error>0.5</gps_error>
+  </parameters>
+  <output>
+    <fields>
+      <!-- <opath/> -->
+      <!-- <cpath/> -->
+      <pgeom/>
+      <!-- <tpath/> -->
+      <!-- <spdist/> -->
+      <ep/>
+      <tp/>
+      <cumu_prob/>
+    </fields>
+    <file>output/mr_10thpgeom_cumu.txt</file>
+  </output> 
+  <other>
+    <use_omp/>
+  </other>
+</config>
