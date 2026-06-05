@@ -1411,8 +1411,10 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
 
             // TW = filtering posterior P(x_t = i* | z_{1:t}) = α_t(i*) / Σ_j α_t(j)
-            // With the correct forward recurrence (forward_cumu = log α_t), this is
-            // the per-layer softmax of forward_cumu — already computed as node->trustworthiness.
+            // Per-layer softmax of forward_cumu. The partial path posterior
+            // δ_t/Σα_t is mathematically valid but degenerates to exp(-O(t))
+            // for long trajectories — the single best path captures a vanishing
+            // fraction of the total probability mass.
             double trust = node->trustworthiness;
 
             // FUTURE: H0 lambda for discount framework (PHMI + velocity + geometry)
