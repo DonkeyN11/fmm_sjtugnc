@@ -58,16 +58,14 @@
 \newlabel{fig:example}{{2}{4}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-B}}Posterior Factorization and HMM Components}{4}{}\protected@file@percent }
 \newlabel{eq:posterior_factorized}{{2}{4}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Traditional HMM-based map-matching framework.}}{4}{}\protected@file@percent }
+\newlabel{fig:traditionHMM}{{3}{4}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {III-C}}Classical Hidden Markov Model based Map Matching}{4}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}1}Classical Emission Probability}{4}{}\protected@file@percent }
 \newlabel{eq:classic_emission}{{3}{4}}
-\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces Traditional HMM-based map-matching framework.}}{4}{}\protected@file@percent }
-\newlabel{fig:traditionHMM}{{3}{4}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}2}Classical Transition Probability}{4}{}\protected@file@percent }
 \newlabel{eq:classic_transition}{{4}{4}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {III-C}3}Dynamic Programming via the Viterbi Algorithm}{4}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Comparison between classical HMM map matching (top) and the proposed covariance-aware framework (bottom). The proposed method incorporates GNSS covariance, adaptive candidate search, and a Mahalanobis-based emission model.}}{5}{}\protected@file@percent }
-\newlabel{fig:HMM_vs_proposed}{{4}{5}}
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {III-C}3a}Fixed or heuristic candidate search radius.}{5}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {III-C}3b}Euclidean projection assumes isotropic uncertainty.}{5}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {III-C}3c}Isotropic emission probability ignores covariance and protection levels.}{5}{}\protected@file@percent }
@@ -79,10 +77,12 @@
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-A}2}Weighted least-squares solution and covariance of GNSS positioning}{5}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}2a}Observation model.}{5}{}\protected@file@percent }
 \newlabel{eq:rho_model}{{8}{5}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}2b}Linearization.}{6}{}\protected@file@percent }
-\newlabel{eq:lin_model}{{12}{6}}
-\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}2c}Weighted least-squares estimator.}{6}{}\protected@file@percent }
-\newlabel{eq:wls_dx}{{15}{6}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}2b}Linearization.}{5}{}\protected@file@percent }
+\newlabel{eq:lin_model}{{12}{5}}
+\@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}2c}Weighted least-squares estimator.}{5}{}\protected@file@percent }
+\newlabel{eq:wls_dx}{{15}{5}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces Comparison between classical HMM map matching (top) and the proposed covariance-aware framework (bottom). The proposed method incorporates GNSS covariance, adaptive candidate search, and a Mahalanobis-based emission model.}}{6}{}\protected@file@percent }
+\newlabel{fig:HMM_vs_proposed}{{4}{6}}
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}2d}Estimation error covariance.}{6}{}\protected@file@percent }
 \newlabel{eq:wls_cov_full}{{17}{6}}
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {IV-A}2e}4D and 3D covariance forms.}{6}{}\protected@file@percent }
@@ -126,8 +126,9 @@
 \newlabel{eq:log_viterbi}{{38}{9}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}1}Marginal Filtering Posterior (Per-Candidate)}{9}{}\protected@file@percent }
 \newlabel{eq:filtering_posterior}{{39}{9}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}2}Joint Path Posterior (Trustworthiness)}{10}{}\protected@file@percent }
-\newlabel{eq:joint_posterior}{{40}{10}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}2}Filtering Posterior (Trustworthiness)}{9}{}\protected@file@percent }
+\newlabel{eq:filtering_posterior_tw}{{40}{9}}
+\citation{FMM}
 \newlabel{subsec:lag_smoothing}{{\mbox  {IV-C}3}{10}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}3}Fixed-Lag Smoothing (Optional)}{10}{}\protected@file@percent }
 \newlabel{eq:viterbi_future}{{41}{10}}
@@ -138,7 +139,6 @@
 \newlabel{fig:trustworthiness}{{10}{10}}
 \@writefile{toc}{\contentsline {section}{\numberline {V}Simulation Study}{10}{}\protected@file@percent }
 \newlabel{sec:simulation}{{V}{10}}
-\citation{FMM}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Simulation Environment and Data Generation}{11}{}\protected@file@percent }
 \newlabel{sec:sim_environment}{{\mbox  {V-A}}{11}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-A}1}Ground-Truth Trajectory Generation}{11}{}\protected@file@percent }
@@ -161,7 +161,7 @@
 \newlabel{tab:stanford}{{II}{12}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-D}}Experiment 3: Parameter Sensitivity --- CMM vs.\ FMM}{12}{}\protected@file@percent }
 \newlabel{sec:exp3}{{\mbox  {V-D}}{12}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-D}1}Sigma Sensitivity}{13}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-D}1}Sigma Sensitivity}{12}{}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {13}{\ignorespaces CMM vs.\ FMM sigma sensitivity ($k=16$, $L=5$). (a) Mean point error vs.\ $\sigma _{\rho }$. (b) Segment accuracy. (c) ECE of trustworthiness. (d) ROC AUC. (e) Reliability diagram at $\sigma _{\rho }=10$\,m. (f) ROC curves at $\sigma _{\rho }=10$\,m.}}{13}{}\protected@file@percent }
 \newlabel{fig:sigma_sweep}{{13}{13}}
 \@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Sigma Sensitivity: CMM vs.\ FMM ($k=16$, $L=5$, 20 trajectories per level)}}{13}{}\protected@file@percent }
@@ -171,8 +171,8 @@
 \newlabel{fig:sample_rate}{{14}{13}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-E}}Experiment 4: Wrong Emission Model --- Effect of Sigma Mismatch}{13}{}\protected@file@percent }
 \newlabel{sec:exp4}{{\mbox  {V-E}}{13}}
-\@writefile{lof}{\contentsline {figure}{\numberline {15}{\ignorespaces Effect of emission model mismatch. (a) Point error, (b) Segment accuracy, (c) ECE (key metric), (d) Trust separation ($\mu _{\text  {correct}}-\mu _{\text  {wrong}}$), (e) Reliability diagrams per mismatch level, (f) ECE vs.\ $\sigma _{\rho }^{\text  {true}}-\sigma _{\text  {wls}}$.}}{14}{}\protected@file@percent }
-\newlabel{fig:mismatch}{{15}{14}}
+\@writefile{lof}{\contentsline {figure}{\numberline {15}{\ignorespaces Effect of emission model mismatch. (a) Point error, (b) Segment accuracy, (c) ECE (key metric), (d) Trust separation ($\mu _{\text  {correct}}-\mu _{\text  {wrong}}$), (e) Reliability diagrams per mismatch level, (f) ECE vs.\ $\sigma _{\rho }^{\text  {true}}-\sigma _{\text  {wls}}$.}}{13}{}\protected@file@percent }
+\newlabel{fig:mismatch}{{15}{13}}
 \@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Sigma Mismatch Analysis ($\sigma _{\text  {wls}}=20$\,m, $k=16$)}}{14}{}\protected@file@percent }
 \newlabel{tab:mismatch}{{IV}{14}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-F}}Experiment 5: Robustness Under Degraded Conditions}{14}{}\protected@file@percent }
@@ -184,12 +184,12 @@
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-G}}Discussion of Simulation Findings}{14}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {VI}Real Vehicle Experiment and Algorithm Validation}{14}{}\protected@file@percent }
 \newlabel{sec:real-experiment}{{VI}{14}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Dataset}{14}{}\protected@file@percent }
 \citation{FMM}
 \@writefile{lot}{\contentsline {table}{\numberline {VI}{\ignorespaces Hainan-06 Dataset Summary}}{15}{}\protected@file@percent }
 \newlabel{tab:dataset}{{VI}{15}}
 \@writefile{lof}{\contentsline {figure}{\numberline {17}{\ignorespaces dataset overview}}{15}{}\protected@file@percent }
 \newlabel{fig:dataset}{{17}{15}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Dataset}{15}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Compared Methods}{15}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-C}}Performance Metrics}{15}{}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces Per-Trajectory Accuracy and Position Error (13,256 evaluable epochs)}}{15}{}\protected@file@percent }
@@ -221,6 +221,7 @@
 \bibcite{Woltche2023}{6}
 \bibcite{FMM}{7}
 \bibcite{Liu2025_LiMM}{8}
+\bibcite{Jagadeesh2017}{9}
 \@writefile{lot}{\contentsline {table}{\numberline {X}{\ignorespaces Trustworthiness Separation: CMM vs. FMM}}{17}{}\protected@file@percent }
 \newlabel{tab:tw_separation}{{X}{17}}
 \@writefile{lof}{\contentsline {figure}{\numberline {20}{\ignorespaces ROC curve: trustworthiness as mismatch detector (CMM AUC = 0.764, FMM AUC = 0.965). The FMM AUC is inflated by near-binary TW scores.}}{17}{}\protected@file@percent }
@@ -228,7 +229,6 @@
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VI-I}0a}Failure Case: Traj 22 Wrong-Direction False Lock.}{17}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{\numberline {VII}Conclusion}{17}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {section}{References}{17}{}\protected@file@percent }
-\bibcite{Jagadeesh2017}{9}
 \bibcite{Taguchi2019}{10}
 \bibcite{Wang2024}{11}
 \bibcite{Li2023}{12}

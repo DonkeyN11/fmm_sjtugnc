@@ -61,10 +61,13 @@ fixed-isotropic HMM baseline. On real data, CMM achieves 91.4\%
 segment accuracy versus 88.1\% (FMM), reduces the Expected
 Calibration Error (ECE) from 0.107 to 0.078, and improves
 trustworthiness separation between correct and wrong matches by a
-factor of 3.9. The joint path posterior trustworthiness metric
+factor of 3.9. The filtering posterior trustworthiness metric
 attains an area under the ROC curve of 0.764 for mismatch detection,
 confirming its practical effectiveness as an integrity indicator for
-safety-critical map-matching applications.
+safety-critical map-matching applications. While the joint path
+posterior $P(H^*_{1:t}\mid z_{1:t})$ is mathematically rigorous, its
+value decays exponentially with trajectory length, making the
+per-epoch filtering posterior the preferred practical metric.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -74,9 +77,6 @@ trustworthiness evaluation, safety-critical navigation.
 \end{IEEEkeywords}
 
 \section{Introduction}
-% 当前fmm等使用发射概率使用静态的各向同性的分布模型，没有考虑GNSS观测误差的动态性和空间相关性特征
-% 为此首先是提出了一套可信度评估理论/框架，贡献应该是：1.误差模型更贴近现实，2.基于HMM的可信概率的推导，3.候选点选取策略基于协方差的自适应动态调整或基于PL的门限，4.基于MAP的准则设计最短马氏距离候选点投影策略，
-% 为了验证理论正确性，采用蒙特卡洛仿真和30万车次实车数据，得到多种环境条件下相比fmm的匹配精度和警告能力的提升，表明coverage、trust、accuracy都提升，并表明为地图匹配结果置信度提出有效的评价指标，能够在误导时提供警报。
 \IEEEPARstart{M}{ap}
 matching is a fundamental component in intelligent transportation systems, high-precision navigation, and safety-critical location-based services. Its objective is to infer the correct road segment and trajectory from noisy global navigation satellite system (GNSS) observations and a digital road map. Traditional hidden Markov model (HMM)–based map-matching algorithms, such as those implemented in fast map matching (FMM) and its variants, have demonstrated strong performance in large-scale deployments due to their computational efficiency and topological consistency. However, a critical limitation remains: most existing algorithms assume a static, isotropic GNSS error model, typically represented by a fixed circular Gaussian noise distribution. This assumption ignores the dynamic, anisotropic, and environment-dependent characteristics of GNSS uncertainty, which are especially pronounced in urban canyons, elevated roads, tunnels, and foliage-covered corridors.
 
@@ -98,10 +98,10 @@ reliability assessment task. The main contributions are summarized as follows:
 
 \begin{itemize}
 \item Proposed an anisotropic GNSS covariance based emission model with a probabilistically normalized HMM framework. This research replaces the standard isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS covariance matrix, introduces a background state for emission probability normalization, enforces row-normalized transition probabilities, and adopts a uniform prior over candidates. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from a Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
-% TW formula updated to joint path posterior
-\item  Deriving joint path posterior and marginal filtering posterior as complementary trustworthiness statistics. Two trustworthiness metrics are introduced: the \emph{joint path posterior} $P(H^*_{1:t} \mid z_{1:t})$, which quantifies the probability that the entire optimal partial path up to epoch $t$ is correct, and the \emph{marginal filtering posterior} $P(s_t^{(i)} \mid z_{1:t})$, which captures per-candidate uncertainty at each epoch. These are complemented by information-theoretic metrics (posterior entropy $H_t$ and delta entropy $\Delta H_t$) that quantify the residual ambiguity at each epoch.
 
-\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 91.4\% accuracy and an ECE of 0.078---reducing error by 27\% relative to the FMM baseline---while the joint path posterior trustworthiness attains an AUC of \textbf{0.764} for mismatch detection with 3.9 times better correct--wrong separation than the baseline.
+\item  Deriving the filtering posterior as a per-epoch trustworthiness statistic. The \emph{filtering posterior} $P(x_t = i^* \mid z_{1:t})$ is introduced as the primary trustworthiness metric, quantifying the probability that the matched road edge is correct given all observations up to epoch $t$, computed via the forward algorithm with proper probabilistic normalization. The \emph{joint path posterior} $P(H^*_{1:t} \mid z_{1:t})$ is derived as a complementary trajectory-level quantity, but is shown to decay exponentially with path length and is therefore retained only for terminal-epoch confidence assessment. These are complemented by information-theoretic metrics (posterior entropy $H_t$ and delta entropy $\Delta H_t$) that quantify the residual ambiguity at each epoch.
+
+\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 91.4\% accuracy and an ECE of 0.078---reducing error by 27\% relative to the FMM baseline---while the filtering posterior trustworthiness attains an AUC of \textbf{0.764} for mismatch detection with 3.9 times better correct--wrong separation than the baseline.
 % AUC results need to verify
 \end{itemize}
 
@@ -136,7 +136,7 @@ novel Markov Decision Process formulation with reinforcement learning,
 demonstrating that HMM-based methods remain competitive in both accuracy
 and computational speed.
 % woltche2023 need closer look, which provides benchmark and HMM BETTER THAN AI
-Several research have extended the basic HMM framework.
+Several researchers have extended the basic HMM framework.
 Yang and Gid\'{o}falvi~\cite{FMM} introduced UBODT (Upper Bounded
 Origin Destination Table) precomputation to eliminate online
 shortest-path queries, achieving real-time batch processing
@@ -1130,30 +1130,36 @@ background pseudo-candidate.  This quantity, reported as
 the vehicle occupies edge $i$ at epoch $t$ considering all possible
 paths through the trellis.
 
-\subsubsection{Joint Path Posterior (Trustworthiness)}
+\subsubsection{Filtering Posterior (Trustworthiness)}
 
-The joint posterior probability of the Viterbi-optimal partial path
-$H^*_{1:t} = (s_1^*, \dots, s_t^*)$ is:
+The per-epoch trustworthiness is defined as the filtering posterior
+probability of the Viterbi-optimal candidate $i^*$ at epoch $t$:
 \begin{equation}
 \begin{aligned}
-P(H^*_{1:t} \mid z_{1:t})
-&= \frac{\delta_t(i^*)}{\sum_j \alpha_t(j)}
-= \exp\!\big(\log \delta_t(i^*) - \log\!\!\sum_j \exp(\log \alpha_t(j))\big),
-\label{eq:joint_posterior}
+\text{tw}_t = P(x_t = i^* \mid z_{1:t})
+&= \frac{\alpha_t(i^*)}{\sum_j \alpha_t(j)}
+= \text{softmax}\big(\log \alpha_t(\cdot)\big)_{i^*},
+\label{eq:filtering_posterior_tw}
 \end{aligned}
 \end{equation}
-where $i^* = \arg\max_j \delta_t(j)$ is the Viterbi-optimal candidate
-at epoch $t$.  This is the \emph{trustworthiness} score
-$\text{tw}_t \in [0,1]$.
+where $\alpha_t(j)$ is the forward probability from
+Eq.~\eqref{eq:log_forward} and $i^*$ is the Viterbi-optimal
+candidate at epoch $t$.  This is a valid probability $\in [0,1]$
+that varies per-epoch with local GNSS evidence.
 
-Because $\delta_t \leq \alpha_t$, the joint path posterior is always
-$\leq$ the marginal posterior.  When many competing paths converge to
-the same Viterbi winner---as occurs at dense intersections or on
-parallel roads---$\alpha_t$ grows large while $\delta_t$ stays
-bounded, causing trustworthiness to drop sharply even when the
-marginal posterior remains near 1.0.  This sensitivity to cumulative
-path ambiguity makes trustworthiness a more conservative and
-informative mismatch detector than the per-candidate marginal.
+The joint path posterior $P(H^*_{1:t} \mid z_{1:t}) = \delta_t(i^*) / \sum_j \alpha_t(j)$
+is a complementary formulation that quantifies the probability that the
+entire Viterbi path up to epoch $t$ is correct.  However, with
+row-normalized transition probabilities, the forward denominator
+$\sum_j \alpha_t(j)$ accumulates probability mass from all competing
+paths at a rate of approximately $\log K$ per epoch relative to the
+Viterbi numerator $\delta_t$, causing the joint posterior to decay
+exponentially with trajectory length (e.g., to $\sim 10^{-15}$ after
+$10^3$ epochs).  The filtering posterior avoids this degeneracy by
+normalizing within a single layer, making it the preferred per-epoch
+metric for practical mismatch detection.  The joint posterior remains
+useful as a trajectory-level confidence score computed at the terminal
+epoch only.
 
 \subsubsection{Fixed-Lag Smoothing (Optional)}
 \label{subsec:lag_smoothing}
@@ -1239,8 +1245,8 @@ additional evidence, flagging potentially ambiguous epochs.
             \State Pop oldest layer from $\mathcal{B}$
         \EndIf
     \Else
-        \State $\text{tw}_i \leftarrow \exp(\log\delta_i(i^*)) / \sum_j \exp(\log\alpha_i(j))$ \quad (joint path posterior) \label{alg:tw}
-        \State $\text{nb}_i \leftarrow \exp(\log\alpha_i(j)) / \sum_k \exp(\log\alpha_i(k))$ \quad (marginal posterior) \label{alg:nbest}
+        \State $\text{tw}_i \leftarrow \exp(\log\alpha_i(i^*)) / \sum_j \exp(\log\alpha_i(j))$ \quad (filtering posterior) \label{alg:tw}
+        \State $\text{nb}_i \leftarrow \exp(\log\alpha_i(j)) / \sum_k \exp(\log\alpha_i(k))$ \quad (top-3 road candidates) \label{alg:nbest}
         \State $H_i \leftarrow -\sum_j p_j\log_2 p_j$; $\Delta H_i \leftarrow H_{\text{prior}} - H_i$
     \EndIf
 \EndFor
@@ -1555,7 +1561,7 @@ Across all five experiments, three consistent patterns emerge:
 
 \item \textbf{CMM outperforms FMM on both accuracy and calibration.} Experiments~3--5 collectively cover 7 noise levels, 4 sample rates, 5 mismatch conditions, and 4 degradation modes. In every configuration, CMM achieves higher segment accuracy and lower ECE than FMM. The advantage is most pronounced at moderate-to-high noise ($\sigma_{\rho} \ge 10$\,m) and under fault injection, where the anisotropic emission model provides the greatest discriminative benefit.
 
-\item \textbf{Trustworthiness is a calibrated mismatch detector.} The joint path posterior probability (Eq.~\eqref{eq:joint_posterior}) achieves ROC AUC values between 0.66 and 0.88 for CMM across all experiments, confirming that it encodes meaningful reliability information. FMM's trustworthiness, by contrast, shows near-random discriminative power (AUC $<$ 0.6) at moderate-to-high noise levels, consistent with its poorly calibrated ECE.
+\item \textbf{Trustworthiness is a calibrated mismatch detector.} The filtering posterior probability (Eq.~\eqref{eq:filtering_posterior_tw}) achieves ROC AUC values between 0.66 and 0.88 for CMM across all experiments, confirming that it encodes meaningful reliability information. FMM's trustworthiness, by contrast, shows near-random discriminative power (AUC $<$ 0.6) at moderate-to-high noise levels, consistent with its poorly calibrated ECE.
 \end{enumerate}
 
 \section{Real Vehicle Experiment and Algorithm Validation}
@@ -1799,13 +1805,16 @@ matches at the same threshold. CMM's trustworthiness is therefore a more
 signals genuine ambiguity, whereas FMM's TW remains near 1.0 until the
 mismatch is already severe.
 
-The joint path posterior (Eq.~\eqref{eq:joint_posterior}) is inherently
-more conservative than the marginal filtering posterior
-(Eq.~\eqref{eq:filtering_posterior}), because it accumulates path
-ambiguity across multiple epochs. This conservatism reduces AUC relative
-to a trivially binary score, but provides the practical benefit of
-meaningful confidence levels that correlate with correctness---precisely
-the property required for safety-critical integrity monitoring.
+The filtering posterior (Eq.~\eqref{eq:filtering_posterior_tw}) is
+computed via the forward algorithm with proper probabilistic normalization
+(row-normalized TP, uniform prior, background state).  The joint path
+posterior $\delta_t / \sum\alpha_t$ is conceptually attractive as a
+trajectory-level confidence measure but decays exponentially with path
+length, making it impractical for per-epoch mismatch detection.  The
+filtering posterior avoids this degeneracy while preserving the HMM's
+probabilistic rigor, producing confidence levels that correlate with
+correctness---precisely the property required for safety-critical
+integrity monitoring.
 
 \begin{figure}[t]
     \centering
@@ -1836,11 +1845,11 @@ matching pipeline. The key contributions are: (1)~an anisotropic
 Mahalanobis emission model with probabilistically normalized HMM
 components (background state, row-normalized transitions, uniform
 prior) that improves calibration over the traditional isotropic
-baseline (ECE reduced from 0.107 to 0.078); (2)~a joint path posterior
-trustworthiness metric that quantifies the probability that the
-optimal partial path is correct, together with a complementary
+baseline (ECE reduced from 0.107 to 0.078); (2)~a filtering posterior
+trustworthiness metric computed via the forward algorithm that provides
+a calibrated per-epoch confidence score, together with a complementary
 marginal filtering posterior (n\_best\_trustworthiness) for
-per-candidate assessment; and (3)~a residual-based RAIM approach for
+per-candidate ranking; and (3)~a residual-based RAIM approach for
 computing protection levels from raw GNSS observations, replacing
 receiver-reported PL with a rigorous integrity bound (median HPL
 22.8\,m).
@@ -1848,7 +1857,7 @@ receiver-reported PL with a rigorous integrity bound (median HPL
 On real-vehicle data across 7 trajectories, CMM achieves 91.4\%
 segment accuracy (vs.\ 88.1\% for FMM), a 27\% relative ECE reduction,
 and 3.9$\times$ better trustworthiness separation between correct and
-wrong matches. The joint path posterior trustworthiness attains an AUC
+wrong matches. The filtering posterior trustworthiness attains an AUC
 of 0.764 for mismatch detection, providing a principled integrity
 indicator without requiring a separately trained anomaly detector.
 We further demonstrate that the high AUC of the FMM baseline (0.965)
