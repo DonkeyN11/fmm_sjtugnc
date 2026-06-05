@@ -1395,7 +1395,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             std::vector<double> tw_vals;
             tw_vals.reserve(layer.size());
             for (const TGNode& node : layer) {
-                if (node.trustworthiness > 0.0) {
+                // Exclude background pseudo-candidate (c==nullptr, off-road state)
+                if (node.trustworthiness > 0.0 && node.c != nullptr) {
                     tw_vals.push_back(node.trustworthiness);
                 }
             }
