@@ -1,4 +1,4 @@
-\documentclass[lettersize,journal]{IEEEtran}
+\documentclass[letterpaper,journal]{IEEEtran}
 \bibliographystyle{IEEEtran}
 \usepackage{amsmath,amsfonts}
 \usepackage{algpseudocode}
@@ -22,6 +22,7 @@
 \hyphenation{op-tical net-works semi-conduc-tor IEEE-Xplore}
 
 \begin{document}
+\emergencystretch=1em
 
 \title{Trustworthiness Evaluation of Map Matching Leveraging Probabilistic GNSS Covariance Ellipse Models}
 % framework；elliptical; EMM
@@ -424,7 +425,7 @@ real-time operation possible on large-scale road networks.
 \begin{figure}
     \centering
     \includegraphics[width=1.0\linewidth]{figs/traditionHMM.png}
-    \caption
+    \caption{Traditional HMM-based map-matching framework.}
     \label{fig:traditionHMM}
 \end{figure}
 
@@ -1175,7 +1176,7 @@ and the smoothed score becomes
 $\text{score}_t(i) = \log \alpha_t(i) + \beta_{t+L}(i)$,
 with softmax normalization as in Eq.~\eqref{eq:filtering_posterior}.
 On real data with RAIM-derived PLs, the optimal lag is $L=0$
-(see Section~\ref{sec:lag_sweep}), indicating that the protection
+(see Section~\ref{sec:simulation}), indicating that the protection
 level already encodes sufficient geometric uncertainty and that the
 anisotropic emission model provides adequate discriminative power
 without temporal smoothing.
@@ -1249,6 +1250,7 @@ additional evidence, flagging potentially ambiguous epochs.
 \State Backtrack via stored backpointers to retrieve optimal path $X^\star$
 \State \textbf{return} $X^\star$, $\{\text{tw}_i\}_{i=1}^{N}$, $\{\text{nb}_i\}_{i=1}^{N}$, $\{H_i, \Delta H_i\}_{i=1}^{N}$
 \end{algorithmic}
+    \vspace{-10pt}
 \end{algorithm}
 
 
@@ -1717,7 +1719,7 @@ components: the anisotropic Mahalanobis emission model eliminates the
 isotropic misspecification; the background state and row-normalized
 transitions ensure calibrated probability outputs; and the uniform
 prior prevents initial-state bias. The smoothing lag is set to
-$L=0$ (Section~\ref{sec:lag_sweep}), confirming that the RAIM-derived
+$L=0$ (Section~\ref{sec:simulation}), confirming that the RAIM-derived
 protection levels provide sufficient geometric information without
 requiring future evidence.
 
