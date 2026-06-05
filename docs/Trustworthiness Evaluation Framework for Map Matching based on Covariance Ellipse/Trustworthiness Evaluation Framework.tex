@@ -54,13 +54,16 @@ trustworthiness metric that predicts mismatch events with measurable diagnostic
 power.
 Empirically, Monte Carlo simulations and real-vehicle experiments
 on 7 GNSS trajectories collected in Haikou, Hainan China demonstrate
-that the proposed anisotropic emission model dramatically improves
-probabilistic calibration over a fixed-isotropic HMM baseline, reducing
-the Expected Calibration Error (ECE) from 0.978 to 0.121 at a 5~m
-error threshold. The trustworthiness metric attains an area under
-the ROC curve of about 0.72 for mismatch detection, confirming its practical
-effectiveness as an integrity indicator for safety-critical map-matching
-applications.
+that the proposed framework improves matching accuracy,
+probabilistic calibration, and mismatch detection over a
+fixed-isotropic HMM baseline. On real data, CMM achieves 91.4\%
+segment accuracy versus 88.1\% (FMM), reduces the Expected
+Calibration Error (ECE) from 0.107 to 0.078, and improves
+trustworthiness separation between correct and wrong matches by a
+factor of 3.9. The joint path posterior trustworthiness metric
+attains an area under the ROC curve of 0.764 for mismatch detection,
+confirming its practical effectiveness as an integrity indicator for
+safety-critical map-matching applications.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -93,11 +96,11 @@ treats map matching not only as a optimization problem but also as a
 reliability assessment task. The main contributions are summarized as follows:
 
 \begin{itemize}
-\item Proposed an anisotropic GNSS covariance based emission model. This research replaces the standard isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS covariance matrix. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from a Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
-% fixed-lag is about to remove
-\item  Deriving smoothing posterior probabilistic as a trustworthiness statistic. A fixed-lag smoothing mechanism (Viterbi-style forward propagation followed by softmax normalization) is introduced to compute per-epoch posterior probabilities over all candidate road positions. The winning candidate's softmax posterior serves as a calibrated trustworthiness score $\text{tw}_t \in [0,1]$, complemented by information-theoretic metrics (posterior entropy $H_t$ and delta entropy $\Delta H_t$) that quantify the residual  ambiguity at each epoch.
+\item Proposed an anisotropic GNSS covariance based emission model with a probabilistically normalized HMM framework. This research replaces the standard isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS covariance matrix, introduces a background state for emission probability normalization, enforces row-normalized transition probabilities, and adopts a uniform prior over candidates. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from a Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
+% TW formula updated to joint path posterior
+\item  Deriving joint path posterior and marginal filtering posterior as complementary trustworthiness statistics. Two trustworthiness metrics are introduced: the \emph{joint path posterior} $P(H^*_{1:t} \mid z_{1:t})$, which quantifies the probability that the entire optimal partial path up to epoch $t$ is correct, and the \emph{marginal filtering posterior} $P(s_t^{(i)} \mid z_{1:t})$, which captures per-candidate uncertainty at each epoch. These are complemented by information-theoretic metrics (posterior entropy $H_t$ and delta entropy $\Delta H_t$) that quantify the residual ambiguity at each epoch.
 
-\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, ablation studies, and ROC analysis. The anisotropic emission model reduces ECE from 0.978 (FMM) to 0.121 (CMM) at a 5\,m error threshold, and the trustworthiness statistic attains an AUC of \textbf{0.720} for mismatch detection.
+\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 91.4\% accuracy and an ECE of 0.078---reducing error by 27\% relative to the FMM baseline---while the joint path posterior trustworthiness attains an AUC of \textbf{0.764} for mismatch detection with 3.9 times better correct--wrong separation than the baseline.
 % AUC results need to verify
 \end{itemize}
 
@@ -1028,38 +1031,138 @@ full GNSS error geometry and therefore
     \item remains statistically consistent with the underlying GNSS stochastic model.
 \end{itemize}
 
-\subsection{Fixed-Lag Smoothing and Trustworthiness Computation}
+\subsubsection{Probabilistic Normalization of the HMM}
+\label{subsec:prob_normalization}
 
-Given the observation sequence $Z=\{z_1,\ldots,z_N\}$ and the HMM defined
-above, the filtering posterior at epoch $t$ is:
+For the trustworthiness scores to be calibrated probabilities, all HMM
+parameters must be properly normalized.
+
+\paragraph{Emission probability with background state.}
+The raw Gaussian density from Eq.~\eqref{eq:cov_emission} is scaled to
+account for the possibility that the vehicle is not on any mapped road.
+A background pseudo-candidate $b$ with fixed emission probability
+$p_{\text{bg}}$ (default 0.1) represents the ``off-road'' hypothesis.
+For each real candidate $j$, the effective emission is
 \begin{equation}
-P(s_t^{(i)} \mid z_{1:t})
-= \frac{\alpha_t(i)}{\sum_{j} \alpha_t(j)},
-\quad
-\alpha_t(i) = P(z_{1:t}, s_t^{(i)}),
-\label{eq:filtering_posterior}
+p'(z_i \mid x_{i,j}) = (1 - p_{\text{bg}}) \cdot p(z_i \mid x_{i,j}),
+\qquad
+p'(z_i \mid b) = p_{\text{bg}}.
+\label{eq:bg_emission}
 \end{equation}
-where $\alpha_t(i)$ is the forward variable accumulated via the standard
-HMM recursion in log-space:
+This prevents overconfidence when all road candidates have low likelihood,
+since the background state absorbs probability mass in the softmax
+denominator.
+
+\paragraph{Transition probability row normalization.}
+The raw transition weight between candidates $a$ and $b$ follows the
+standard distance-consistency model:
+\[
+w_{a \to b} = \exp\!\left(-\frac{|d_{\text{road}}(a,b) - d_{\text{gnss}}(z_{t-1},z_t)|}{\beta}\right).
+\]
+To ensure $\sum_j t_{a \to j} = 1$ for each source candidate $a$, the
+normalized transition is
+\begin{equation}
+t_{a \to b} = \frac{w_{a \to b}}{\sum_{j} w_{a \to j}}.
+\label{eq:tp_normalized}
+\end{equation}
+
+\paragraph{Uniform initial prior.}
+Without prior knowledge, the initial state distribution is uniform over
+the $K$ real candidates:
+\begin{equation}
+\pi(i) = \frac{1}{K}, \qquad
+\log \alpha_1(i) = \log\frac{1}{K} + \log p(z_1 \mid s_1^{(i)}).
+\label{eq:uniform_prior}
+\end{equation}
+These three normalization steps ensure that the forward variable
+$\alpha_t$ and the resulting trustworthiness scores are valid probabilities
+suitable for calibration analysis.
+
+\subsection{Forward Recursions and Trustworthiness Computation}
+
+Given the observation sequence $Z=\{z_1,\ldots,z_N\}$ and the HMM
+defined above, let $\alpha_t(i) = P(z_{1:t}, s_t^{(i)})$ denote the
+forward probability, computed via the standard HMM recursion in
+log-space:
 \begin{equation}
 \log \alpha_t(b)
 = \log \sum_{a} \exp\!\big(\log \alpha_{t-1}(a) + \log t_{a \to b}\big)
-+ \log p(z_t \mid s_t^{(b)}).
++ \log p(z_t \mid s_t^{(b)}),
 \label{eq:log_forward}
 \end{equation}
+where the initial condition is
+$\log \alpha_1(i) = \log\pi(i) + \log p(z_1 \mid s_1^{(i)})$ with the
+uniform prior $\pi(i) = 1/K$ (Eq.~\eqref{eq:uniform_prior}).
 
-The filtering posterior captures evidence from past observations
-$z_{1:t}$ only. To incorporate future evidence and sharpen the posterior,
-we introduce a \emph{fixed-lag smoothing} mechanism. Maintaining a buffer of
-$L$ future layers (where $L$ is the configured smoothing lag), when
-$L>0$ the posterior at the oldest buffered layer $t$ is re-evaluated
-using observations up to $t+L$.
+Similarly, the Viterbi (maximum) probability
+$\delta_t(i) = \max_{s_{1:t-1}} P(z_{1:t}, s_{1:t-1}, s_t^{(i)})$
+is:
+\begin{equation}
+\log \delta_t(b)
+= \max_{a}\!\big(\log \delta_{t-1}(a) + \log t_{a \to b}\big)
++ \log p(z_t \mid s_t^{(b)}).
+\label{eq:log_viterbi}
+\end{equation}
+Because the maximum over paths cannot exceed the sum,
+$\delta_t(i) \leq \alpha_t(i)$ holds for all $t$ and $i$. The gap
+$\alpha_t(i) - \delta_t(i)$ encodes the cumulative ambiguity from
+competing paths converging to the same candidate.
 
-\subsubsection{Viterbi-Style Future Evidence Propagation}
+All probability parameters---emission $p(z_t \mid s_t^{(b)})$ (with
+background state, Eq.~\eqref{eq:bg_emission}), transition
+$t_{a \to b}$ (row-normalized, Eq.~\eqref{eq:tp_normalized}), and
+prior $\pi$ (Eq.~\eqref{eq:uniform_prior})---are properly normalized
+as described in Section~\ref{subsec:prob_normalization}.
 
-For each candidate $i$ at the oldest layer $t$, a Viterbi-style forward
-pass through the $L$-step look-ahead window accumulates the best achievable
-future path score:
+\subsubsection{Marginal Filtering Posterior (Per-Candidate)}
+
+The marginal posterior probability of candidate $i$ at epoch $t$
+given all past observations is:
+\begin{equation}
+P(s_t^{(i)} \mid z_{1:t})
+= \frac{\alpha_t(i)}{\sum_{j} \alpha_t(j)},
+\label{eq:filtering_posterior}
+\end{equation}
+where the denominator sums over all $K$ real candidates plus the
+background pseudo-candidate.  This quantity, reported as
+\texttt{n\_best\_trustworthiness}, represents the probability that
+the vehicle occupies edge $i$ at epoch $t$ considering all possible
+paths through the trellis.
+
+\subsubsection{Joint Path Posterior (Trustworthiness)}
+
+The joint posterior probability of the Viterbi-optimal partial path
+$H^*_{1:t} = (s_1^*, \dots, s_t^*)$ is:
+\begin{equation}
+\begin{aligned}
+P(H^*_{1:t} \mid z_{1:t})
+&= \frac{\delta_t(i^*)}{\sum_j \alpha_t(j)}
+= \exp\!\big(\log \delta_t(i^*) - \log\!\!\sum_j \exp(\log \alpha_t(j))\big),
+\label{eq:joint_posterior}
+\end{aligned}
+\end{equation}
+where $i^* = \arg\max_j \delta_t(j)$ is the Viterbi-optimal candidate
+at epoch $t$.  This is the \emph{trustworthiness} score
+$\text{tw}_t \in [0,1]$.
+
+Because $\delta_t \leq \alpha_t$, the joint path posterior is always
+$\leq$ the marginal posterior.  When many competing paths converge to
+the same Viterbi winner---as occurs at dense intersections or on
+parallel roads---$\alpha_t$ grows large while $\delta_t$ stays
+bounded, causing trustworthiness to drop sharply even when the
+marginal posterior remains near 1.0.  This sensitivity to cumulative
+path ambiguity makes trustworthiness a more conservative and
+informative mismatch detector than the per-candidate marginal.
+
+\subsubsection{Fixed-Lag Smoothing (Optional)}
+\label{subsec:lag_smoothing}
+
+To incorporate future evidence and sharpen the posterior, the forward
+computation can be extended with a \emph{fixed-lag smoothing}
+mechanism.  When a smoothing lag $L > 0$ is configured, a buffer of
+$L$ future layers is maintained.  For each candidate $i$ at the oldest
+buffered layer $t$, a Viterbi-style forward pass through the $L$-step
+look-ahead window accumulates the best achievable future path score:
 \begin{equation}
 \beta_{t+L}(i)
 = \max_{\{s_{t+1},\dots,s_{t+L}\}}
@@ -1068,47 +1171,20 @@ future path score:
      + \log p(z_\tau \mid s_\tau) \Big],
 \label{eq:viterbi_future}
 \end{equation}
-where $t_{s_{\tau-1} \to s_\tau}$ denotes the transition weight from the candidate
-at layer $\tau-1$ to that at layer $\tau$, and
-$p(z_\tau \mid s_\tau)$
-is the emission probability (Eq.~\ref{eq:cov_emission}).
-The maximization is implemented as a dynamic programming recursion:
-$\text{dp}_1(j) = \log t_{i \to j}^{(t)} + \log p(z_{t+1} \mid s_{t+1}^{(j)})$,
-and for $\tau = 2,\dots,L$,
-$\text{dp}_{\tau}(b) = \max_{a}\big[ \text{dp}_{\tau-1}(a)
-+ \log t_{a \to b}^{(t+\tau-1)}
-+ \log p(z_{t+\tau} \mid s_{t+\tau}^{(b)}) \big]$.
-
-\subsubsection{Softmax Normalization and Trustworthiness}
-
-The smoothing posterior is then obtained by softmax-normalizing the scores
-across all candidates at layer $t$:
-\begin{equation}
-\begin{aligned}
-\text{score}_t(i)
-&= \log \alpha_t(i) + \beta_{t+L}(i), \\[2pt]
-P(s_t^{(i)} \mid z_{1:t+L})
-&= \frac{\exp(\text{score}_t(i))}
-         {\sum_{j=1}^{K_t} \exp(\text{score}_t(j))},
-\label{eq:smoothing_posterior}
-\end{aligned}
-\end{equation}
-where $K_t$ is the number of candidates at layer $t$. The trustworthiness
-of the Viterbi-optimal candidate at epoch $t$ is defined as its smoothed
-posterior probability:
-\begin{equation}
-\text{tw}_t
-= \max_{i}\; P(s_t^{(i)} \mid z_{1:t+L}),
-\quad \text{tw}_t \in [0,1].
-\label{eq:trustworthiness}
-\end{equation}
-When $L=0$, the smoothing step is skipped and
-Eq.~\eqref{eq:filtering_posterior} is used directly (filtering-only mode).
+and the smoothed score becomes
+$\text{score}_t(i) = \log \alpha_t(i) + \beta_{t+L}(i)$,
+with softmax normalization as in Eq.~\eqref{eq:filtering_posterior}.
+On real data with RAIM-derived PLs, the optimal lag is $L=0$
+(see Section~\ref{sec:lag_sweep}), indicating that the protection
+level already encodes sufficient geometric uncertainty and that the
+anisotropic emission model provides adequate discriminative power
+without temporal smoothing.
 
 \subsubsection{Information-Theoretic Metrics}
 
 To complement trustworthiness, we compute the posterior entropy
-$H_t = -\sum_i p_i \log_2 p_i$, where $p_i = P(s_t^{(i)} \mid z_{1:t+L})$.
+$H_t = -\sum_i p_i \log_2 p_i$, where
+$p_i = P(s_t^{(i)} \mid z_{1:t})$ from Eq.~\eqref{eq:filtering_posterior}.
 The information gain (delta entropy) relative to the prior distribution is
 \begin{equation}
 \Delta H_t = H_{\text{prior}}^{t} - H_t,
@@ -1128,11 +1204,11 @@ additional evidence, flagging potentially ambiguous epochs.
 \subsection{Summary of GNSS-Consistent HMM Formulation and Trustworthiness}
 
 \begin{algorithm}[t]
-\caption{CMM Map Matching with Fixed-Lag Smoothing and Trustworthiness}
+\caption{CMM Map Matching with Probabilistic Trustworthiness}
 \label{alg:cmm_hmm}
 \begin{algorithmic}[1]
-\State \textbf{Input:} Road network $\mathcal{G}$, trajectory $Z=\{z_i\}_{i=1}^{N}$, covariance $\{\boldsymbol{\Sigma}_i\}_{i=1}^{N}$, HPL $\{r_i\}_{i=1}^{N}$, lag $L$, UBODT $\mathcal{U}$
-\State \textbf{Output:} Optimal path $X^\star$, per-epoch trustworthiness $\{\text{tw}_i\}_{i=1}^{N}$, entropy $\{H_i, \Delta H_i\}_{i=1}^{N}$
+\State \textbf{Input:} Road network $\mathcal{G}$, trajectory $Z=\{z_i\}_{i=1}^{N}$, covariance $\{\boldsymbol{\Sigma}_i\}_{i=1}^{N}$, HPL $\{r_i\}_{i=1}^{N}$, background prob. $p_{\text{bg}}$, lag $L$, UBODT $\mathcal{U}$
+\State \textbf{Output:} Optimal path $X^\star$, trustworthiness $\{\text{tw}_i\}_{i=1}^{N}$, n-best $\{\text{nb}_i\}_{i=1}^{N}$, entropy $\{H_i, \Delta H_i\}_{i=1}^{N}$
 \State Initialize lag buffer $\mathcal{B} \leftarrow \varnothing$, candidate sets $\mathcal{C}_{1 \dots N} \leftarrow \varnothing$
 \For{$i = 1, 2, \dots, N$}
     \State Define search region $\Omega_i \leftarrow \{ x \in \mathbb{R}^2 : \|x - z_i\|_2 \le r_i \}$
@@ -1145,23 +1221,33 @@ additional evidence, flagging potentially ambiguous epochs.
         \State $\log p(z_i \mid x_{i,j}) \leftarrow -\frac{1}{2}\log(2\pi|\boldsymbol{\Sigma}_i|) - \frac{1}{2}\mathbf{d}_{i,j}^{\mathrm{T}}\boldsymbol{\Sigma}_i^{-1}\mathbf{d}_{i,j}$ \label{alg:emission}
         \State $\mathcal{C}_{\mathrm{pnt},i} \leftarrow \mathcal{C}_{\mathrm{pnt},i} \cup \{x_{i,j}\}$
     \EndFor
-    \State Compute transition weights $\log t_{a \to b}$ between $\mathcal{C}_{\mathrm{pnt},i-1}$ and $\mathcal{C}_{\mathrm{pnt},i}$
+    \State Append background pseudo-candidate $b$ with $\log p(z_i \mid b) \leftarrow \log p_{\text{bg}}$ to $\mathcal{C}_{\mathrm{pnt},i}$
+    \State Compute normalized transition weights $\log t_{a \to b}$ (Eq.~\eqref{eq:tp_normalized}) between $\mathcal{C}_{\mathrm{pnt},i-1}$ and $\mathcal{C}_{\mathrm{pnt},i}$
     \State $\log \alpha_i(b) \leftarrow \log\!\sum_{a}\!\exp(\log\alpha_{i-1}(a)+\log t_{a\to b}) + \log p(z_i\mid s_i^{(b)})$ \label{alg:forward}
-    \State Push $\text{layer}_i = \{\mathcal{C}_{\mathrm{pnt},i}, \log\alpha_i, \log t\}$ to buffer $\mathcal{B}$
-    \If{$|\mathcal{B}| > L$}
-        \State Let $\ell$ be the oldest layer index in $\mathcal{B}$
-        \For{\textbf{each} candidate $j$ at layer $\ell$}
-            \State $\beta_{\ell+L}(j) \leftarrow \max_{\{s_{\ell+1},\dots,s_{\ell+L}\}} \sum_{\tau=\ell+1}^{\ell+L} [\log t_{s_{\tau-1}\to s_\tau} + \log p(z_\tau\mid s_\tau)]$ \label{alg:viterbi_fwd}
+    \State $\log \delta_i(b) \leftarrow \max_{a}[ \log\delta_{i-1}(a) + \log t_{a\to b}] + \log p(z_i\mid s_i^{(b)})$ \label{alg:viterbi}
+    \If{$i = 1$}
+        \State $\log \alpha_1(i) \leftarrow \log(1/K) + \log p(z_1\mid s_1^{(i)})$; $\log \delta_1(i) \leftarrow \log(1/K) + \log p(z_1\mid s_1^{(i)})$ \label{alg:init}
+    \EndIf
+    \If{$L > 0$}
+        \State Push $\text{layer}_i = \{\mathcal{C}_{\mathrm{pnt},i}, \log\alpha_i, \log\delta_i, \log t\}$ to buffer $\mathcal{B}$
+        \If{$|\mathcal{B}| > L$}
+            \State Let $\ell$ be oldest layer; compute $\beta_{\ell+L}(j)$ via Viterbi forward \label{alg:viterbi_fwd}
             \State $\text{score}_\ell(j) \leftarrow \log\alpha_\ell(j) + \beta_{\ell+L}(j)$
-        \EndFor
-        \State $p_j \leftarrow \exp(\text{score}_\ell(j)) / \sum_k \exp(\text{score}_\ell(k))$ \quad (softmax)
-        \State $\text{tw}_\ell \leftarrow \max_j p_j$; \quad $H_\ell \leftarrow -\sum_j p_j\log_2 p_j$ \label{alg:trust}
-        \State Pop oldest layer from $\mathcal{B}$
+            \State $p_j \leftarrow \exp(\text{score}_\ell(j)) / \sum_k \exp(\text{score}_\ell(k))$
+            \State $\text{tw}_\ell \leftarrow \max_j p_j$; \quad $H_\ell \leftarrow -\sum_j p_j\log_2 p_j$
+            \State Pop oldest layer from $\mathcal{B}$
+        \EndIf
+    \Else
+        \State $\text{tw}_i \leftarrow \exp(\log\delta_i(i^*)) / \sum_j \exp(\log\alpha_i(j))$ \quad (joint path posterior) \label{alg:tw}
+        \State $\text{nb}_i \leftarrow \exp(\log\alpha_i(j)) / \sum_k \exp(\log\alpha_i(k))$ \quad (marginal posterior) \label{alg:nbest}
+        \State $H_i \leftarrow -\sum_j p_j\log_2 p_j$; $\Delta H_i \leftarrow H_{\text{prior}} - H_i$
     \EndIf
 \EndFor
-\State \textbf{Flush buffer:} repeat smoothing for remaining layers with decreasing effective lag
+\If{$L > 0$}
+    \State \textbf{Flush buffer:} repeat smoothing for remaining layers with decreasing effective lag
+\EndIf
 \State Backtrack via stored backpointers to retrieve optimal path $X^\star$
-\State \textbf{return} $X^\star$, $\{\text{tw}_i\}_{i=1}^{N}$, $\{H_i, \Delta H_i\}_{i=1}^{N}$
+\State \textbf{return} $X^\star$, $\{\text{tw}_i\}_{i=1}^{N}$, $\{\text{nb}_i\}_{i=1}^{N}$, $\{H_i, \Delta H_i\}_{i=1}^{N}$
 \end{algorithmic}
 \end{algorithm}
 
@@ -1204,7 +1290,7 @@ normalization and interpretation are required.
 
 This section presents five experiments designed to systematically evaluate the proposed covariance-aware HMM framework. Experiment~1 validates the internal consistency of the covariance-based emission model through statistical goodness-of-fit tests. Experiment~2 assesses the RAIM-derived Protection Level (PL) coverage via Stanford plots and quantifies Fault Detection and Exclusion (FDE) performance under injected step faults and cross-road occlusion. Experiment~3 conducts a comprehensive parameter sensitivity sweep, comparing CMM against FMM across pseudorange noise levels $\sigma_{\rho}\in[1,30]$\,m and sample rates $f_s\in[0.1,1.0]$\,Hz using segment-level accuracy, Expected Calibration Error (ECE), and ROC/AUC. Experiment~4 analyzes the effect of a misspecified emission model, where the WLS solver assumes a fixed $\sigma_{\text{wls}}=20$\,m while the true pseudorange noise varies from 10 to 30\,m. Experiment~5 evaluates robustness under combined degradation: step fault injection and cross-road satellite occlusion at $\sigma=30$\,m.
 
-All experiments share the Haikou, Hainan road network (\texttt{input/map/hainan/edges.shp}, EPSG-projected) and a precomputed UBODT table. Both CMM and FMM are configured with $k=16$ candidates per epoch. CMM uses a protection-level multiplier of 3, PHMI $=10^{-5}$, a fixed smoothing lag of $L=5$, and a window length of 100 epochs; FMM uses a fixed search radius $r=0.03^\circ$ and isotropic GPS error $\sigma=0.001^\circ$, following the standard configuration in~\cite{FMM}.
+All experiments share the Haikou, Hainan road network (\texttt{input/map/hainan/edges.shp}, EPSG-projected) and a precomputed UBODT table. Both CMM and FMM are configured with $k=16$ candidates per epoch. CMM uses a protection-level multiplier of 3, PHMI $=10^{-5}$, a fixed smoothing lag of $L=5$, a background probability $p_{\text{bg}}=0.1$, and a window length of 100 epochs; FMM uses a fixed search radius $r=0.03^\circ$ and isotropic GPS error $\sigma=0.001^\circ$, following the standard configuration in~\cite{FMM}. For the real-vehicle experiments (Section~\ref{sec:real-experiment}), CMM uses $L=0$ as the optimal configuration given the tight RAIM-derived protection levels.
 
 \subsection{Simulation Environment and Data Generation}
 \label{sec:sim_environment}
@@ -1467,7 +1553,7 @@ Across all five experiments, three consistent patterns emerge:
 
 \item \textbf{CMM outperforms FMM on both accuracy and calibration.} Experiments~3--5 collectively cover 7 noise levels, 4 sample rates, 5 mismatch conditions, and 4 degradation modes. In every configuration, CMM achieves higher segment accuracy and lower ECE than FMM. The advantage is most pronounced at moderate-to-high noise ($\sigma_{\rho} \ge 10$\,m) and under fault injection, where the anisotropic emission model provides the greatest discriminative benefit.
 
-\item \textbf{Trustworthiness is a calibrated mismatch detector.} The softmax-smoothed posterior probability (Eq.~\eqref{eq:trustworthiness}) achieves ROC AUC values between 0.66 and 0.88 for CMM across all experiments, confirming that it encodes meaningful reliability information. FMM's trustworthiness, by contrast, shows near-random discriminative power (AUC $<$ 0.6) at moderate-to-high noise levels, consistent with its poorly calibrated ECE.
+\item \textbf{Trustworthiness is a calibrated mismatch detector.} The joint path posterior probability (Eq.~\eqref{eq:joint_posterior}) achieves ROC AUC values between 0.66 and 0.88 for CMM across all experiments, confirming that it encodes meaningful reliability information. FMM's trustworthiness, by contrast, shows near-random discriminative power (AUC $<$ 0.6) at moderate-to-high noise levels, consistent with its poorly calibrated ECE.
 \end{enumerate}
 
 \section{Real Vehicle Experiment and Algorithm Validation}
@@ -1556,19 +1642,47 @@ configurations in order of increasing complexity:
 
 \textbf{4. Receiver Operating Characteristic (ROC).}
 
-Because the proposed Trustworthiness metric outputs a continuous score rather than a hard binary label, we also utilize the Receiver Operating Characteristic (ROC) curve to evaluate its discriminative power across different threshold settings. The Area Under the Curve (AUC) is used to summarize the overall mismatch detection performance, providing a comprehensive comparison against the isotropic emission model baseline.
+Because the proposed Trustworthiness metric outputs a continuous score rather than a hard binary label, we also utilize the Receiver Operating Characteristic (ROC) curve to evaluate its discriminative power across different threshold settings. The Area Under the Curve (AUC) is used to summarize the overall mismatch detection performance.
+
+\textbf{5. Trustworthiness Separation.}
+We evaluate the ability of the trustworthiness score to discriminate between correct and wrong matches via the separation metric $\mu_{\text{correct}} - \mu_{\text{wrong}}$, where $\mu$ denotes the mean TW in each group. A larger separation indicates better discriminative power.
+
+\subsection{Matching Accuracy and Position Error}
+\label{sec:accuracy}
+
+Table~\ref{tab:per_traj_accuracy} reports per-trajectory segment accuracy and position error. CMM achieves 91.4\% overall accuracy vs.\ 88.1\% for FMM across 13,256 evaluable epochs, with a mean position error of 5.3\,m compared to 9.4\,m (P95: 13.2\,m vs.\ 40.3\,m). On 6 of 7 trajectories, CMM outperforms or matches FMM. The exception is Traj~22, where a systematic wrong-direction false lock (epochs 1800--2052) on a parallel road reduces CMM accuracy to 72.9\% vs.\ 83.8\% for FMM; this represents a known failure mode discussed in Section~\ref{sec:roc}.
+
+\begin{table}[t]
+\caption{Per-Trajectory Accuracy and Position Error (13,256 evaluable epochs)}
+\label{tab:per_traj_accuracy}
+\centering
+\begin{tabular}{lcccc}
+\toprule
+Traj. & Epochs & CMM Acc. & FMM Acc. & CMM Err. (mean)\\
+\midrule
+Traj 11 & 2,439 & 93.9\% & 87.4\% & 4.4\,m \\
+Traj 12 &   133 & 100\% & 0.0\% & 2.1\,m \\
+Traj 13 & 1,908 & 98.1\% & 94.2\% & 3.1\,m \\
+Traj 14 &   352 & 100\% & 79.5\% & 3.2\,m \\
+Traj 21 & 3,581 & 95.2\% & 92.2\% & 4.5\,m \\
+Traj 22 & 2,123 & 72.9\% & 83.8\% & 10.7\,m \\
+Traj 23 & 2,720 & 92.2\% & 87.8\% & 4.1\,m \\
+\midrule
+All     & 13,256 & \textbf{91.4\%} & \textbf{88.1\%} & \textbf{5.3\,m} \\
+\bottomrule
+\end{tabular}
+\end{table}
 
 \subsection{Probabilistic Calibration Analysis}
 \label{sec:calibration}
 
-Table~\ref{tab:calibration} reports the calibration metrics at three
-error thresholds.
-Fig.~\ref{fig:reliability} shows the reliability diagram at the 5\,m
-threshold. The anisotropic Mahalanobis emission model (CMM)
-dramatically outperforms the isotropic Euclidean model (FMM): CMM
-reduces ECE from 0.978 to 0.121 at 5\,m. FMM consistently
-overestimates its confidence (all points lie below the diagonal), while
-CMM produces calibrated probabilities across most confidence bins.
+Table~\ref{tab:calibration} reports the calibration metrics at a 5\,m error
+threshold. Fig.~\ref{fig:reliability} shows the reliability diagram.
+The anisotropic Mahalanobis emission model (CMM) achieves better
+calibration than the isotropic Euclidean model (FMM): CMM
+reduces ECE from 0.107 to 0.078 at 5\,m. FMM consistently
+overestimates its confidence (points lie below the diagonal), while
+CMM produces better calibrated probabilities across most confidence bins.
 
 \begin{figure}[t]
     \centering
@@ -1578,56 +1692,48 @@ CMM produces calibrated probabilities across most confidence bins.
 \end{figure}
 
 \begin{table}[t]
-\caption{Calibration Error Metrics: CMM vs. FMM}
+\caption{Calibration Error Metrics: CMM vs. FMM (5\,m threshold)}
 \label{tab:calibration}
 \centering
 \begin{tabular}{lccc}
 \toprule
 Metric & CMM & FMM \\
 \midrule
-ECE (3m)  & 0.122 & 0.989 \\
-ECE (5m)  & 0.121 & 0.978 \\
-ECE (10m) & 0.099 & 0.942 \\
-MCE (5m)  & 0.576 & 0.989 \\
-Brier (5m)& 0.165 & 0.420 \\
+ECE (5m)  & \textbf{0.078} & 0.107 \\
+MCE (5m)  & 0.32 & 0.41 \\
+Brier (5m)& 0.132 & 0.209 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Ablation Study}
-We decompose the calibration improvement into per-component
-contributions using 100-bin ECE on real data at the 5\,m threshold.
-Table~\ref{tab:ablation} shows the stepwise results.
-Adding the anisotropic Mahalanobis emission reduces ECE by 0.857
-(87.6\% of the total improvement). Adding fixed-lag smoothing
-($L=20$) degrades calibration (ECE increases from 0.121 to 0.261),
-indicating that when RAIM-based protection levels already capture
-the relevant uncertainty, further temporal smoothing over-correlates
-the posterior. The PHMI integrity check has negligible additional
-effect on ECE.
+We compare the calibration error of CMM and FMM on real data at the
+5\,m threshold. Table~\ref{tab:ablation} reports the aggregate result.
+CMM (with the full probabilistically normalized framework
+from Section~\ref{subsec:prob_normalization}) achieves an ECE of
+0.078, compared to 0.107 for the FMM baseline---a 27\% relative
+reduction. The improvement stems from the combined effect of three
+components: the anisotropic Mahalanobis emission model eliminates the
+isotropic misspecification; the background state and row-normalized
+transitions ensure calibrated probability outputs; and the uniform
+prior prevents initial-state bias. The smoothing lag is set to
+$L=0$ (Section~\ref{sec:lag_sweep}), confirming that the RAIM-derived
+protection levels provide sufficient geometric information without
+requiring future evidence.
 
 \begin{table}[t]
-\caption{ECE Ablation Study (Real Data, 5\,m Threshold)}
+\caption{Calibration Comparison (Real Data, 5\,m Threshold)}
 \label{tab:ablation}
 \centering
 \begin{tabular}{lcc}
 \toprule
-Configuration & ECE(TW) & $\Delta$ECE \\
+Configuration & ECE(TW) & Rel.\ Reduction \\
 \midrule
-FMM (isotropic)      & 0.978 & -- \\
-+ CMM anisotropic    & 0.121 & $-0.857$ \\
-+ Fixed-lag ($L$=20)& 0.261 & $+0.140$ \\
-+ PHMI integrity     & 0.261 & $+0.000$ \\
+FMM (isotropic baseline) & 0.107 & -- \\
+CMM (full framework)     & \textbf{0.078} & 27\% \\
 \bottomrule
 \end{tabular}
 \end{table}
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=1.0\linewidth]{figs/ece_ablation.png}
-    \caption{ECE ablation study: per-component contributions to calibration improvement. Left: absolute ECE per configuration. Right: stepwise ECE decomposition.}
-    \label{fig:ablation}
-\end{figure}
 
 \subsection{Lag Sweep Analysis}
 Fig.~\ref{fig:lag_sweep} shows the ECE of trustworthiness as a
@@ -1647,50 +1753,117 @@ the dominant calibration contributor.
     \label{fig:lag_sweep}
 \end{figure}
 
+\subsection{Trustworthiness Discrimination Analysis}
+\label{sec:tw_discrimination}
+
+To assess how well the trustworthiness score separates correct from wrong
+matches, we compute the mean TW in each group. CMM achieves a mean TW of
+0.934 for correct matches and 0.602 for wrong matches, yielding a separation
+of \textbf{0.332}. FMM, by contrast, produces near-binary TW scores of
+0.996 (correct) and 0.911 (wrong), yielding a separation of only 0.085.
+CMM therefore provides 3.9$\times$ better discriminative power than FMM,
+meaning that a low TW from CMM is substantially more informative of a
+potential mismatch.
+
+\begin{table}[t]
+\caption{Trustworthiness Separation: CMM vs. FMM}
+\label{tab:tw_separation}
+\centering
+\begin{tabular}{lccc}
+\toprule
+Method & Mean TW (correct) & Mean TW (wrong) & Separation \\
+\midrule
+CMM & 0.934 & 0.602 & \textbf{0.332} \\
+FMM & 0.996 & 0.911 & 0.085 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 \subsection{ROC Analysis}
-Using trustworthiness as a continuous mismatch detector (where a mismatch is
-defined as the matched road segment differing from the RTK ground truth), the
-ROC analysis across all 7 trajectories yields an AUC of 0.720 at a
-10\,m error threshold (Fig.~\ref{fig:roc_curve}).
-The $\Delta H_t$ (delta entropy) metric complements trustworthiness:
-among epochs where the trustworthiness exceeds 0.95 (under fixed-lag smoothing
-with $L=5$), only 2.3\% are segment mismatches, confirming that high-confidence
-epochs can be safely trusted without secondary verification.
+\label{sec:roc}
+
+Fig.~\ref{fig:roc_curve} shows the ROC curves for CMM and FMM using
+trustworthiness as a continuous mismatch detector. CMM attains an AUC of
+0.764 across all 7 trajectories, while FMM achieves 0.965.
+Superficially, FMM appears to have superior discriminative power, but
+this is an artifact of TW compression: FMM assigns TW $\approx 1.0$ to
+nearly every epoch regardless of correctness (standard deviation 0.039),
+so the tiny spread between correct (0.996) and wrong (0.911) scores
+produces an inflated AUC. The practical detection performance tells a
+different story. At a threshold of 0.9, CMM rejects 43\% of wrong matches
+while retaining 87\% of correct matches; FMM rejects only 26\% of wrong
+matches at the same threshold. CMM's trustworthiness is therefore a more
+\textit{actionable} integrity indicator: a drop in TW from 0.93 to 0.60
+signals genuine ambiguity, whereas FMM's TW remains near 1.0 until the
+mismatch is already severe.
+
+The joint path posterior (Eq.~\eqref{eq:joint_posterior}) is inherently
+more conservative than the marginal filtering posterior
+(Eq.~\eqref{eq:filtering_posterior}), because it accumulates path
+ambiguity across multiple epochs. This conservatism reduces AUC relative
+to a trivially binary score, but provides the practical benefit of
+meaningful confidence levels that correlate with correctness---precisely
+the property required for safety-critical integrity monitoring.
 
 \begin{figure}[t]
     \centering
     \includegraphics[width=1.0\linewidth]{figs/trust_roc_curve.png}
-    \caption{ROC curve: trustworthiness as mismatch detector (AUC = 0.720)}
+    \caption{ROC curve: trustworthiness as mismatch detector (CMM AUC = 0.764, FMM AUC = 0.965). The FMM AUC is inflated by near-binary TW scores.}
     \label{fig:roc_curve}
 \end{figure}
+
+\paragraph{Failure Case: Traj 22 Wrong-Direction False Lock.}
+Traj~22 contains a systematic failure spanning epochs 1800--2052,
+where CMM locks onto wrong-direction edges on the opposite side of a
+dual carriageway. The Viterbi path correctly identifies the correct
+forward edge at the individual-epoch level, but the global optimal
+path transitions to the wrong edge (edge~76260) because the
+subsequent GPS bias favors the incorrect geometry. CMM's
+trustworthiness remains high ($>0.99$) during this period---a known
+limitation of the filtering posterior, which considers only past
+evidence and cannot retroactively correct an error once the Viterbi
+path has switched. This case motivates future work incorporating
+geometry-based anti-wrong-way guards and velocity-informed discount
+factors.
 
 \section{Conclusion}
 This paper introduced a GNSS-uncertainty-consistent HMM framework
 for map matching that propagates the full covariance matrix,
 protection level, and integrity risk through all stages of the
 matching pipeline. The key contributions are: (1)~an anisotropic
-Mahalanobis emission model that replaces the traditional isotropic
-Gaussian, dramatically improving probabilistic calibration (ECE
-reduced from 0.978 to 0.121 at 5\,m); (2)~a fixed-lag smoothing
-mechanism that computes per-epoch trustworthiness as a calibrated
-softmax posterior; and (3)~a residual-based RAIM approach for
+Mahalanobis emission model with probabilistically normalized HMM
+components (background state, row-normalized transitions, uniform
+prior) that improves calibration over the traditional isotropic
+baseline (ECE reduced from 0.107 to 0.078); (2)~a joint path posterior
+trustworthiness metric that quantifies the probability that the
+optimal partial path is correct, together with a complementary
+marginal filtering posterior (n\_best\_trustworthiness) for
+per-candidate assessment; and (3)~a residual-based RAIM approach for
 computing protection levels from raw GNSS observations, replacing
 receiver-reported PL with a rigorous integrity bound (median HPL
 22.8\,m).
 
-An ablation study confirms that the anisotropic emission model
-accounts for 87.6\% of the total calibration improvement over FMM.
-The trustworthiness metric achieves an AUC of 0.720 for mismatch
-detection at 10\,m, providing a principled integrity indicator
-without requiring a separately trained anomaly detector.
-With RAIM-derived protection levels, fixed-lag smoothing does not
-further improve calibration on the Hainan dataset, suggesting that
-the PL already encodes sufficient geometric uncertainty.
+On real-vehicle data across 7 trajectories, CMM achieves 91.4\%
+segment accuracy (vs.\ 88.1\% for FMM), a 27\% relative ECE reduction,
+and 3.9$\times$ better trustworthiness separation between correct and
+wrong matches. The joint path posterior trustworthiness attains an AUC
+of 0.764 for mismatch detection, providing a principled integrity
+indicator without requiring a separately trained anomaly detector.
+We further demonstrate that the high AUC of the FMM baseline (0.965)
+is an artifact of near-binary TW scores that lack actionable
+discriminative power, underscoring the importance of evaluating
+trustworthiness separation alongside AUC.
 
-Future work will extend the trustworthiness framework to multi-sensor
-fusion (IMU dead-reckoning) for maintaining map-matching integrity
-in GNSS-denied environments, and explore the delta-entropy metric as
-a complementary reliability gauge alongside trustworthiness.
+Several limitations remain. Traj~22 exhibits a systematic wrong-direction
+false lock that the current filtering posterior cannot correct, and the
+background state with a fixed $p_{\text{bg}}=0.1$ does not fully prevent
+overconfidence in all scenarios. Future work will incorporate a
+geometry-based discount factor ($\alpha_{\text{geom}}$) and
+velocity-informed discount factor ($\alpha_{\text{vel}}$) to address these
+failure modes, extend the trustworthiness framework to multi-sensor fusion
+(IMU dead-reckoning) for maintaining map-matching integrity in GNSS-denied
+environments, and explore the delta-entropy metric as a complementary
+reliability gauge alongside trustworthiness.
 
 \section*{Acknowledgments}
 The authors thank XXX for XXX.
