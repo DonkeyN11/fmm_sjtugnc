@@ -1410,14 +1410,10 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             double sp = (i == 0) ? 0.0 : node->sp_dist;
             double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
 
-            // TW = partial path posterior: P(H*_{1:t} | z_{1:t}) = δ_t(x_t*) / Σ_j α_t(j)
-            // δ_t = exp(cumu_prob) = Viterbi max (single best path to this node)
-            // Σ_j α_t(j) = exp(log_Z) where log_Z = log_sum_exp(forward_cumu over layer)
-            // Since node->trustworthiness = exp(forward_cumu − log_Z),
-            //   TW = exp(cumu_prob − log_Z) = trustworthiness × exp(cumu_prob − forward_cumu)
-            double trust = (node->trustworthiness > 0.0 && node->forward_cumu > -std::numeric_limits<double>::infinity())
-                ? node->trustworthiness * std::exp(node->cumu_prob - node->forward_cumu)
-                : 0.0;
+            // TW = filtering posterior P(x_t = i* | z_{1:t}) = α_t(i*) / Σ_j α_t(j)
+            // With the correct forward recurrence (forward_cumu = log α_t), this is
+            // the per-layer softmax of forward_cumu — already computed as node->trustworthiness.
+            double trust = node->trustworthiness;
 
             // FUTURE: H0 lambda for discount framework (PHMI + velocity + geometry)
             double h0_lambda_val = 1.0;  // placeholder: discount disabled
@@ -1466,9 +1462,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         filtered_nbest.reserve(tg_opath.size());
         for (size_t i = 0; i < tg_opath.size(); ++i) {
             const TGNode *node = tg_opath[i];
-            double trust = (node->trustworthiness > 0.0 && node->forward_cumu > -std::numeric_limits<double>::infinity())
-                ? node->trustworthiness * std::exp(node->cumu_prob - node->forward_cumu)
-                : 0.0;
+            double trust = node->trustworthiness;
             if (!config.filtered || trust >= config.trustworthiness_threshold) {
                 if (i < layer_nbest.size()) {
                     filtered_nbest.push_back(layer_nbest[i]);
