@@ -1410,10 +1410,14 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             double sp = (i == 0) ? 0.0 : node->sp_dist;
             double eu = (i == 0) ? 0.0 : boost::geometry::distance(segment_traj.geom.get_point(i-1), segment_traj.geom.get_point(i));
 
-            // TW = P(x_t = i* | z_{1:t}) — filtering posterior of the Viterbi winner.
-            // Computed by the forward algorithm: α_t(i) / Σ_j α_t(j) = softmax(forward_cumu).
-            // This is a per-epoch, per-candidate probability that varies with local evidence.
-            double trust = node->trustworthiness;
+            // TW = partial path posterior: P(H*_{1:t} | z_{1:t}) = δ_t(x_t*) / Σ_j α_t(j)
+            // δ_t = exp(cumu_prob) = Viterbi max (single best path to this node)
+            // Σ_j α_t(j) = exp(log_Z) where log_Z = log_sum_exp(forward_cumu over layer)
+            // Since node->trustworthiness = exp(forward_cumu − log_Z),
+            //   TW = exp(cumu_prob − log_Z) = trustworthiness × exp(cumu_prob − forward_cumu)
+            double trust = (node->trustworthiness > 0.0 && node->forward_cumu > -std::numeric_limits<double>::infinity())
+                ? node->trustworthiness * std::exp(node->cumu_prob - node->forward_cumu)
+                : 0.0;
 
             double h0_lambda_val = (h0_lambda_vec != nullptr && i > 0 && i - 1 < h0_lambda_vec->size())
                 ? std::exp(std::max(-700.0, std::min(700.0, (*h0_lambda_vec)[i - 1]))) : 1.0;
@@ -1458,7 +1462,9 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         filtered_nbest.reserve(tg_opath.size());
         for (size_t i = 0; i < tg_opath.size(); ++i) {
             const TGNode *node = tg_opath[i];
-            double trust = node->trustworthiness;
+            double trust = (node->trustworthiness > 0.0 && node->forward_cumu > -std::numeric_limits<double>::infinity())
+                ? node->trustworthiness * std::exp(node->cumu_prob - node->forward_cumu)
+                : 0.0;
             if (!config.filtered || trust >= config.trustworthiness_threshold) {
                 if (i < layer_nbest.size()) {
                     filtered_nbest.push_back(layer_nbest[i]);
