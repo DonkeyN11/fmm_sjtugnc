@@ -62,7 +62,7 @@
     <reverse_tolerance>0.0</reverse_tolerance>
     <normalized>false</normalized>
     <use_mahalanobis>true</use_mahalanobis>
-    <window_length>100</window_length>
+    <!-- <window_length>100</window_length> -->
     <filtered>false</filtered>
     <max_interval>180.0</max_interval>
     <trustworthiness_threshold>0.0</trustworthiness_threshold>
