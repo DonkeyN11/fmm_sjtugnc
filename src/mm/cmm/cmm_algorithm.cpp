@@ -1992,10 +1992,12 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                 double linear_tp_norm = tp_raw / sum_tp_raw;
                 double log_tp_norm = std::log(linear_tp_norm);
 
-                // 在对数空间内安全相加
-                double log_branch_prob = node_a.cumu_prob + log_tp_norm;
+                // Forward sum branch: α_{t-1}(a) * a(a,b) in log-space
+                // Uses forward_cumu (sum over all paths), not cumu_prob (max path).
+                incoming_log_probs.push_back(node_a.forward_cumu + log_tp_norm);
 
-                incoming_log_probs.push_back(log_branch_prob);
+                // Viterbi max branch: δ_{t-1}(a) * a(a,b) in log-space
+                double log_branch_prob = node_a.cumu_prob + log_tp_norm;
 
                 // 记录 Viterbi 最优前驱，用于 backtrack
                 if (log_branch_prob > best_log_branch_prob) {
