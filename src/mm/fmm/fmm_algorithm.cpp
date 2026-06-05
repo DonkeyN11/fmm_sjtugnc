@@ -380,29 +380,79 @@ void FastMapMatch::update_layer(int level,
   // SPDLOG_TRACE("Update layer");
   TGLayer &lb = *lb_ptr;
   bool layer_connected = false;
+  const double neg_inf = -std::numeric_limits<double>::infinity();
+
+  // Pre-allocate forward-sum accumulators for each candidate in lb
+  std::vector<std::vector<double>> incoming_logs(lb.size());
+
   for (auto iter_a = la_ptr->begin(); iter_a != la_ptr->end(); ++iter_a) {
+    if (iter_a->cumu_prob <= neg_inf) continue;
     NodeIndex source = iter_a->c->index;
-    for (auto iter_b = lb_ptr->begin(); iter_b != lb_ptr->end(); ++iter_b) {
-      double sp_dist = get_sp_dist(iter_a->c, iter_b->c,
-        reverse_tolerance);
+    for (size_t bi = 0; bi < lb.size(); ++bi) {
+      auto &iter_b = lb[bi];
+      double sp_dist = get_sp_dist(iter_a->c, iter_b.c, reverse_tolerance);
       double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
-      double temp = iter_a->cumu_prob + log(tp) + log(iter_b->ep);
+      if (tp <= 0) continue;
+      double branch = iter_a->cumu_prob + std::log(tp);
+      incoming_logs[bi].push_back(branch);
+
+      double temp = branch + std::log(iter_b.ep);
       SPDLOG_TRACE("L {} f {} t {} sp {} dist {} tp {} ep {} fcp {} tcp {}",
-        level, iter_a->c->edge->id,iter_b->c->edge->id,
-        sp_dist, eu_dist, tp, iter_b->ep, iter_a->cumu_prob,
-        temp);
-      if (temp >= iter_b->cumu_prob) {
-        if (temp>-std::numeric_limits<double>::infinity()){
-          layer_connected = true;
-        }
-        iter_b->cumu_prob = temp;
-        iter_b->prev = &(*iter_a);
-        iter_b->tp = tp;
-        iter_b->sp_dist = sp_dist;
-        iter_b->trustworthiness = (tp > 0) ? iter_b->ep * tp : 0;
+        level, iter_a->c->edge->id, iter_b.c->edge->id,
+        sp_dist, eu_dist, tp, iter_b.ep, iter_a->cumu_prob, temp);
+      if (temp > iter_b.cumu_prob) {
+        iter_b.cumu_prob = temp;
+        iter_b.prev = &(*iter_a);
+        iter_b.tp = tp;
+        iter_b.sp_dist = sp_dist;
+        if (temp > neg_inf) layer_connected = true;
       }
     }
   }
+
+  // Compute forward sum α_t(j) and per-layer softmax
+  std::vector<double> layer_fwd;
+  for (size_t bi = 0; bi < lb.size(); ++bi) {
+    auto &node = lb[bi];
+    if (node.ep > 0 && !incoming_logs[bi].empty()) {
+      // Anonymous-namespace log_sum_exp in transition_graph.cpp
+      double log_sum_incoming = neg_inf;
+      double mx = *std::max_element(incoming_logs[bi].begin(), incoming_logs[bi].end());
+      if (mx > neg_inf) {
+        double s = 0.0;
+        for (double v : incoming_logs[bi])
+          if (v > neg_inf) s += std::exp(v - mx);
+        log_sum_incoming = mx + std::log(s);
+      }
+      node.forward_cumu = log_sum_incoming + std::log(node.ep);
+    } else if (node.ep > 0) {
+      node.forward_cumu = std::log(node.ep);  // fallback: EP-only
+    } else {
+      node.forward_cumu = neg_inf;
+    }
+    if (node.forward_cumu > neg_inf)
+      layer_fwd.push_back(node.forward_cumu);
+  }
+
+  // Per-layer softmax → filtering posterior, then partial path posterior TW
+  if (!layer_fwd.empty()) {
+    double mx = *std::max_element(layer_fwd.begin(), layer_fwd.end());
+    double s = 0.0;
+    for (double v : layer_fwd)
+      if (v > neg_inf) s += std::exp(v - mx);
+    double log_Z = mx + std::log(s);
+
+    for (auto &node : lb) {
+      if (node.forward_cumu > neg_inf && node.cumu_prob > neg_inf) {
+        // TW = δ_t(j*) / Σ_k α_t(k) = exp(cumu_prob - log_Z)
+        double log_tw = node.cumu_prob - log_Z;
+        node.trustworthiness = (log_tw < -745.0) ? 0.0 : std::exp(log_tw);
+      } else {
+        node.trustworthiness = 0.0;
+      }
+    }
+  }
+
   if (connected!=nullptr){
     *connected = layer_connected;
   }

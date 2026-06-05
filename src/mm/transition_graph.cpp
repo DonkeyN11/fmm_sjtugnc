@@ -123,18 +123,47 @@ double TransitionGraph::calc_ep(double dist,double error){
 }
 
 // Reset the properties of a candidate set
+namespace {
+// Log-sum-exp in double precision (numerically stable).
+double log_sum_exp_fmm(const std::vector<double> &log_vals) {
+  if (log_vals.empty()) return -std::numeric_limits<double>::infinity();
+  double max_val = *std::max_element(log_vals.begin(), log_vals.end());
+  if (max_val == -std::numeric_limits<double>::infinity()) return max_val;
+  double sum = 0.0;
+  for (double v : log_vals) {
+    if (v > -std::numeric_limits<double>::infinity())
+      sum += std::exp(v - max_val);
+  }
+  return max_val + std::log(sum);
+}
+}  // anonymous namespace
+
 void TransitionGraph::reset_layer(TGLayer *layer){
+  // Initialize first layer: Viterbi δ₁ = forward α₁ = log(ep)
+  // Forward sum is needed for per-layer normalization (softmax).
+  std::vector<double> layer_log_probs;
   for (auto iter=layer->begin(); iter!=layer->end(); ++iter) {
     if (iter->ep > 0) {
       iter->cumu_prob = std::log(iter->ep);
-      iter->trustworthiness = iter->ep;
+      iter->forward_cumu = std::log(iter->ep);
+      layer_log_probs.push_back(iter->forward_cumu);
     } else {
       iter->cumu_prob = -std::numeric_limits<double>::infinity();
+      iter->forward_cumu = -std::numeric_limits<double>::infinity();
       iter->trustworthiness = 0;
     }
     iter->prev = nullptr;
     iter->tp = 0;
     iter->sp_dist = 0;
+  }
+  // Per-layer softmax normalization — filtering posterior P(x₁ | z₁)
+  if (!layer_log_probs.empty()) {
+    double log_sum = log_sum_exp_fmm(layer_log_probs);
+    for (auto iter=layer->begin(); iter!=layer->end(); ++iter) {
+      if (iter->forward_cumu > -std::numeric_limits<double>::infinity()) {
+        iter->trustworthiness = std::exp(iter->forward_cumu - log_sum);
+      }
+    }
   }
 }
 
