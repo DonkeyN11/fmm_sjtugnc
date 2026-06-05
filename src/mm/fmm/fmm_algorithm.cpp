@@ -387,16 +387,17 @@ void FastMapMatch::update_layer(int level,
 
   for (auto iter_a = la_ptr->begin(); iter_a != la_ptr->end(); ++iter_a) {
     if (iter_a->cumu_prob <= neg_inf) continue;
-    NodeIndex source = iter_a->c->index;
     for (size_t bi = 0; bi < lb.size(); ++bi) {
       auto &iter_b = lb[bi];
       double sp_dist = get_sp_dist(iter_a->c, iter_b.c, reverse_tolerance);
       double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
       if (tp <= 0) continue;
-      double branch = iter_a->cumu_prob + std::log(tp);
-      incoming_logs[bi].push_back(branch);
 
-      double temp = branch + std::log(iter_b.ep);
+      // Viterbi: single best path (for backtrack)
+      double temp = iter_a->cumu_prob + std::log(tp) + std::log(iter_b.ep);
+      // Forward: sum over all incoming paths (for α recurrence)
+      double branch_fwd = iter_a->forward_cumu + std::log(tp);
+      incoming_logs[bi].push_back(branch_fwd);
       SPDLOG_TRACE("L {} f {} t {} sp {} dist {} tp {} ep {} fcp {} tcp {}",
         level, iter_a->c->edge->id, iter_b.c->edge->id,
         sp_dist, eu_dist, tp, iter_b.ep, iter_a->cumu_prob, temp);
@@ -425,9 +426,9 @@ void FastMapMatch::update_layer(int level,
         log_sum_incoming = mx + std::log(s);
       }
       node.forward_cumu = log_sum_incoming + std::log(node.ep);
-    } else if (node.ep > 0) {
-      node.forward_cumu = std::log(node.ep);  // fallback: EP-only
     } else {
+      // No valid incoming transitions → unreachable. Keep at -inf
+      // so disconnected candidates don't inflate the posterior normalizer.
       node.forward_cumu = neg_inf;
     }
     if (node.forward_cumu > neg_inf)
