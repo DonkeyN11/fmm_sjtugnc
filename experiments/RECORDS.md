@@ -708,6 +708,25 @@ CMM has 3.9× better TW separation than FMM. Wrong matches get substantially low
 
 **Key insight**: FMM AUC=0.965 is an artifact of TW compression. FMM claims ~100% confidence for 88.1%-correct matches → the tiny spread (correct=0.996, wrong=0.911) happens to weakly correlate → high AUC. But FMM cannot reject wrong matches: at threshold 0.9, FMM rejects only 26% of wrong matches. CMM at threshold 0.9 rejects 43% of wrong matches while keeping 87% of correct.
 
+### TW vs n_best_trustworthiness — Marginal vs Joint Posterior
+
+Two distinct probability quantities are reported per epoch:
+
+| Column | Formula | Question Answered | bg_prob included? |
+|--------|---------|-------------------|:---:|
+| `n_best_trustworthiness` | $\alpha_t(j) / \sum_k \alpha_t(k)$ = softmax(forward_cumu) | "Given all past observations, what's the probability the vehicle is on this specific edge right now?" | ✅ Yes |
+| `trustworthiness` | $\delta_t(x_t^*) / \sum_k \alpha_t(k)$ | "What's the probability the entire optimal path from epoch 1 to t is correct?" | ✅ Yes |
+
+Where:
+- $\alpha_t(j) = [\sum_i \alpha_{t-1}(i) \cdot a(i,j)] \cdot e_t(j)$ — forward probability (sum over ALL paths)
+- $\delta_t(j) = \max_i[\delta_{t-1}(i) \cdot a(i,j)] \cdot e_t(j)$ — Viterbi max (single BEST path)
+
+`n_best_trustworthiness` is a **marginal posterior** (per-state, per-epoch). It uses softmax over forward_cumu within a single layer. The background pseudo-candidate (bg_prob=0.1) participates in the denominator, absorbing mass when all road candidates have weak EP.
+
+`trustworthiness` is a **joint path posterior** (partial). Since $\delta_t \leq \alpha_t$ always (max path ≤ sum of all paths), the joint posterior is always ≤ the marginal — often dramatically so. When many competing paths converge to the same Viterbi winner (e.g., at intersections), forward_cumu sums all of them while cumu_prob picks only the best — creating a large gap. The softmax says "this edge, 99.99%", but the path posterior says "there are so many ways to get here that this specific path is ~0%."
+
+**Example** (traj 22 seq 1649): n_best=[0.9999, ...], TW=0.00000002. The Viterbi winner has cumu_prob 17.7 nats below its forward_cumu — ~1000 competing paths converge to this same winner, each with similar probability. The marginal says "clearly this edge", the joint says "but HOW we got here is completely uncertain." The cumulative path ambiguity across preceding epochs is invisible to per-layer softmax.
+
 ### Open Questions
 
 1. **Traj 22 accuracy regression (72.9% vs old 83.1%)**: TP row normalization changed Viterbi path — raw TP gave large self-transition advantage, normalized TP compresses this. Is the drop from correct TP normalization exposing GPS ambiguity, or from over-normalization? Need to compare old vs new Viterbi paths epoch-by-epoch.
