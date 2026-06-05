@@ -492,6 +492,7 @@ result = fmm.match_traj(trajectory, config)
 - CMM ECE: 0.072 vs FMM 0.107 — CMM better calibrated
 - CMM AUC: 0.764 vs FMM 0.965 — FMM AUC inflated by TW compression artifact
 - CMM TW separation (correct−wrong): **0.329** vs FMM 0.085 — CMM 3.9× better discrimination
+- TW = $\delta_t / \sum\alpha_t$ (partial path posterior, joint); n_best = $\alpha_t / \sum\alpha_t$ (filtering posterior, marginal). Both include bg_prob in denominator. See RECORDS.md §TW-vs-nbest for details.
 - Mapbox visualization: `experiments/output/spp_error/mapbox_real_viz.html`
 - ROC figure: `experiments/output/exp6_real/roc_curve.png`
 
