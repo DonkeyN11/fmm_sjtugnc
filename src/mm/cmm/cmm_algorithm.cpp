@@ -1419,8 +1419,12 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 ? node->trustworthiness * std::exp(node->cumu_prob - node->forward_cumu)
                 : 0.0;
 
+            // FUTURE: H0 lambda for discount framework (PHMI + velocity + geometry)
+            double h0_lambda_val = 1.0;  // placeholder: discount disabled
+#if 0
             double h0_lambda_val = (h0_lambda_vec != nullptr && i > 0 && i - 1 < h0_lambda_vec->size())
                 ? std::exp(std::max(-700.0, std::min(700.0, (*h0_lambda_vec)[i - 1]))) : 1.0;
+#endif
 
             MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy, h0_lambda_val};
             matched_candidate_path.push_back(mc);
@@ -1538,7 +1542,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             if (config.enable_gap_bridging && (speed > MAX_REASONABLE_SPEED || time_diff > config.max_interval)) {
                 // Sub-trajectory boundary: flush smoothing buffer before finishing this segment
                 flush_lag_buffer(lag_buffer, *this, config.lag_steps);
-                process_sub_segment(tg_ptr.get(), current_sub_indices, &h0_log_lambdas);
+                process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
 
                 for (int skipped_idx : skipped_indices) {
                     final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
@@ -1566,9 +1570,9 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 if (config.lag_steps > 0) {
                     lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
                 }
-                // Reset H0 lambda for new sub-trajectory
-                h0_log_lambdas.clear();
-                h0_log_lambda = config.h0_prior_log_odds;
+                // Reset H0 lambda for new sub-trajectory (FUTURE: discount framework)
+                // h0_log_lambdas.clear();
+                // h0_log_lambda = config.h0_prior_log_odds;
 
                 last_valid_layer = &tg_ptr->get_layers()[0];
                 last_valid_real = next_real;
@@ -1600,7 +1604,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 if (should_restart) {
                     // 1. Flush smoothing buffer and commit current sub-segment
                     flush_lag_buffer(lag_buffer, *this, config.lag_steps);
-                    process_sub_segment(tg_ptr.get(), current_sub_indices, &h0_log_lambdas);
+                    process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
                     for (int skipped_idx : skipped_indices) {
                         final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
                     }
@@ -1629,9 +1633,9 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     if (config.lag_steps > 0) {
                         lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
                     }
-                    // Reset H0 lambda for new sub-trajectory
-                    h0_log_lambdas.clear();
-                    h0_log_lambda = config.h0_prior_log_odds;
+                    // Reset H0 lambda for new sub-trajectory (FUTURE: discount framework)
+                    // h0_log_lambdas.clear();
+                    // h0_log_lambda = config.h0_prior_log_odds;
 
                     last_valid_layer = &tg_ptr->get_layers()[0];
                     last_valid_real = next_real;
@@ -1650,12 +1654,11 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 last_valid_layer = &tg_ptr->get_layers().back();
                 last_valid_real = next_real;
 
-                // ── Accumulate global H0 lambda (always, not gated by lag_steps) ──
-                // Bayesian sequential test:
-                //   LR_t = P(z_t | H0) / P(z_t | ¬H0) = frac_inside / PHMI
-                //   λ_t = λ_{t-1} × LR_t
-                //   α_t = λ_t / (1 + λ_t) discounts trust at output (line 1371).
-                // Fix: moved outside lag_steps gate so it runs with lag=0 too.
+                // ── Accumulate global H0 lambda ──────────────────────────────────
+                // FUTURE: discount factor framework (PHMI + velocity + geometry)
+                // Currently commented out — TW uses partial path posterior instead.
+                // Will be re-enabled when α_geom + α_vel discount is implemented.
+#if 0
                 {
                     double raw_pl = (next_real < static_cast<int>(traj.protection_levels.size()))
                         ? traj.protection_levels[next_real] : 0.0;
@@ -1677,6 +1680,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     h0_log_lambda += std::log(h0_lr);
                     h0_log_lambdas.push_back(h0_log_lambda);
                 }
+#endif
 
                 // ── Push to smoothing buffer and apply fixed-lag smoothing ──
                 if (config.lag_steps > 0) {
@@ -1709,7 +1713,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         flush_lag_buffer(lag_buffer, *this, config.lag_steps);
 
         if (!current_sub_indices.empty()) {
-            process_sub_segment(tg_ptr.get(), current_sub_indices, &h0_log_lambdas);
+            process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
         }
         for (int skipped_idx : skipped_indices) {
             final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
