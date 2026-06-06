@@ -1090,7 +1090,7 @@ From a Bayesian perspective, this procedure already yields a statistically
 optimal map-matching solution in the maximum \emph{a posteriori} (MAP) sense.
 
 However, for safety-critical applications such as navigation charging,
-autonomous driving support, or integrity monitoring, providing only a
+autonomous driving, or integrity monitoring, providing only a
 single best-matching result is insufficient. In addition to the estimated road
 trajectory, the navigation system must also quantify how reliable this result
 is. In practice, map-matching failures tend to occur in environments where
@@ -1140,7 +1140,10 @@ For each trajectory, a synthetic satellite constellation of 8 satellites is gene
 
 \subsubsection{Weighted Least-Squares Positioning with RAIM-FDE}
 
-Vehicle position and its associated $2\times 2$ horizontal covariance matrix $\boldsymbol{\Sigma}_i$ are estimated via the weighted least-squares (WLS) solution of Eq.~\eqref{eq:wls_dx}--\eqref{eq:wls_cov_full}. The pseudorange weight matrix is $\mathbf{W} = \sigma_{\rho}^{-2}\mathbf{I}$.
+Vehicle position and its associated $2\times 2$ horizontal covariance matrix
+$\boldsymbol{\Sigma}_i$ are estimated via the weighted least-squares (WLS)
+solution (Eqs.~\eqref{eq:wls_dx}--\eqref{eq:wls_cov_full}). The pseudorange
+weight matrix is $\mathbf{W} = \sigma_{\rho}^{-2}\mathbf{I}$.
 
 A Receiver Autonomous Integrity Monitoring (RAIM) module performs two functions. First, a global consistency test checks the sum of squared residuals against a $\chi^2$ threshold at false-alarm probability $P_{\text{FA}}=10^{-5}$. If the global test fails, local $w$-tests identify and iteratively exclude faulty satellites (up to 3 exclusions, minimum 5 remaining satellites). Second, the Horizontal Protection Level (HPL) is computed from the post-FDE covariance as $\text{HPL} = K\cdot \sigma_{\text{major}}$, where $\sigma_{\text{major}}$ is the semi-major axis of the error ellipse (Eq.~\eqref{eq:pl_iterative} simplified under single-fault RAIM). The HPL serves as the adaptive candidate search radius in CMM (Section~\ref{subsec:gnss_consistent_hmm}).
 
@@ -1159,14 +1162,14 @@ The simulation parameters are summarized in Table~\ref{tab:mc_setup}.
 \caption{Simulation Configuration}
 \label{tab:mc_setup}
 \small
-\begin{tabularx}{\columnwidth}{l X}
+\begin{tabular}{lp{0.50\columnwidth}}
 \toprule
 \textbf{Category} & \textbf{Configuration} \\ \midrule
-Road network & Haikou, Hainan (EPSG-projected shapefile) \\
-Trajectories per $\sigma$ level & 20 \\
+Road network & Haikou, Hainan (shapefile) \\
+Traj.\ per $\sigma$ level & 20 \\
 Points per trajectory & 1000 (1\,Hz) \\
-Vehicle speed & 12\,m/s (straight), linear change (turns) \\
-Satellites & 8 per trajectory, random azimuth, elevation $[45^\circ,80^\circ)$ \\
+Vehicle speed & 12\,m/s (straight), lin.\ change (turns) \\
+Satellites & 8 per traj., random az., elev.\ $[45^\circ,80^\circ)$ \\
 \midrule
 \multicolumn{2}{l}{\textbf{Pseudorange Noise Levels ($\sigma_{\rho}$)}} \\
 Exp.~1--3, 5 & 1, 5, 10, 15, 20, 25, 30\,m \\
@@ -1190,7 +1193,7 @@ $k$ (candidates) & 16 \\
 Search radius $r$ & $0.03^\circ$ \\
 GPS error $\sigma$ & $0.001^\circ$ \\
 \bottomrule
-\end{tabularx}
+\end{tabular}
 \end{table}
 
 \subsection{Experiment 1: Covariance Model Validation}
@@ -1238,10 +1241,11 @@ Table~\ref{tab:stanford} summarizes the PL coverage statistics. Under nominal co
 \centering
 \caption{RAIM Protection Level Coverage Summary}
 \label{tab:stanford}
-\small
-\begin{tabular}{lccccc}
+{\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{@{}lccccc@{}}
 \toprule
-Condition & $\sigma_{\rho}$ & $P_{\text{md}}$ & $P_{\text{fa}}$ & Mean PL (m) & Mean Error (m) \\
+Condition & $\sigma_{\rho}$ & $P_{\text{md}}$ & $P_{\text{fa}}$ & Mean PL (m) & Mean Err (m) \\
 \midrule
 Nominal & 1\,m & 0 & 0.05 & 14.4 & 1.9 \\
 Nominal & 10\,m & 0 & 0.05 & 139.4 & 22.0 \\
@@ -1252,7 +1256,7 @@ Fault only & 30\,m & 0.0075 & 0.05 & 434.0 & 76.6 \\
 Occlusion only & 30\,m & 0.0002 & 0.05 & 259.0 & 44.3 \\
 Occlusion+Fault & 30\,m & 0.0089 & 0.05 & 288.9 & 54.0 \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 \subsection{Experiment 3: Parameter Sensitivity --- CMM vs.\ FMM}
@@ -1262,7 +1266,10 @@ Experiment~3 provides a comprehensive comparison between CMM and FMM across the 
 
 \subsubsection{Sigma Sensitivity}
 
-For each $\sigma_{\rho}\in\{1,5,10,15,20,25,30\}$\,m, both CMM and FMM are run on 20 trajectories (1,000 epochs each, 1\,Hz) under nominal conditions (no occlusion, no fault). Fig.~\ref{fig:sigma_sweep} presents the six-panel comparison.
+For each $\sigma_{\rho}\in\{1,5,10,15,20,25,30\}$\,m, both CMM and FMM are run on
+20 trajectories (1,000 epochs each, 1\,Hz) under nominal conditions (no
+occlusion, no fault). Fig.~\ref{fig:sigma_sweep} presents the six-panel
+comparison.
 
 \begin{figure}[htbp]
     \centering
@@ -1326,7 +1333,8 @@ Fig.~\ref{fig:mismatch} and Table~\ref{tab:mismatch} report the results. The key
 \centering
 \caption{Sigma Mismatch Analysis ($\sigma_{\text{wls}}=20$\,m, $k=16$)}
 \label{tab:mismatch}
-\small
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
 \begin{tabular}{lccccc}
 \toprule
 $\sigma_{\rho}^{\text{true}}$ & Mismatch & CMM Acc. & CMM ECE & FMM Acc. & FMM ECE \\
@@ -1337,7 +1345,7 @@ $\sigma_{\rho}^{\text{true}}$ & Mismatch & CMM Acc. & CMM ECE & FMM Acc. & FMM E
 25\,m & $+5$ & 0.899 & 0.234 & 0.673 & 0.478 \\
 30\,m & $+10$ (over-conf.)& 0.931 & 0.215 & 0.587 & 0.464 \\
 \bottomrule
-\end{tabular}
+\end{tabular}}
 \end{table}
 
 \subsection{Experiment 5: Robustness Under Degraded Conditions}
@@ -1360,7 +1368,7 @@ The fault condition causes the largest ECE increase for CMM (0.134 $\to$ 0.247),
 \centering
 \caption{Degraded Condition Performance ($\sigma_{\rho}=30$\,m, $k=16$)}
 \label{tab:degraded}
-\small
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{lcccccc}
 \toprule
 Condition & CMM Acc. & CMM ECE & CMM AUC & FMM Acc. & FMM ECE & FMM AUC \\
@@ -1370,7 +1378,8 @@ Fault           & 0.717 & 0.247 & 0.706 & 0.591 & 0.476 & 0.489 \\
 Occlusion       & 0.897 & 0.181 & 0.835 & 0.610 & 0.464 & 0.533 \\
 Occlusion+Fault & 0.780 & 0.147 & 0.764 & 0.610 & 0.458 & 0.528 \\
 \bottomrule
-\end{tabular}
+\end{tabular}%
+}
 \end{table}
 
 \subsection{Discussion of Simulation Findings}
@@ -1414,9 +1423,10 @@ Table~\ref{tab:dataset} summarizes the dataset.
 \caption{Hainan-06 Dataset Summary}
 \label{tab:dataset}
 \centering
+\small
 \begin{tabular}{lcccc}
 \toprule
-Traj. & Epochs & Duration & RAIM HPL (median) & Error (median) \\
+Traj. & Epochs & Duration & HPL (med.) & Error (med.) \\
 \midrule
 Traj 11 & 2,696 & 44.9 min & 15.0 m & 3.0 m \\
 Traj 12 &   734 & 12.2 min & 17.4 m & 10.4 m \\
@@ -1516,7 +1526,7 @@ CMM produces well-calibrated probabilities across most confidence bins.
 \begin{figure}[t]
     \centering
     \includegraphics[width=1.0\linewidth]{figs/reliability_diagram.png}
-    \caption{Reliability diagram at 5\,m error threshold: CMM (anisotropic Mahalanobis) vs.\ FMM (isotropic Euclidean). The diagonal represents perfect calibration.}
+    \caption{Reliability diagram at 5\,m threshold: CMM vs.\ FMM. The diagonal represents perfect calibration.}
     \label{fig:reliability}
 \end{figure}
 
@@ -1544,11 +1554,11 @@ transitions) produces an ECE of 0.107. Replacing the isotropic emission
 with the Mahalanobis (anisotropic) model within the probabilistically
 normalized HMM framework (row-normalized transitions, uniform initial
 prior, background state $p_{\text{bg}}=0.1$) reduces ECE to 0.072---a
-33\% relative improvement, attributable to the elimination of isotropic
-misspecification and proper posterior calibration. Finally, adding the
-cumulative reverse travel guard (3\% of edge length, one-way edges
-only) further improves ECE to \textbf{0.051} by preventing
-wrong-direction false locks on dual-carriageway edges, which would
+33\% relative improvement, attributable to eliminating isotropic
+misspecification and achieving proper posterior calibration.
+Finally, adding the cumulative reverse travel guard (3\% of edge length,
+one-way edges only) further improves ECE to \textbf{0.051} by preventing
+wrong-direction false locks on dual-carriageway edges. Such locks
 otherwise produce epochs where the filter is locked onto an incorrect
 edge with spuriously high trustworthiness. The cumulative improvement
 represents a 52\% reduction in calibration error relative to the FMM
@@ -1558,9 +1568,11 @@ baseline.
 \caption{Ablation Study: Per-Component ECE on Real Data (13,256 epochs)}
 \label{tab:ablation}
 \centering
-\begin{tabular}{lccc}
+\small
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lccc@{}}
 \toprule
-Configuration & ECE(TW) & $\Delta$ECE & Rel.\ Reduction \\
+Configuration & ECE(TW) & $\Delta$ECE & Rel.\ Red. \\
 \midrule
 FMM (isotropic baseline)          & 0.107 & --       & -- \\
 CMM (anisotropic + norm.\ HMM)    & 0.072 & $-$0.035 & 33\% \\
