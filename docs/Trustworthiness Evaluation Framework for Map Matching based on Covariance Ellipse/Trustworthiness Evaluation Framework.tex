@@ -41,7 +41,7 @@
 \begin{abstract}
 Map matching is a core component of intelligent transportation systems and
 safety-critical navigation, yet most existing hidden Markov model (HMM)–based
-methods still treat the global navigation satellite system (GNSS) as a fixed, isotropic error model. This simplification ignores the rich
+methods still treat the global navigation satellite system (GNSS) as a fixed, isotropic error model . This simplification ignores the rich
 uncertainty information provided by modern receivers, including covariance
 matrices, protection levels, and integrity risk bounds, and prevents current
 algorithms from quantifying the reliability of their own outputs. This paper
@@ -61,29 +61,24 @@ fixed-isotropic HMM baseline. On real data, CMM achieves 96.4\%
 segment accuracy versus 88.1\% (FMM), reduces the Expected
 Calibration Error (ECE) from 0.107 to 0.051, and improves
 trustworthiness separation between correct and wrong matches by a
-factor of 4.2$\times$. The filtering posterior trustworthiness metric
+factor of 4.2. The filtering posterior trustworthiness metric
 attains an area under the ROC curve of 0.668 for mismatch detection,
 confirming its practical effectiveness as an integrity indicator for
-safety-critical map-matching applications. The modest AUC is a
-consequence of the low false-match rate (3.6\%)---the remaining
-mismatches are genuinely ambiguous cases where no per-epoch score can
-discriminate, highlighting the importance of evaluating trustworthiness
-separation alongside AUC.
+safety-critical map-matching applications. 
 \end{abstract}
 
 \begin{IEEEkeywords}
 Map matching, global navigation satellite systems (GNSS), hidden Markov models,
-positioning uncertainty, covariance modeling, integrity monitoring,
+integrity monitoring,
 trustworthiness evaluation, safety-critical navigation.
 \end{IEEEkeywords}
 
 \section{Introduction}
 \IEEEPARstart{M}{ap}
-matching is a fundamental component in intelligent transportation systems, high-precision navigation, and safety-critical location-based services. Its objective is to infer the correct road segment and trajectory from noisy global navigation satellite system (GNSS) observations and a digital road map. Traditional hidden Markov model (HMM)–based map-matching algorithms, such as those implemented in fast map matching (FMM) and its variants, have demonstrated strong performance in large-scale deployments due to their computational efficiency and topological consistency. However, a critical limitation remains: most existing algorithms assume a static, isotropic GNSS error model, typically represented by a fixed circular Gaussian noise distribution. This assumption ignores the dynamic, anisotropic, and environment-dependent characteristics of GNSS uncertainty, which are especially pronounced in urban canyons, elevated roads, tunnels, and foliage-covered corridors.
+matching is a fundamental component in intelligent transportation systems, high-precision navigation, and safety-critical location-based services. Its objective is to infer the correct road segment and trajectory from noisy global navigation satellite system (GNSS) observations and a digital road map. Traditional hidden Markov model (HMM)–based map-matching algorithms, such as those implemented in fast map matching (FMM) ~\cite{FMM} and its variants, have demonstrated strong performance in large-scale deployments due to their computational efficiency and topological consistency. However, a critical limitation remains: most existing algorithms assume a static, isotropic GNSS error model, typically represented by a fixed circular Gaussian noise distribution or a heuristic parameter. This assumption ignores the dynamic, anisotropic, and environment-dependent characteristics of GNSS uncertainty, which are especially pronounced in urban canyons, elevated roads, tunnels, and foliage-covered corridors.
 
-% NMEA GST needs reference
-Recent GNSS receivers, through messages such as NMEA GST, provide real-time estimates of the positioning covariance, which reflects both the instantaneous accuracy and the correlation structure of measurement errors. Despite the availability of this information, current map-matching frameworks rarely integrate these covariance estimates into the probabilistic formulation. % need to verify
-As a result, the emission probability in conventional HMM map matching cannot faithfully represent the varying reliability of GNSS measurements, thus limiting the algorithm’s ability to quantify confidence, detect mismatches, and provide trustworthiness information required for safety-critical applications. In this paper, we define \emph{trustworthiness} as the per-epoch filtering posterior probability $P(x_t = i^* \mid z_{1:t})$ that the Viterbi-optimal road edge $i^*$ is correct given all GNSS observations up to epoch $t$---a principled, calibrated confidence score that varies with local positioning quality and road network geometry.
+However, GNSS receivers, through messages such as NMEA GST, provide real-time estimates of the positioning covariance, which reflects both the instantaneous accuracy and the correlation structure of measurement errors. Despite the availability of this information, current map-matching frameworks rarely integrate these information estimates into the probabilistic formulation. 
+As a result, the emission probability in conventional HMM map matching cannot faithfully represent the varying reliability of GNSS measurements, thus limiting the algorithm’s ability to detect mismatches and provide trustworthiness information required for safety-critical applications. In this paper, we define \emph{trustworthiness} as the per-epoch filtering posterior probability $P(x_t = i^* \mid z_{1:t})$ that the Viterbi-optimal road edge $i^*$ is correct given all GNSS observations up to epoch $t$---a principled, calibrated confidence score that varies with local positioning quality and road network geometry.
 % need to redraw
 \begin{figure}[htbp]
     \centering
@@ -92,22 +87,21 @@ As a result, the emission probability in conventional HMM map matching cannot fa
     \label{fig:abstract}
 \end{figure}
 
-To overcome these limitations, this paper proposes a GNSS-uncertainty-aware
+In a nutshell, this paper proposes a GNSS-uncertainty-aware
 map-matching framework together with a trustworthiness evaluation theory that
 treats map matching not only as a optimization problem but also as a
 reliability assessment task. The main contributions are summarized as follows:
 
 \begin{itemize}
-\item Proposed an anisotropic GNSS covariance based emission model with a probabilistically normalized HMM framework. This research replaces the standard isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS covariance matrix, introduces a background state for emission probability normalization, enforces row-normalized transition probabilities, and adopts a uniform prior over candidates. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from a Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
+\item Proposed an anisotropic GNSS covariance based emission model with a probabilistically normalized HMM framework. This research replaces the heuristic isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS covariance matrix. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from a Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
 
-\item  Deriving the filtering posterior as a per-epoch trustworthiness statistic. The \emph{filtering posterior} $P(x_t = i^* \mid z_{1:t})$ is introduced as the primary trustworthiness metric, quantifying the probability that the matched road edge is correct given all observations up to epoch $t$, computed via the forward algorithm with proper probabilistic normalization (row-normalized transitions, uniform initial prior, and a background state representing the off-road hypothesis). The \emph{joint path posterior} $P(H^*_{1:t} \mid z_{1:t})$ is derived as a complementary trajectory-level quantity; because the forward denominator $\sum_j \alpha_t(j)$ sums over all paths while the Viterbi numerator tracks only the single best path, the gap $\delta_t \ll \sum \alpha_t$ widens with trajectory length, making the joint posterior progressively more conservative. The per-epoch filtering posterior avoids this degeneracy. These are complemented by information-theoretic metrics (posterior entropy $H_t$ and delta entropy $\Delta H_t$) that quantify the residual ambiguity at each epoch.
+\item  Deriving the filtering posterior as a per-epoch trustworthiness statistic. The \emph{filtering posterior} $P(x_t = i^* \mid z_{1:t})$ is introduced as the primary trustworthiness metric, quantifying the probability that the matched road edge is correct given all observations up to epoch $t$, computed via the forward algorithm with proper probabilistic normalization including row-normalized transitions, uniform initial prior, and a background state representing the off-road hypothesis. Information-theoretic metrics including posterior entropy $H_t$ and delta entropy $\Delta H_t$ that quantify the residual ambiguity at each epoch is exploited.
 
-\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 96.4\% accuracy and an ECE of 0.051---a 52\% reduction relative to the FMM baseline (ECE=0.107)---while the filtering posterior trustworthiness attains 4.2$\times$ better correct--wrong separation than the baseline and an AUC of 0.668 for mismatch detection.
+\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 96.4\% accuracy and an ECE of 0.051---a 52\% reduction relative to the FMM baseline (ECE=0.107)---while the filtering posterior trustworthiness attains 4.2 times better correct--wrong separation than the baseline and an AUC of 0.668 for mismatch detection.
 % AUC results need to verify
 \end{itemize}
 
-In summary, the key innovation of this work is to make HMM-based map matching explicitly consistent with the GNSS stochastic model and integrity concepts, and to exploit this consistency to derive a trustworthiness metric that both improves matching performance and quantitatively predicts mismatch events in safety-critical scenarios.
-
+In summary, the key innovation of this work is to make HMM-based map matching explicitly consistent with the GNSS stochastic model and integrity concepts, and to exploit this consistency to derive a trustworthiness metric that quantitatively predicts mismatch events in safety-critical scenarios.
 
 \section{Related Work}
 \label{sec:related_work}
