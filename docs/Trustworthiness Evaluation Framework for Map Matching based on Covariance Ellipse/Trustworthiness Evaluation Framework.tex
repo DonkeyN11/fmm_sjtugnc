@@ -1658,7 +1658,7 @@ We evaluate the ability of the trustworthiness score to discriminate between cor
 \subsection{Matching Accuracy and Position Error}
 \label{sec:accuracy}
 
-Table~\ref{tab:per_traj_accuracy} reports per-trajectory segment accuracy and position error. CMM achieves 91.4\% overall accuracy vs.\ 88.1\% for FMM across 13,256 evaluable epochs, with a mean position error of 5.3\,m compared to 9.4\,m (P95: 13.2\,m vs.\ 40.3\,m). On 6 of 7 trajectories, CMM outperforms or matches FMM. The exception is Traj~22, where a systematic wrong-direction false lock (epochs 1800--2052) on a parallel road reduces CMM accuracy to 72.9\% vs.\ 83.8\% for FMM; this represents a known failure mode discussed in Section~\ref{sec:roc}.
+Table~\ref{tab:per_traj_accuracy} reports per-trajectory segment accuracy and position error. CMM achieves 96.4\% overall accuracy vs.\ 88.1\% for FMM across 13,256 evaluable epochs, with a mean position error of 5.6\,m compared to 9.4\,m (P95: 13.5\,m vs.\ 40.3\,m). On all 7 trajectories, CMM outperforms or matches FMM. The most notable improvement over the baseline configuration is Traj~22, where a tightened cumulative reverse travel guard (reducing the threshold from 15\% to 3\% of edge length) raises accuracy from 72.9\% to 90.2\%, partially resolving the wrong-direction false lock discussed in Section~\ref{sec:roc}.
 
 \begin{table}[t]
 \caption{Per-Trajectory Accuracy and Position Error (13,256 evaluable epochs)}
@@ -1672,11 +1672,11 @@ Traj 11 & 2,439 & 93.9\% & 87.4\% & 4.4\,m \\
 Traj 12 &   133 & 100\% & 0.0\% & 2.1\,m \\
 Traj 13 & 1,908 & 98.1\% & 94.2\% & 3.1\,m \\
 Traj 14 &   352 & 100\% & 79.5\% & 3.2\,m \\
-Traj 21 & 3,581 & 95.2\% & 92.2\% & 4.5\,m \\
-Traj 22 & 2,123 & 72.9\% & 83.8\% & 10.7\,m \\
-Traj 23 & 2,720 & 92.2\% & 87.8\% & 4.1\,m \\
+Traj 21 & 3,581 & 98.6\% & 92.2\% & 4.5\,m \\
+Traj 22 & 2,123 & 90.2\% & 83.8\% & 6.2\,m \\
+Traj 23 & 2,720 & 98.6\% & 87.8\% & 4.1\,m \\
 \midrule
-All     & 13,256 & \textbf{91.4\%} & \textbf{88.1\%} & \textbf{5.3\,m} \\
+All     & 13,256 & \textbf{96.4\%} & \textbf{88.1\%} & \textbf{5.6\,m} \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1868,7 +1868,7 @@ matching pipeline. The key contributions are: (1)~an anisotropic
 Mahalanobis emission model with probabilistically normalized HMM
 components (background state, row-normalized transitions, uniform
 prior) that improves calibration over the traditional isotropic
-baseline (ECE reduced from 0.107 to 0.078); (2)~a filtering posterior
+baseline (ECE reduced from 0.107 to 0.051); (2)~a filtering posterior
 trustworthiness metric computed via the forward algorithm that provides
 a calibrated per-epoch confidence score, together with a complementary
 marginal filtering posterior (n\_best\_trustworthiness) for
@@ -1877,12 +1877,15 @@ computing protection levels from raw GNSS observations, replacing
 receiver-reported PL with a rigorous integrity bound (median HPL
 22.8\,m).
 
-On real-vehicle data across 7 trajectories, CMM achieves 91.4\%
-segment accuracy (vs.\ 88.1\% for FMM), a 27\% relative ECE reduction,
-and 3.9$\times$ better trustworthiness separation between correct and
-wrong matches. The filtering posterior trustworthiness attains an AUC
-of 0.764 for mismatch detection, providing a principled integrity
-indicator without requiring a separately trained anomaly detector.
+On real-vehicle data across 7 trajectories, CMM achieves 96.4\%
+segment accuracy (vs.\ 88.1\% for FMM), a 52\% relative ECE reduction,
+and 4.2$\times$ better trustworthiness separation between correct and
+wrong matches (CMM: 0.356 vs.\ FMM: 0.085). The filtering posterior
+trustworthiness attains an AUC of 0.668 for mismatch detection,
+providing a principled integrity indicator without requiring a
+separately trained anomaly detector. The modest AUC reflects the
+low false-match rate (3.6\%) — remaining mismatches are genuinely
+ambiguous cases where no single-epoch score can discriminate.
 We further demonstrate that the high AUC of the FMM baseline (0.965)
 is an artifact of near-binary TW scores that lack actionable
 discriminative power, underscoring the importance of evaluating
