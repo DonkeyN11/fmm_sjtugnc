@@ -801,3 +801,176 @@ Based on current findings, reorganize paper Section 5:
 | §5.4 ROC Analysis | ROC curves + threshold table + FMM inflation artifact | ✅ |
 | §5.5 Failure Cases | Traj 22 wrong-direction false lock (epochs 1800-2052), traj 22 seq 1676 dead-end Viterbi | 🔧 Need analysis |
 | §5.6 Ablation | Per-fix contribution to ECE/accuracy (TP norm, bg state, uniform prior) | ⏸️ |
+
+---
+
+## 2026-06-05/06 — Comprehensive Paper Review (Claude)
+
+### Full Manuscript Review Completed
+
+Claude (ultracode mode, deepseek-v4-pro) conducted an exhaustive review of the paper, reading:
+- Full LaTeX manuscript (1887 lines, 7 sections)
+- CMM source code (2782 lines) + FMM (462 lines)
+- All 30 experiment Python scripts
+- RECORDS.md, math_theory.md, ARTICLE_REFINEMENT_NOTES.md
+- All 11 .md files under docs/
+- Config XMLs, experiment outputs, literature references
+
+**Review output**: `docs/reviews260605.md` (637 lines)
+
+### Key Findings Summary
+
+**Overall**: Publishable at T-ITS after 2–4 weeks of revision. Core innovation (systematic GNSS covariance→HMM integration + calibration analysis) is genuinely novel.
+
+**6 Critical (P0) issues**:
+1. PL formula describes ARAIM but code implements RAIM — must align
+2. No statistical significance tests (bootstrap CI, McNemar, DeLong)
+3. "Exponential decay" claim about forward denominator is mathematically suspect
+4. Ablation study in paper is one sentence — needs proper multi-row table
+5. ECE value inconsistent: abstract says 0.078, conclusion says 0.072
+6. Missing honest limitations paragraph (single city, single receiver, 7 trajectories)
+
+**7 Should-Fix (P1) issues**:
+7. Restructure Related Work around gaps, not topics
+8. Compress WLS derivation
+9. Define "trustworthiness" formally in Section I
+10. Add partial AUC analysis for FMM defense
+11. Discuss FMM configuration fairness
+12. Connect background state to Laplace smoothing
+13. Expand Traj 22 failure analysis from RECORDS.md
+
+**5 Nice-to-Have (P2) items**: second dataset, background_prob sweep, entropy analysis, runtime profiling, code refactoring
+
+---
+
+## 2026-06-06 — Traj 22 Deep Dive: Wrong-Direction False Lock (seq 1680–1935)
+
+### Investigation Trigger
+
+Donkey.Ning questioned why Viterbi chose edge 76260 over 33989 at seq 1680, when self-TP on 33989 should be ~0.998 and EP(33989)=0.302 is only moderately lower than EP(76260)=0.598.
+
+### Full Analysis
+
+Complete analysis saved to `docs/traj22_deep_dive_260606.md` (detailed markdown, 9 sections).
+
+### Key Findings
+
+1. **Mathematical contradiction at seq 1680**: δ(33989) = -6478.43 should beat δ(76260) = -6484.09 by +5.7 nats → 33989 should win but doesn't
+
+2. **Three root cause hypotheses**:
+   - **H1 (most likely)**: Cumulative reverse travel guard at `cmm_algorithm.cpp:1927` blocks the 33989 self-transition because Mahalanobis projection lands at junction point (offset 109m, backward from 172m)
+   - **H2 (also likely)**: cand[1] at seq 1680 (EP=0.302) is NOT on edge 33989 — edge ID assignment mismatch at junction
+   - **H3 (rejected)**: Row normalization can't dilute TP enough (would need ~290 outgoing edges)
+
+3. **Global path analysis** (256 epochs, 1680–1935):
+   - EP advantage of wrong edges: Σlog(EP_wrong) - Σlog(EP_33989) ≈ +245 nats
+   - TP penalties for 15 cross-edge jumps: ≈ -83 nats
+   - Net Viterbi advantage through wrong edges: ≈ +162 nats
+   - **Viterbi IS mathematically correct** — the emission model systematically favors wrong edges
+
+4. **True root cause**: Emission model limitation — Mahalanobis distance cannot reliably distinguish parallel edges separated by ~12m when SPP accuracy is ~2–5m
+
+5. **The "one-epoch return" pattern** (1703, 1757, 1778, etc.) is correct Viterbi behavior — brief EP improvements on 33989 at junctions, immediately reversed by subsequent evidence
+
+### Next Steps (Priority)
+
+1. **P0**: Add debug fprintf at reverse guard + per-candidate edge IDs → confirm H1/H2
+2. **P1**: Fix identified bug (reverse guard threshold or edge assignment)
+3. **P2**: Long-term emission model improvement (α_geom + α_vel)
+4. **Paper**: Expand §VI-G failure case with this analysis; add to §VII future work
+
+### Tomorrow's Schedule (2026-06-06)
+
+Priority order from the review:
+1. **P0-1**: Rewrite PL section (RAIM only, ARAIM as future work) — quick text fix
+2. **P0-4**: Design and run ablation study (4 configurations)
+3. **P0-2**: Add bootstrap CIs + McNemar test to all key metrics
+4. **P0-3**: Fix forward denominator claim — revise with correct math
+5. **P0-5**: Resolve ECE inconsistency (use 0.072 throughout)
+6. **P0-6**: Write limitations paragraph
+7. **P1-7**: Restructure Related Work around 3 gaps
+
+---
+
+## 2026-06-06 — Traj 22 Wrong-Direction Lock Root Cause & Fix
+
+### Diagnostic Results
+
+Three debug fprintf probes were added to `cmm_algorithm.cpp`:
+
+1. **REVERSE_GUARD probe** (line ~1932): Edge 33989-specific — **never triggered**. H1 REJECTED.
+2. **CANDIDATE dump** (seq 1670-1695): Confirmed candidate edge IDs correct. H2 REJECTED.
+3. **VITERBI_BRANCH probe** (transitions from 33989): Traced all branches.
+
+### Root Cause Confirmed
+
+**The Viterbi IS mathematically correct.** The problem is NOT a software bug:
+
+| Finding | Detail |
+|---------|--------|
+| 33989 self-TP at seq 1680 | 0.99825 — NOT blocked |
+| 33989 local cumu at seq 1680 | -6478.43 (BEATS 76260 at -6484.09) |
+| 76260 crossover | seq 1689: cumu 76260=-6490.52 > 33989=-6490.67 |
+| Crossover time | ~8 epochs after initial switch |
+| Mechanism | EP(76260)≈0.6 gains ~0.69 nats/epoch over EP(33989)≈0.3 |
+| Guards | 15% per-epoch check allows each step; cumulative 15% + 30m cap too lenient for degree-based CRS |
+
+**Deep cause**: All candidates have offset≈0.0017° (printed as 0.0 due to `%.1f` format). Per-epoch offset change 0.00019° (21m). Cumulative reverse guard threshold `min(30.0, edge_length*0.15)`: 30m cap is in meters while offsets are in degrees → cap ineffective. Effective threshold is 15% of edge length = ~450m for edge 76260 → requires ~22 epochs to trigger at 21m/s. But Viterbi crossover happens at ~8 epochs → guard triggers too late.
+
+### Fix Applied
+
+**Changed cumulative reverse guard from `min(30m, 15%)` to `3% edge length`**:
+- Edge 76260 (3km): max_reverse = 90m → triggers after ~4 epochs (before Viterbi crossover)
+- Edge 33989 (5.9km): max_reverse = 177m → triggers after ~8 epochs
+- No hard cap — purely percentage-based, works for any CRS
+
+### Results: All 7 Trajectories (13,283 eval epochs vs GT)
+
+| Traj | Eval | Old | New | Δ | Improved | Regressed |
+|:---:|:---:|:---:|:---:|:---:|:---:|:---:|
+| 11 | 2069 | 0.0%* | 0.0%* | 0 | 0 | 0 |
+| 12 | 133 | 100% | 100% | 0 | 0 | 0 |
+| 13 | 1908 | 98.1% | 97.5% | -0.6pp | 1 | 12 |
+| 14 | 749 | 47.0%* | 47.0%* | 0 | 0 | 0 |
+| 21 | 3581 | 93.7% | 97.2% | +3.5pp | 123 | 1 |
+| **22** | **2123** | **71.6%** | **90.0%** | **+18.4pp** | **413** | **22** |
+| 23 | 2720 | 92.2% | 98.6% | +6.4pp | 177 | 3 |
+| **All** | **13283** | **73.3%** | **78.4%** | **+5.1pp** | **714** | **38** |
+
+*Traj 11/14: GT data has 9.5%/46.8% edge_id=0 (no-road), making accuracy computation unreliable.
+
+### Regression Analysis (38 epochs)
+
+**Primary patterns**:
+1. Traj 13 seq 735-740 & 1877-1880: 149098 → 8048. Vehicle on edge 149098 at a junction; projection oscillation triggers 3% guard → false block.
+2. Traj 22 seq 1914-1940: 33989 → 29612. 3% guard blocks legitimate self-transition on 33989 near end of dual carriageway zone.
+3. Traj 22 seq 2228-2240: 149747 → 149873. Guard triggers at a turn where offset briefly decreases.
+
+**Future mitigation**: Heading-aware direction check (α_vel framework) can distinguish genuine wrong-direction travel from projection noise at turns. When vehicle heading is within 30° of edge direction, suppress the cumulative reverse guard.
+
+### Key Insight: Degrees vs Meters
+
+The Haikou network is EPSG:4326 (WGS84 lat/lon degrees). All edge lengths, offsets, and distances are in degrees (~0.000009°/m at this latitude). The original reverse guard thresholds were calibrated for metric CRS (UTM) where 1 unit = 1 meter. In degrees, 30m ≈ 0.00027°, making the 30m cap ≈ 111,000× larger than intended relative to actual offsets.
+
+This is a fundamental source of subtle bugs: several numeric constants in the codebase are calibrated for meter-based CRS but applied to degree-based data:
+
+| Constant | Intended (meters) | Actual (degrees) | Effect |
+|----------|:---:|:---:|------|
+| `max_reverse` cap | 30m | 30° | Cap was permanently disabled |
+| `offset_diff <= 15%` | 15% of edge (m) | 15% of edge (°) | OK — percentage is unitless |
+| `map_error_std` | 5m | 5e-5° | Correct — config value in degrees |
+
+### Commit
+
+`706409c` on branch `fix/cumulative-reverse-guard-3pct`: Tighten cumulative reverse guard from `min(30m, 15%)` to `3%` edge length.
+
+### Remaining Pending Tasks
+
+| # | Task | Priority |
+|---|------|:---:|
+| 1 | Investigate traj 13 regression (12 epochs at seq 735-740) | P1 |
+| 2 | Sweep 3% vs 5% vs 7% threshold for optimal accuracy/ECE trade-off | P1 |
+| 3 | Implement heading-aware guard suppression (α_vel) | P2 |
+| 4 | α_geom discount for parallel-edge discrimination | P2 |
+| 5 | Update paper §VI-G with confirmed root cause | P0 |
+| 6 | Full ablation study (paper P0-4) | P0 |
