@@ -1824,18 +1824,41 @@ integrity monitoring.
 \end{figure}
 
 \paragraph{Failure Case: Traj 22 Wrong-Direction False Lock.}
-Traj~22 contains a systematic failure spanning epochs 1800--2052,
-where CMM locks onto wrong-direction edges on the opposite side of a
-dual carriageway. The Viterbi path correctly identifies the correct
-forward edge at the individual-epoch level, but the global optimal
-path transitions to the wrong edge (edge~76260) because the
-subsequent GPS bias favors the incorrect geometry. CMM's
-trustworthiness remains high ($>0.99$) during this period---a known
-limitation of the filtering posterior, which considers only past
-evidence and cannot retroactively correct an error once the Viterbi
-path has switched. This case motivates future work incorporating
-geometry-based anti-wrong-way guards and velocity-informed discount
-factors.
+Traj~22 contains a systematic failure spanning epochs 1680--1935,
+where CMM locks onto wrong-direction edges (76260, 29612) on the opposite side of a
+dual carriageway while FMM correctly tracks the ground-truth edge 33989.
+
+A deep-dive diagnostic analysis confirmed that the Viterbi algorithm is mathematically
+correct at every epoch: the local optimum at epoch 1680 correctly selects edge 33989
+($\delta_{1680}(33989) = -6478.4 > \delta_{1680}(76260) = -6484.1$), and the
+self-transition probability $a(33989 \to 33989) = 0.998$ is not blocked.
+However, the emission probability systematically favors the wrong edge
+($\text{EP}(76260) \approx 0.6$ vs.\ $\text{EP}(33989) \approx 0.3$) because
+the Mahalanobis distance cannot reliably distinguish between parallel carriageway
+edges separated by $\sim$12\,m when the SPP accuracy is $\sim$2--5\,m.
+The cumulative EP advantage ($\sim$0.69\,nats/epoch) accumulates linearly over
+time, and the wrong-direction edge overtakes the correct edge in Viterbi cumu
+at epoch~1689---only 8 epochs after the initial switch.
+
+The root cause is twofold: (1)~a fundamental emission model limitation---the
+anisotropic Mahalanobis emission does not incorporate edge direction or trajectory
+shape, allowing edges on the opposite side of a dual carriageway to receive
+higher emission scores when the GPS is systematically biased; and (2)~a
+cumulative reverse travel guard calibrated for metric coordinate systems but
+applied to a degree-based CRS (EPSG:4326), making the 30\,m hard cap
+$\sim$111,000$\times$ too large relative to actual offsets, effectively disabling
+the guard. Tightening the guard from 15\% to 3\% of edge length improves Traj~22
+accuracy from 71.6\% to 90.0\% (+18.4\,pp), confirming the diagnosis. The
+remaining failure epochs are concentrated in a zone where edge~29612 exhibits
+the same emission bias.
+
+This case motivates future work incorporating a geometry-based discount factor
+($\alpha_{\text{geom}}$) that compares the GNSS trajectory's curvature against
+the road edge geometry over a sliding window, and a velocity-informed discount
+factor ($\alpha_{\text{vel}}$) that checks whether vehicle heading and speed are
+consistent with edge direction and speed limit. These factors would directly
+penalize wrong-direction edges and reduce reliance on the cumulative reverse
+guard for parallel-edge discrimination.
 
 \section{Conclusion}
 This paper introduced a GNSS-uncertainty-consistent HMM framework
@@ -1866,7 +1889,12 @@ discriminative power, underscoring the importance of evaluating
 trustworthiness separation alongside AUC.
 
 Several limitations remain. Traj~22 exhibits a systematic wrong-direction
-false lock that the current filtering posterior cannot correct, and the
+false lock that the current filtering posterior cannot correct; tightening
+the cumulative reverse travel guard from 15\% to 3\% of edge length improves
+Traj~22 accuracy from 71.6\% to 90.0\%, confirming a CRS-miscalibrated
+threshold as the proximate cause, but the underlying emission model limitation
+(endnote: parallel edges $\sim$12\,m apart receive EP(76260) $\approx$ 0.6 vs.\
+EP(33989) $\approx$ 0.3) remains. The
 background state with a fixed $p_{\text{bg}}=0.1$ does not fully prevent
 overconfidence in all scenarios. Future work will incorporate a
 geometry-based discount factor ($\alpha_{\text{geom}}$) and
@@ -1874,7 +1902,10 @@ velocity-informed discount factor ($\alpha_{\text{vel}}$) to address these
 failure modes, extend the trustworthiness framework to multi-sensor fusion
 (IMU dead-reckoning) for maintaining map-matching integrity in GNSS-denied
 environments, and explore the delta-entropy metric as a complementary
-reliability gauge alongside trustworthiness.
+reliability gauge alongside trustworthiness. Additionally, the degree-vs-meter
+unit inconsistency identified in the cumulative reverse guard suggests a
+systematic audit of all numeric constants in the HMM pipeline for
+CRS-awareness.
 
 \section*{Acknowledgments}
 The authors thank XXX for XXX.
