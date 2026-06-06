@@ -150,16 +150,18 @@ Network::Network(const std::string &filename,
                  const std::string &id_name,
                  const std::string &source_name,
                  const std::string &target_name,
-                 bool convert_to_projected)
+                 bool convert_to_projected,
+                 const std::string &oneway_name)
     : convert_to_projected_(convert_to_projected),
       is_projected_(false),
       reprojected_(false),
       network_file_(filename),
       id_name_(id_name),
       source_name_(source_name),
-      target_name_(target_name) {
+      target_name_(target_name),
+      oneway_name_(oneway_name) {
   if (FMM::UTIL::check_file_extension(filename, "shp,gpkg,geojson,fgb")) {
-    read_ogr_file(filename,id_name,source_name,target_name);
+    read_ogr_file(filename,id_name,source_name,target_name,oneway_name);
   } else {
     std::string message = (boost::format("Network file not supported %1%") % filename).str();
     SPDLOG_CRITICAL(message);
@@ -168,7 +170,8 @@ Network::Network(const std::string &filename,
 };
 
 Network::Network(const CONFIG::NetworkConfig &config,
-                 bool convert_to_projected)
+                 bool convert_to_projected,
+                 const std::string &oneway_name)
     : convert_to_projected_(convert_to_projected),
       is_projected_(false),
       reprojected_(false),
@@ -176,6 +179,7 @@ Network::Network(const CONFIG::NetworkConfig &config,
       id_name_(config.id),
       source_name_(config.source),
       target_name_(config.target),
+      oneway_name_(oneway_name),
       cache_path_(config.cache),
       has_bbox_(config.has_bbox),
       bbox_minx_(config.bbox_minx),
@@ -189,7 +193,7 @@ Network::Network(const CONFIG::NetworkConfig &config,
     }
     SPDLOG_WARN("Failed to load network cache; fall back to source file.");
   }
-  read_ogr_file(config.file, config.id, config.source, config.target);
+  read_ogr_file(config.file, config.id, config.source, config.target, oneway_name_);
   if (!cache_path_.empty()) {
     if (write_cache(cache_path_, config)) {
       SPDLOG_INFO("Saved network cache to {}", cache_path_);
@@ -220,7 +224,7 @@ void Network::add_edge(EdgeID edge_id, NodeID source, NodeID target,
     t_idx = node_map[target];
   }
   EdgeIndex index = edges.size();
-  edges.push_back({index, edge_id, s_idx, t_idx, geom.get_length(), geom});
+  edges.push_back({index, edge_id, s_idx, t_idx, geom.get_length(), geom, false});
   edge_map.insert({edge_id, index});
 };
 
@@ -353,7 +357,7 @@ bool Network::load_cache(const std::string &filename,
       geom.add_point(x, y);
     }
     EdgeIndex index = static_cast<EdgeIndex>(edges.size());
-    edges.push_back({index, edge_id, source_idx, target_idx, length, geom});
+    edges.push_back({index, edge_id, source_idx, target_idx, length, geom, false});
     edge_map.insert({edge_id, index});
   }
   num_vertices = node_id_vec.size();
@@ -437,7 +441,8 @@ bool Network::write_cache(const std::string &filename,
 void Network::read_ogr_file(const std::string &filename,
                             const std::string &id_name,
                             const std::string &source_name,
-                            const std::string &target_name) {
+                            const std::string &target_name,
+                            const std::string &oneway_name) {
   SPDLOG_INFO("Read network from file {}", filename);
   OGRRegisterAll();
   GDALDataset *poDS = (GDALDataset *) GDALOpenEx(
@@ -464,6 +469,8 @@ void Network::read_ogr_file(const std::string &filename,
   int id_idx = ogrFDefn->GetFieldIndex(id_name.c_str());
   int source_idx = ogrFDefn->GetFieldIndex(source_name.c_str());
   int target_idx = ogrFDefn->GetFieldIndex(target_name.c_str());
+  int oneway_idx = ogrFDefn->GetFieldIndex(oneway_name.c_str());
+  // oneway_idx < 0 is OK — field is optional, defaults to false
   if (source_idx < 0 || target_idx < 0 || id_idx < 0) {
     std::string error_message = fmt::format(
       "Field not found: {} index {}, {} index {}, {} index {}",
@@ -522,6 +529,13 @@ void Network::read_ogr_file(const std::string &filename,
     EdgeID id = ogrFeature->GetFieldAsInteger64(id_idx);
     NodeID source = ogrFeature->GetFieldAsInteger64(source_idx);
     NodeID target = ogrFeature->GetFieldAsInteger64(target_idx);
+    bool oneway = false;
+    if (oneway_idx >= 0) {
+        const char *oneway_str = ogrFeature->GetFieldAsString(oneway_idx);
+        oneway = (oneway_str != nullptr) && (strcmp(oneway_str, "T") == 0 || strcmp(oneway_str, "t") == 0 ||
+                                              strcmp(oneway_str, "1") == 0 || strcmp(oneway_str, "true") == 0 ||
+                                              strcmp(oneway_str, "True") == 0 || strcmp(oneway_str, "TRUE") == 0);
+    }
     OGRGeometry *rawgeometry = ogrFeature->GetGeometryRef();
     LineString geom;
     if (rawgeometry->getGeometryType() == wkbLineString) {
@@ -564,7 +578,7 @@ void Network::read_ogr_file(const std::string &filename,
         max_y = std::max(max_y, py);
       }
     }
-    edges.push_back({index, id, s_idx, t_idx, geom.get_length(), geom});
+    edges.push_back({index, id, s_idx, t_idx, geom.get_length(), geom, oneway});
     edge_map.insert({id, index});
     ++index;
     OGRFeature::DestroyFeature(ogrFeature);

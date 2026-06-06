@@ -63,10 +63,12 @@ public:
           const std::string &id_name = "id",
           const std::string &source_name = "source",
           const std::string &target_name = "target",
-          bool convert_to_projected = false
+          bool convert_to_projected = false,
+          const std::string &oneway_name = "oneway"
         );
   Network(const CONFIG::NetworkConfig &config,
-          bool convert_to_projected = false);
+          bool convert_to_projected = false,
+          const std::string &oneway_name = "oneway");
   /**
    * Get number of nodes in the network
    * @return number of nodes
@@ -198,7 +200,8 @@ private:
   void read_ogr_file(const std::string &filename,
                      const std::string &id_name,
                      const std::string &source_name,
-                     const std::string &target_name);
+                     const std::string &target_name,
+                     const std::string &oneway_name);
   bool load_cache(const std::string &filename,
                   const CONFIG::NetworkConfig &config);
   bool write_cache(const std::string &filename,
@@ -234,6 +237,7 @@ private:
   std::string id_name_;
   std::string source_name_;
   std::string target_name_;
+  std::string oneway_name_;
   std::string cache_path_;
   bool has_bbox_ = false;
   double bbox_minx_ = 0.0;

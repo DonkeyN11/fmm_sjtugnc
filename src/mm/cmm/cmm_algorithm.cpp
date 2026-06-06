@@ -583,7 +583,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double phmi_arg,
                                                    int lag_steps_arg,
                                                    double phmi_pl_multiplier_arg,
-                                                   double h0_prior_log_odds_arg)
+                                                   double h0_prior_log_odds_arg,
+                                                   double cumulative_reverse_pct_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -600,7 +601,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       phmi(phmi_arg),
       lag_steps(lag_steps_arg),
       phmi_pl_multiplier(phmi_pl_multiplier_arg),
-      h0_prior_log_odds(h0_prior_log_odds_arg) {
+      h0_prior_log_odds(h0_prior_log_odds_arg),
+      cumulative_reverse_pct(cumulative_reverse_pct_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -614,6 +616,7 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold {}",
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
     SPDLOG_INFO("map_error_std {} background_prob {} phmi {} lag_steps {}", map_error_std, background_prob, phmi, lag_steps);
+    SPDLOG_INFO("h0_prior_log_odds {} cumulative_reverse_pct {}", h0_prior_log_odds, cumulative_reverse_pct);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -648,6 +651,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     // PHMI integrity multiplier: decoupled from search radius
     double phmi_pl_multiplier = xml_data.get("config.parameters.phmi_pl_multiplier", 5.0);
     double h0_prior_log_odds = xml_data.get("config.parameters.h0_prior_log_odds", 0.0);
+    double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
@@ -655,7 +659,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
-                                    phmi_pl_multiplier, h0_prior_log_odds};
+                                    phmi_pl_multiplier, h0_prior_log_odds,
+                                    cumulative_reverse_pct};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -686,6 +691,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     int lag_steps = arg_data.count("lag_steps") ? arg_data["lag_steps"].as<int>() : 0;
     double phmi_pl_multiplier = arg_data.count("phmi_pl_multiplier") ? arg_data["phmi_pl_multiplier"].as<double>() : 5.0;
     double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
+    double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
@@ -693,7 +699,8 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     enable_gap, max_gap, min_gps_error,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
-                                    phmi_pl_multiplier, h0_prior_log_odds};
+                                    phmi_pl_multiplier, h0_prior_log_odds,
+                                    cumulative_reverse_pct};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -730,7 +737,13 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
          cxxopts::value<double>()->default_value("1.0e-5"))
         ("lag_steps", "Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)",
-         cxxopts::value<int>()->default_value("0"));
+         cxxopts::value<int>()->default_value("0"))
+        ("phmi_pl_multiplier", "PHMI protection level multiplier (decoupled from search radius)",
+         cxxopts::value<double>()->default_value("5.0"))
+        ("h0_prior_log_odds", "Log-odds of H0 prior: log(P(H0)/P(¬H0))",
+         cxxopts::value<double>()->default_value("0.0"))
+        ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
+         cxxopts::value<double>()->default_value("0.03"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -751,6 +764,9 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--background_prob (optional) <double>: Background state linear probability for off-road/unmapped-road (0.1)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
     oss << "--lag_steps (optional) <int>: Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)\n";
+    oss << "--phmi_pl_multiplier (optional) <double>: PHMI protection level multiplier (5.0)\n";
+    oss << "--h0_prior_log_odds (optional) <double>: Log-odds of H0 prior (0.0)\n";
+    oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -1925,22 +1941,20 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
             // ── Cumulative reverse travel guard ──
             // Same-edge offset regression: accumulate across consecutive epochs.
-            // Uses min(30m, 15% of edge length) as threshold — projection noise
-            // at vertices is <5m, while 30m is clearly real reverse travel.
-            // The 15% cap handles very short edges (<200m).
+            // Only enforced on one-way edges where reverse travel is geometrically
+            // prohibited. Bidirectional edges legitimately allow travel in either
+            // direction, so offset decreases on those edges are not penalised.
+            //
+            // The threshold is configurable via cumulative_reverse_pct (default 0.03 = 3%).
+            // For a 3 km one-way edge, 3% ≈ 90 m → triggered after ~4 epochs at 21 m/s,
+            // which catches wrong-direction locks before the Viterbi crossover (~8 epochs).
             double cumul_rev = 0.0;
             if (sp_dist >= 0 && ca->edge != nullptr && cb->edge != nullptr &&
                 ca->edge->id == cb->edge->id && ca->offset > cb->offset) {
                 double step_rev = ca->offset - cb->offset;
                 cumul_rev = node_a.reverse_dist + step_rev;
-                // Use 3% of edge length as cumulative reverse threshold.
-                // The previous min(30m, 15%) was calibrated for metric CRS but
-                // degree-based CRS (EPSG:4326) needs a tighter percentage to
-                // catch sustained wrong-direction travel within a few epochs.
-                // 3% ≡ ~90m for a 3km edge → triggered after ~4 epochs at 21m/s.
-                double max_reverse = ca->edge->length * 0.03;
-                if (cumul_rev > max_reverse) {
-                    sp_dist = -1.0;  // cumulative reverse exceeds threshold → block
+                if (ca->edge->oneway && cumul_rev > ca->edge->length * config.cumulative_reverse_pct) {
+                    sp_dist = -1.0;  // cumulative reverse exceeds threshold on one-way edge → block
                 }
             }
 

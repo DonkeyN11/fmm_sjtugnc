@@ -52,6 +52,7 @@ struct Edge
   NodeIndex target; /**< target node index */
   double length; /**< length of the edge polyline */
   FMM::CORE::LineString geom; /**< the edge geometry */
+  bool oneway; /**< whether the edge is one-way (T) or bidirectional (F) */
 };
 
 } // NETWORK
