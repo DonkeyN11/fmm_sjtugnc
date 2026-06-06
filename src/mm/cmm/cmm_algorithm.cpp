@@ -1933,7 +1933,12 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                 ca->edge->id == cb->edge->id && ca->offset > cb->offset) {
                 double step_rev = ca->offset - cb->offset;
                 cumul_rev = node_a.reverse_dist + step_rev;
-                double max_reverse = std::min(30.0, ca->edge->length * 0.15);
+                // Use 3% of edge length as cumulative reverse threshold.
+                // The previous min(30m, 15%) was calibrated for metric CRS but
+                // degree-based CRS (EPSG:4326) needs a tighter percentage to
+                // catch sustained wrong-direction travel within a few epochs.
+                // 3% ≡ ~90m for a 3km edge → triggered after ~4 epochs at 21m/s.
+                double max_reverse = ca->edge->length * 0.03;
                 if (cumul_rev > max_reverse) {
                     sp_dist = -1.0;  // cumulative reverse exceeds threshold → block
                 }
