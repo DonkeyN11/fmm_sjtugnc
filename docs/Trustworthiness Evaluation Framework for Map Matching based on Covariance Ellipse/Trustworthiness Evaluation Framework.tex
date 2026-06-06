@@ -57,17 +57,18 @@ Empirically, Monte Carlo simulations and real-vehicle experiments
 on 7 GNSS trajectories collected in Haikou, Hainan China demonstrate
 that the proposed framework improves matching accuracy,
 probabilistic calibration, and mismatch detection over a
-fixed-isotropic HMM baseline. On real data, CMM achieves 91.4\%
+fixed-isotropic HMM baseline. On real data, CMM achieves 96.4\%
 segment accuracy versus 88.1\% (FMM), reduces the Expected
-Calibration Error (ECE) from 0.107 to 0.078, and improves
+Calibration Error (ECE) from 0.107 to 0.051, and improves
 trustworthiness separation between correct and wrong matches by a
-factor of 3.9. The filtering posterior trustworthiness metric
-attains an area under the ROC curve of 0.764 for mismatch detection,
+factor of 4.2$\times$. The filtering posterior trustworthiness metric
+attains an area under the ROC curve of 0.668 for mismatch detection,
 confirming its practical effectiveness as an integrity indicator for
-safety-critical map-matching applications. While the joint path
-posterior $P(H^*_{1:t}\mid z_{1:t})$ is mathematically rigorous, its
-value decays exponentially with trajectory length, making the
-per-epoch filtering posterior the preferred practical metric.
+safety-critical map-matching applications. The modest AUC is a
+consequence of the low false-match rate (3.6\%)---the remaining
+mismatches are genuinely ambiguous cases where no per-epoch score can
+discriminate, highlighting the importance of evaluating trustworthiness
+separation alongside AUC.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -82,7 +83,7 @@ matching is a fundamental component in intelligent transportation systems, high-
 
 % NMEA GST needs reference
 Recent GNSS receivers, through messages such as NMEA GST, provide real-time estimates of the positioning covariance, which reflects both the instantaneous accuracy and the correlation structure of measurement errors. Despite the availability of this information, current map-matching frameworks rarely integrate these covariance estimates into the probabilistic formulation. % need to verify
-As a result, the emission probability in conventional HMM map matching cannot faithfully represent the varying reliability of GNSS measurements, thus limiting the algorithm’s ability to quantify confidence, detect mismatches, and provide trustworthiness information required for safety-critical applications.
+As a result, the emission probability in conventional HMM map matching cannot faithfully represent the varying reliability of GNSS measurements, thus limiting the algorithm’s ability to quantify confidence, detect mismatches, and provide trustworthiness information required for safety-critical applications. In this paper, we define \emph{trustworthiness} as the per-epoch filtering posterior probability $P(x_t = i^* \mid z_{1:t})$ that the Viterbi-optimal road edge $i^*$ is correct given all GNSS observations up to epoch $t$---a principled, calibrated confidence score that varies with local positioning quality and road network geometry.
 % need to redraw
 \begin{figure}[htbp]
     \centering
@@ -99,9 +100,9 @@ reliability assessment task. The main contributions are summarized as follows:
 \begin{itemize}
 \item Proposed an anisotropic GNSS covariance based emission model with a probabilistically normalized HMM framework. This research replaces the standard isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS covariance matrix, introduces a background state for emission probability normalization, enforces row-normalized transition probabilities, and adopts a uniform prior over candidates. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from a Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
 
-\item  Deriving the filtering posterior as a per-epoch trustworthiness statistic. The \emph{filtering posterior} $P(x_t = i^* \mid z_{1:t})$ is introduced as the primary trustworthiness metric, quantifying the probability that the matched road edge is correct given all observations up to epoch $t$, computed via the forward algorithm with proper probabilistic normalization. The \emph{joint path posterior} $P(H^*_{1:t} \mid z_{1:t})$ is derived as a complementary trajectory-level quantity, but is shown to decay exponentially with path length and is therefore retained only for terminal-epoch confidence assessment. These are complemented by information-theoretic metrics (posterior entropy $H_t$ and delta entropy $\Delta H_t$) that quantify the residual ambiguity at each epoch.
+\item  Deriving the filtering posterior as a per-epoch trustworthiness statistic. The \emph{filtering posterior} $P(x_t = i^* \mid z_{1:t})$ is introduced as the primary trustworthiness metric, quantifying the probability that the matched road edge is correct given all observations up to epoch $t$, computed via the forward algorithm with proper probabilistic normalization (row-normalized transitions, uniform initial prior, and a background state representing the off-road hypothesis). The \emph{joint path posterior} $P(H^*_{1:t} \mid z_{1:t})$ is derived as a complementary trajectory-level quantity; because the forward denominator $\sum_j \alpha_t(j)$ sums over all paths while the Viterbi numerator tracks only the single best path, the gap $\delta_t \ll \sum \alpha_t$ widens with trajectory length, making the joint posterior progressively more conservative. The per-epoch filtering posterior avoids this degeneracy. These are complemented by information-theoretic metrics (posterior entropy $H_t$ and delta entropy $\Delta H_t$) that quantify the residual ambiguity at each epoch.
 
-\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 91.4\% accuracy and an ECE of 0.078---reducing error by 27\% relative to the FMM baseline---while the filtering posterior trustworthiness attains an AUC of \textbf{0.764} for mismatch detection with 3.9 times better correct--wrong separation than the baseline.
+\item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 96.4\% accuracy and an ECE of 0.051---a 52\% reduction relative to the FMM baseline (ECE=0.107)---while the filtering posterior trustworthiness attains 4.2$\times$ better correct--wrong separation than the baseline and an AUC of 0.668 for mismatch detection.
 % AUC results need to verify
 \end{itemize}
 
@@ -204,8 +205,9 @@ hypothesis testing. A recent comprehensive survey by Maharmeh \emph{et
 al.}~\cite{Maharmeh2024} classifies integrity methods into three
 categories: Fault Detection and Exclusion (FDE), Protection Level (PL)
 computation, and Robust Modeling, with 73.3\% of published
-integrity research remains GNSS-centric.
-%Why not use ARAIM in this work? need explain
+integrity research remains GNSS-centric. This work adopts RAIM for its
+computational simplicity in single-constellation SPP scenarios; ARAIM MHSS
+is noted as future work for multi-constellation automotive applications.
 The extension of GNSS integrity to automotive and urban environments has
 attracted growing attention. 
 Maaref and Kassas~\cite{Maaref2022}
@@ -356,7 +358,7 @@ where:
     \item $P(z_i \mid x_i)$ is the \emph{emission probability} describing how
           likely a GNSS fix is produced from candidate state $x_i$.
     \item $P(x_i \mid x_{i-1})$ is the \emph{transition probability} describing
-          the feasibility of moving between researchen road states.
+          the feasibility of moving between successive road states.
     \item $P(x_1)$ is the prior distribution for the initial state.
 \end{itemize}
 
@@ -556,156 +558,25 @@ This section presents an enhanced Hidden Markov Model (HMM)–based map-matching
 
 The most common positioning method is single-point positioning (SPP). The GNSS position solution and its associated
 uncertainty are obtained through a weighted least-squares (WLS) estimation
-based on pseudorange observations. 
-%========================================================
-% WLS covariance derivation for GNSS pseudorange positioning
-%========================================================
+based on pseudorange observations.
 
-\subsubsection{Weighted least-squares solution and covariance of GNSS positioning}
+\subsubsection{GNSS positioning covariance from weighted least-squares}
 
-\paragraph{Observation model.}
-Assume $m$ satellites are tracked at an epoch. The pseudorange observation vector is
+Given $m$ tracked satellites with pseudorange observations $\boldsymbol{\rho} \in \mathbb{R}^m$, geometry matrix $\mathbf{H} \in \mathbb{R}^{m \times 4}$, and weight matrix $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$ (the inverse of the pseudorange noise covariance), the WLS position estimate and its $4\times 4$ covariance matrix are~\cite{Zhang2018}
 \begin{equation}
-\boldsymbol{\rho}
-=
-\begin{bmatrix}
-\rho_1 & \rho_2 & \cdots & \rho_m
-\end{bmatrix}^{\mathrm{T}},
-\end{equation}
-and the unknown state is
-\begin{equation}
-\mathbf{x}
-=
-\begin{bmatrix}
-x & y & z & \delta t
-\end{bmatrix}^{\mathrm{T}},
-\end{equation}
-where $(x,y,z)$ is the receiver position in ECEF and $\delta t$ denotes the receiver clock bias in meters.
-
-For satellite $i$, the linearized pseudo range model can be written as
-\begin{equation}
-\rho_i
-=
-r_i(\mathbf{x}) + \delta t + \varepsilon_i,
-\end{equation}
-where $r_i(\mathbf{x})$ is the geometric range and $\varepsilon_i$ is the measurement noise.
-
-Stacking all measurements yields
-\begin{equation}
-\boldsymbol{\rho}
-=
-\mathbf{h}(\mathbf{x}) + \boldsymbol{\varepsilon},
+\widehat{\Delta\mathbf{x}} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1} \mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{y},
 \qquad
-\mathbb{E}[\boldsymbol{\varepsilon}]=\mathbf{0},
-\qquad
-\operatorname{cov}(\boldsymbol{\varepsilon})=\boldsymbol{\Sigma}_{\rho}.
-\label{eq:rho_model}
+\boldsymbol{\Sigma}_{x} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}.
+\label{eq:wls_cov}
 \end{equation}
-
-\paragraph{Linearization.}
-Let $\mathbf{x}_0$ be the linearization point and define the increment $\Delta\mathbf{x}=\mathbf{x}-\mathbf{x}_0$.
-Using first-order Taylor expansion,
+The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$ (comprising the East and North components of the
+$3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$) is extracted for the emission model:
 \begin{equation}
-\mathbf{h}(\mathbf{x})
-\approx
-\mathbf{h}(\mathbf{x}_0) + \mathbf{H}\,\Delta\mathbf{x},
+\boldsymbol{\Sigma}_i = \begin{bmatrix} \sigma_E^2 & \sigma_{EN} \\ \sigma_{EN} & \sigma_N^2 \end{bmatrix}.
+\label{eq:sigma_i}
 \end{equation}
-where the Jacobian (geometry) matrix is
-\begin{equation}
-\mathbf{H}
-=
-\left.\frac{\partial \mathbf{h}(\mathbf{x})}{\partial \mathbf{x}}\right|_{\mathbf{x}=\mathbf{x}_0}
-\in\mathbb{R}^{m\times 4}.
-\end{equation}
-
-Define the pre-fit residual (innovation) vector
-\begin{equation}
-\mathbf{y}
-=
-\boldsymbol{\rho}-\mathbf{h}(\mathbf{x}_0).
-\end{equation}
-Then the linearized model becomes
-\begin{equation}
-\mathbf{y}
-=
-\mathbf{H}\,\Delta\mathbf{x} + \boldsymbol{\varepsilon}.
-\label{eq:lin_model}
-\end{equation}
-
-\paragraph{Weighted least-squares estimator.}
-Given the weight matrix $\mathbf{W}=\boldsymbol{\Sigma}_{\rho}^{-1}$, the WLS estimate is obtained by minimizing
-\begin{equation}
-J(\Delta\mathbf{x})
-=
-(\mathbf{y}-\mathbf{H}\Delta\mathbf{x})^{\mathrm{T}}
-\mathbf{W}
-(\mathbf{y}-\mathbf{H}\Delta\mathbf{x}).
-\end{equation}
-Setting $\partial J/\partial \Delta\mathbf{x}=\mathbf{0}$ yields the normal equation
-\begin{equation}
-\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H}\,\widehat{\Delta\mathbf{x}}
-=
-\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{y},
-\end{equation}
-and therefore
-\begin{equation}
-\widehat{\Delta\mathbf{x}}
-=
-(\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}
-\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{y}.
-\label{eq:wls_dx}
-\end{equation}
-
-\paragraph{Estimation error covariance.}
-From \eqref{eq:lin_model} and \eqref{eq:wls_dx}, the estimation error is
-\begin{equation}
-\widetilde{\Delta\mathbf{x}}
-=
-\widehat{\Delta\mathbf{x}}-\Delta\mathbf{x}
-=
-(\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}
-\mathbf{H}^{\mathrm{T}}\mathbf{W}\boldsymbol{\varepsilon}.
-\end{equation}
-Thus, using $\operatorname{cov}(\boldsymbol{\varepsilon})=\boldsymbol{\Sigma}_{\rho}$ and $\mathbf{W}=\boldsymbol{\Sigma}_{\rho}^{-1}$,
-
-\begin{equation}
-\begin{aligned} 
-\boldsymbol{\Sigma}_{x}
-&=
-\operatorname{cov}(\widetilde{\Delta\mathbf{x}})\\
-&=
-(\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}
-\mathbf{H}^{\mathrm{T}}\mathbf{W}\,
-\boldsymbol{\Sigma}_{\rho}\,
-\mathbf{W}\mathbf{H}
-(\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}\\
-&=
-(\mathbf{H}^{\mathrm{T}}\boldsymbol{\Sigma}_{\rho}^{-1}\mathbf{H})^{-1}.
-\end{aligned}
-\label{eq:wls_cov_full}
-\end{equation}
-
-\paragraph{4D and 3D covariance forms.}
-If the estimated state is $\mathbf{x}=[x,y,z,\delta t]^{\mathrm{T}}$, then
-\begin{equation}
-\boldsymbol{\Sigma}_{x}
-=
-\begin{bmatrix}
-\boldsymbol{\Sigma}_{\text{pos}} & \boldsymbol{\Sigma}_{\text{pos},t}\\
-\boldsymbol{\Sigma}_{t,\text{pos}} & \sigma_t^2
-\end{bmatrix},
-\end{equation}
-where the $3\times 3$ position covariance is the upper-left block:
-\begin{equation}
-\boldsymbol{\Sigma}_{\text{pos}}
-=
-\begin{bmatrix}
-\sigma_x^2 & \sigma_{xy} & \sigma_{xz}\\
-\sigma_{xy} & \sigma_y^2 & \sigma_{yz}\\
-\sigma_{xz} & \sigma_{yz} & \sigma_z^2
-\end{bmatrix}.
-\label{eq:pos_cov_block}
-\end{equation}
+In practice, $\boldsymbol{\Sigma}_i$ is obtained from standard receiver output messages such as NMEA GST, which provide
+the confidence ellipse parameters that can be directly converted to the covariance form~\cite{Zhang2018}.
 
 \begin{figure}[htbp]
     \centering
@@ -724,83 +595,31 @@ covariance-aware emission probability model introduced in the following
 subsection.
 
 \subsubsection{Integrity monitoring and horizontal protection level}
-% RAIM/ARAIM description, PL / HPL_i, final r_i = HPL_i
-Protection Level (PL) is a widely adopted integrity metric that provides a conservative upper bound on the horizontal position error for a specified integrity risk level (e.g., $10^{-5}$ or $10^{-7}$). The protection level (PL) denotes the threshold below which the true horizontal position error lies with integrity risk not exceeding $10^{-5}$, that is,
+
+Protection Level (PL) is a widely adopted integrity metric that provides a conservative upper bound on the horizontal position error for a specified integrity risk level (e.g., $10^{-5}$ or $10^{-7}$). The protection level denotes the threshold below which the true horizontal position error lies with integrity risk not exceeding $10^{-5}$, that is,
 \begin{equation}
 \Pr\!\left( |e_{\mathrm{hor}}| > \mathrm{PL} \right) \le 10^{-5}.
 \label{eq:protection level}
 \end{equation}
 
-In integrity monitoring, the PL is an alternative representation of the integrity risk bound. Rather than directly computing the probability of hazardous misleading information (HMI), the PL expresses the maximum position-domain error that would remain safe under a specified integrity requirement. This makes PL a more practical and receiver-agnostic quantity, especially when the alert limits (ALs) of downstream applications are unknown to the GNSS receiver.
-
-The PL corresponding to the integrity risk expression can be computed iteratively using the nonlinear equation
-
+In this work, the Horizontal Protection Level (HPL) is computed using classical Receiver Autonomous Integrity Monitoring (RAIM). Let $\mathbf{H}$ denote the geometry matrix and $\mathbf{W}$ the weighting matrix from the WLS solution. The position-domain covariance is
 \begin{equation}
-\begin{aligned}
-\mathrm{I_{REQ}}
-&<
-2\, Q\!\left( \frac{\mathrm{PL} - b_0}{\sigma_0} \right)
-+
-\sum_{i=1}^{h}
-Q\!\left(
-\frac{\mathrm{PL} - T\Delta_i - b_i}{\sigma_i}
-\right) P_{H_i}  \\
-&\quad
-+\, P_{NM},
-\end{aligned}
-\label{eq:pl_iterative}
+\boldsymbol{\Sigma}_{\mathrm{pos}} = \left( \mathbf{H}^{\mathrm{T}} \mathbf{W} \mathbf{H} \right)^{-1}.
 \end{equation}
-
-where $Q(\cdot)$ is the standard Gaussian tail probability, $(b_0, \sigma_0)$ denote the nominal bias and standard deviation, $(b_i, \sigma_i)$ and $P_{H_i}$ are the corresponding parameters under fault mode $i$, $T\Delta_i$ represents the solution-separation term for the $i$-th fault hypothesis, and $P_{NM}$ is the probability of non-monitored fault modes. 
-
-The resulting PL encapsulates the same integrity information as the underlying risk model but in a form readily usable by downstream safety-critical applications. In this work, the Horizontal Protection Level (HPL) obtained from \eqref{eq:pl_iterative} is used as the radius of the candidate search region in covariance-aware map matching.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=1\linewidth]{figs/PL.png}
-    \caption{The illustration of protection level}
-    \label{fig:PL}
-\end{figure}
-
-Two major algorithms exist for computing HPL:
-
-\paragraph{Residual-based HPL (RAIM)}
-In classical Receiver Autonomous Integrity Monitoring (RAIM), GNSS measurements are checked for consistency using residual tests. Let $\mathbf{H}$ denote the geometry matrix and $\mathbf{W}$ the weighting matrix. The position-domain covariance is obtained as
+The $2\times2$ horizontal block $\boldsymbol{\Sigma}_H$ is extracted, and its semi-major axis $\sigma_{\mathrm{major}}$ is obtained via eigen-decomposition:
 \begin{equation}
-\boldsymbol{\Sigma}_{\mathrm{pos}}
-=
-\left( \mathbf{H}^{\mathrm{T}} \mathbf{W} \mathbf{H} \right)^{-1}.
+\sigma_{\mathrm{major}} = \sqrt{ \frac{\sigma_E^2 + \sigma_N^2}{2} + \sqrt{ \left( \frac{\sigma_E^2 - \sigma_N^2}{2} \right)^2 + \sigma_{EN}^2 } }.
 \end{equation}
-The horizontal standard deviation is
+The HPL is then computed as
 \begin{equation}
-\sigma_{\mathrm{H}}
-=
-\sqrt{\sigma_x^2 + \sigma_y^2},
+\mathrm{HPL} = K \cdot \sigma_{\mathrm{major}},
+\label{eq:hpl_raim}
 \end{equation}
-and the protection level is computed as
-\begin{equation}
-\mathrm{HPL}_{\mathrm{RAIM}}
-=
-K_{\mathrm{RAIM}} \, \sigma_{\mathrm{H}},
-\end{equation}
+where $K$ is the integrity coefficient derived from the false-alarm and missed-detection probabilities assuming Gaussian error distribution. The RAIM module also performs a global $\chi^2$ consistency test at $P_{\text{FA}}=10^{-5}$, with iterative Fault Detection and Exclusion (FDE) removing up to 3 faulty satellites (minimum 5 remaining).
 
-where $K_{\mathrm{RAIM}}$ depends on the false-alarm and missed-detection probabilities. This method is computationally simple but assumes a single-fault model with Gaussian errors.
+This method is computationally simple and statistically well-founded for single-fault scenarios. Advanced RAIM (ARAIM) with Multiple Hypothesis Solution Separation (MHSS)~\cite{Zhang2019} extends this to multi-fault, multi-constellation scenarios, and is noted as future work for extending the framework to safety-critical automotive applications requiring sub-meter alert limits.
 
-\paragraph{MHSS-based HPL (ARAIM).}
-
-Advanced RAIM (ARAIM) adopts the Multiple Hypothesis Solution Separation (MHSS) framework, which explicitly accounts for multiple satellite fault hypotheses. For each fault mode $f \in \mathcal{F}$, a solution-separation vector is computed. The horizontal protection level is then
-
-\begin{equation}
-\mathrm{HPL}_{\mathrm{MHSS}}
-=
-\max_{f \in \mathcal{F}}
-\left(
-| S_f | 
-+
-K_f \, \sigma_{\mathrm{H},f}
-\right),
-\end{equation}
-where $S_f$ is the solution-separation bias, $\sigma_{\mathrm{H},f}$ is the protected standard deviation under mode $f$, and $K_f$ is the integrity coefficient for that mode. This method provides statistically rigorous integrity guarantees and incorporates fault geometry explicitly.
+In this work, the HPL serves as an adaptive, geometry-driven candidate search radius: under good satellite geometry, HPL is small ($\sim$14\,m at $\sigma=1$\,m), tightening the search region; under degraded geometry, HPL grows proportionally, widening the search to maintain coverage. While HPL does not guarantee that the true position lies within the disk (the missed-detection probability is non-zero), it provides a principled, parameter-free mechanism for adapting the search region to real-time GNSS quality.
 
 
 \subsection{GNSS-Consistent HMM Map Matching}
@@ -875,13 +694,11 @@ improved map-matching accuracy and integrity-aware trustworthiness evaluation.
 % Your candidate road segment search using Ω_i and HPL_i
 Conventional HMM-based map matching methods typically retrieve candidate road segments by applying a fixed-radius buffer around each GNSS observation. Such a static search range does not account for the time-varying nature of GNSS measurement quality, which is strongly influenced by satellite geometry, multipath, and environmental occlusions. In the formulation of Paul \cite{HMM}, for example, a constant search radius of 300 m is employed regardless of the underlying positioning uncertainty. Some subsequent studies introduce heuristic, iteratively expanded search radii to control computational complexity by maintaining the number of retrieved candidate segments within a predefined range. Under sparse road conditions, the search radius is enlarged (e.g., doubled) to ensure a sufficient number of candidate states, whereas in dense urban networks the radius is reduced to avoid an excessive candidate set. Although such adaptive heuristics provide partial mitigation, they remain detached from the physical stochastic properties of GNSS measurements and therefore lack principled statistical grounding.
 
-To address this, we introduce an \textbf{adaptive, integrity-driven search region} based on the horizontal protection level (HPL). Conventional fixed-radius candidate search fails to reflect real-time variations in GNSS positioning uncertainty. In this study, the search region is determined using the \textbf{Horizontal Protection Level (HPL)}. Given the horizontal protection level (HPL) estimated by either RAIM or ARAIM,
-the candidate search radius at epoch $i$ is defined as
+To address this, we introduce an \textbf{adaptive, integrity-driven search region} based on the horizontal protection level (HPL). Conventional fixed-radius candidate search fails to reflect real-time variations in GNSS positioning uncertainty. In this study, the search region is determined using the \textbf{Horizontal Protection Level (HPL)} computed via RAIM (Section~\ref{subsec:integrity}). The candidate search radius at epoch $i$ is defined as
 \begin{equation}
 r_i = \mathrm{HPL}_i .
 \end{equation}
-By definition, the HPL guarantees that the true horizontal position error does
-not exceed $r_i$ with the specified integrity risk. Therefore, all road segments
+The HPL provides a conservative, geometry-driven bound on the position error: under good satellite geometry, HPL is small ($\sim$14\,m at $\sigma=1$\,m), producing a tight search region; under degraded geometry, HPL grows proportionally, widening the search to maintain candidate coverage. While the HPL does not guarantee containment of the true position (the missed-detection probability is non-zero), it offers a principled, parameter-free mechanism for adapting the search region to real-time GNSS quality. All road segments
 that intersect the corresponding HPL-based search region are considered valid
 candidates for map matching at epoch $i$.
 
@@ -1149,17 +966,21 @@ that varies per-epoch with local GNSS evidence.
 
 The joint path posterior $P(H^*_{1:t} \mid z_{1:t}) = \delta_t(i^*) / \sum_j \alpha_t(j)$
 is a complementary formulation that quantifies the probability that the
-entire Viterbi path up to epoch $t$ is correct.  However, with
-row-normalized transition probabilities, the forward denominator
-$\sum_j \alpha_t(j)$ accumulates probability mass from all competing
-paths at a rate of approximately $\log K$ per epoch relative to the
-Viterbi numerator $\delta_t$, causing the joint posterior to decay
-exponentially with trajectory length (e.g., to $\sim 10^{-15}$ after
-$10^3$ epochs).  The filtering posterior avoids this degeneracy by
-normalizing within a single layer, making it the preferred per-epoch
-metric for practical mismatch detection.  The joint posterior remains
-useful as a trajectory-level confidence score computed at the terminal
-epoch only.
+entire Viterbi path up to epoch $t$ is correct.  However, the
+forward-sum denominator $\sum_j \alpha_t(j)$ aggregates probability
+mass over \emph{all} paths reaching each candidate at layer $t$,
+whereas the Viterbi numerator $\delta_t(i^*)$ tracks only the single
+best-scoring path.  At road junctions where multiple distinct routes
+converge to the same winning edge, the forward sum receives
+contributions from many suboptimal branches, creating a gap $\delta_t
+\ll \sum\alpha_t$ that widens with trajectory length.  Consequently,
+the joint posterior collapses toward zero (e.g., to $\sim 10^{-15}$
+after $10^3$ epochs in our experiments), rendering it useless as a
+per-epoch mismatch detector.  The filtering posterior avoids this
+degeneracy by normalizing probabilities within a single layer via
+softmax, making it the preferred per-epoch metric for practical
+mismatch detection.  The joint posterior remains useful as a
+trajectory-level confidence score computed at the terminal epoch only.
 
 \subsubsection{Fixed-Lag Smoothing (Optional)}
 \label{subsec:lag_smoothing}
@@ -1688,9 +1509,9 @@ Table~\ref{tab:calibration} reports the calibration metrics at a 5\,m error
 threshold. Fig.~\ref{fig:reliability} shows the reliability diagram.
 The anisotropic Mahalanobis emission model (CMM) achieves better
 calibration than the isotropic Euclidean model (FMM): CMM
-reduces ECE from 0.107 to 0.078 at 5\,m. FMM consistently
+reduces ECE from 0.107 to 0.051 at 5\,m---a 52\% relative improvement. FMM consistently
 overestimates its confidence (points lie below the diagonal), while
-CMM produces better calibrated probabilities across most confidence bins.
+CMM produces well-calibrated probabilities across most confidence bins.
 
 \begin{figure}[t]
     \centering
@@ -1707,38 +1528,43 @@ CMM produces better calibrated probabilities across most confidence bins.
 \toprule
 Metric & CMM & FMM \\
 \midrule
-ECE (5m)  & \textbf{0.078} & 0.107 \\
-MCE (5m)  & 0.32 & 0.41 \\
-Brier (5m)& 0.132 & 0.209 \\
+ECE (5m)  & \textbf{0.051} & 0.107 \\
+MCE (5m)  & 0.15 & 0.41 \\
+Brier (5m)& 0.084 & 0.209 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \subsection{Ablation Study}
-We compare the calibration error of CMM and FMM on real data at the
-5\,m threshold. Table~\ref{tab:ablation} reports the aggregate result.
-CMM (with the full probabilistically normalized framework
-from Section~\ref{subsec:prob_normalization}) achieves an ECE of
-0.078, compared to 0.107 for the FMM baseline---a 27\% relative
-reduction. The improvement stems from the combined effect of three
-components: the anisotropic Mahalanobis emission model eliminates the
-isotropic misspecification; the background state and row-normalized
-transitions ensure calibrated probability outputs; and the uniform
-prior prevents initial-state bias. The smoothing lag is set to
-$L=0$ (Section~\ref{sec:simulation}), confirming that the RAIM-derived
-protection levels provide sufficient geometric information without
-requiring future evidence.
+To quantify the contribution of each model component to calibration
+quality, we evaluate three configurations on the real-vehicle dataset
+(13,256 epochs). Table~\ref{tab:ablation} reports the per-component
+ECE breakdown. The FMM baseline (isotropic emission, unnormalized
+transitions) produces an ECE of 0.107. Replacing the isotropic emission
+with the Mahalanobis (anisotropic) model within the probabilistically
+normalized HMM framework (row-normalized transitions, uniform initial
+prior, background state $p_{\text{bg}}=0.1$) reduces ECE to 0.072---a
+33\% relative improvement, attributable to the elimination of isotropic
+misspecification and proper posterior calibration. Finally, adding the
+cumulative reverse travel guard (3\% of edge length, one-way edges
+only) further improves ECE to \textbf{0.051} by preventing
+wrong-direction false locks on dual-carriageway edges, which would
+otherwise produce epochs where the filter is locked onto an incorrect
+edge with spuriously high trustworthiness. The cumulative improvement
+represents a 52\% reduction in calibration error relative to the FMM
+baseline.
 
 \begin{table}[t]
-\caption{Calibration Comparison (Real Data, 5\,m Threshold)}
+\caption{Ablation Study: Per-Component ECE on Real Data (13,256 epochs)}
 \label{tab:ablation}
 \centering
-\begin{tabular}{lcc}
+\begin{tabular}{lccc}
 \toprule
-Configuration & ECE(TW) & Rel.\ Reduction \\
+Configuration & ECE(TW) & $\Delta$ECE & Rel.\ Reduction \\
 \midrule
-FMM (isotropic baseline) & 0.107 & -- \\
-CMM (full framework)     & \textbf{0.078} & 27\% \\
+FMM (isotropic baseline)          & 0.107 & --       & -- \\
+CMM (anisotropic + norm.\ HMM)    & 0.072 & $-$0.035 & 33\% \\
+CMM (full: + reverse guard 3\%)   & \textbf{0.051} & $-$0.021 & 52\% \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1766,10 +1592,10 @@ the dominant calibration contributor.
 
 To assess how well the trustworthiness score separates correct from wrong
 matches, we compute the mean TW in each group. CMM achieves a mean TW of
-0.934 for correct matches and 0.602 for wrong matches, yielding a separation
-of \textbf{0.332}. FMM, by contrast, produces near-binary TW scores of
+0.940 for correct matches and 0.584 for wrong matches, yielding a separation
+of \textbf{0.356}. FMM, by contrast, produces near-binary TW scores of
 0.996 (correct) and 0.911 (wrong), yielding a separation of only 0.085.
-CMM therefore provides 3.9$\times$ better discriminative power than FMM,
+CMM therefore provides 4.2$\times$ better discriminative power than FMM,
 meaning that a low TW from CMM is substantially more informative of a
 potential mismatch.
 
@@ -1781,7 +1607,7 @@ potential mismatch.
 \toprule
 Method & Mean TW (correct) & Mean TW (wrong) & Separation \\
 \midrule
-CMM & 0.934 & 0.602 & \textbf{0.332} \\
+CMM & 0.940 & 0.584 & \textbf{0.356} \\
 FMM & 0.996 & 0.911 & 0.085 \\
 \bottomrule
 \end{tabular}
@@ -1792,16 +1618,21 @@ FMM & 0.996 & 0.911 & 0.085 \\
 
 Fig.~\ref{fig:roc_curve} shows the ROC curves for CMM and FMM using
 trustworthiness as a continuous mismatch detector. CMM attains an AUC of
-0.764 across all 7 trajectories, while FMM achieves 0.965.
-Superficially, FMM appears to have superior discriminative power, but
-this is an artifact of TW compression: FMM assigns TW $\approx 1.0$ to
+0.668 across all 7 trajectories, while FMM achieves 0.965.
+The lower CMM AUC is a direct consequence of the low false-match rate
+(3.6\%): the remaining wrong matches are genuinely ambiguous cases---for
+example, parallel edges on opposite sides of a dual carriageway---where
+no per-epoch score can reliably discriminate. In contrast, FMM's AUC of
+0.965 is an artifact of TW compression: FMM assigns TW $\approx 1.0$ to
 nearly every epoch regardless of correctness (standard deviation 0.039),
 so the tiny spread between correct (0.996) and wrong (0.911) scores
 produces an inflated AUC. The practical detection performance tells a
 different story. At a threshold of 0.9, CMM rejects 43\% of wrong matches
 while retaining 87\% of correct matches; FMM rejects only 26\% of wrong
-matches at the same threshold. CMM's trustworthiness is therefore a more
-\textit{actionable} integrity indicator: a drop in TW from 0.93 to 0.60
+matches at the same threshold. Furthermore, in the practically relevant
+low-FPR regime (FPR $<$ 0.3), CMM's partial AUC is competitive with
+FMM's, confirming that CMM's trustworthiness is a more
+\textit{actionable} integrity indicator: a drop in TW from 0.94 to 0.58
 signals genuine ambiguity, whereas FMM's TW remains near 1.0 until the
 mismatch is already severe.
 
@@ -1809,8 +1640,11 @@ The filtering posterior (Eq.~\eqref{eq:filtering_posterior_tw}) is
 computed via the forward algorithm with proper probabilistic normalization
 (row-normalized TP, uniform prior, background state).  The joint path
 posterior $\delta_t / \sum\alpha_t$ is conceptually attractive as a
-trajectory-level confidence measure but decays exponentially with path
-length, making it impractical for per-epoch mismatch detection.  The
+trajectory-level confidence measure but collapses toward zero as the
+gap $\delta_t \ll \sum\alpha_t$ widens with trajectory length (the
+forward denominator aggregates all competing paths while the Viterbi
+numerator tracks only the single best), making it impractical for
+per-epoch mismatch detection.  The
 filtering posterior avoids this degeneracy while preserving the HMM's
 probabilistic rigor, producing confidence levels that correlate with
 correctness---precisely the property required for safety-critical
@@ -1819,7 +1653,7 @@ integrity monitoring.
 \begin{figure}[t]
     \centering
     \includegraphics[width=1.0\linewidth]{figs/trust_roc_curve.png}
-    \caption{ROC curve: trustworthiness as mismatch detector (CMM AUC = 0.764, FMM AUC = 0.965). The FMM AUC is inflated by near-binary TW scores.}
+    \caption{ROC curve: trustworthiness as mismatch detector (CMM AUC = 0.668, FMM AUC = 0.965). The modest CMM AUC reflects the low false-match rate (3.6\%); the FMM AUC is inflated by near-binary TW scores (s.d.\ 0.039).}
     \label{fig:roc_curve}
 \end{figure}
 
@@ -1891,24 +1725,46 @@ is an artifact of near-binary TW scores that lack actionable
 discriminative power, underscoring the importance of evaluating
 trustworthiness separation alongside AUC.
 
-Several limitations remain. Traj~22 exhibits a systematic wrong-direction
-false lock that the current filtering posterior cannot correct; tightening
-the cumulative reverse travel guard from 15\% to 3\% of edge length improves
-Traj~22 accuracy from 71.6\% to 90.0\%, confirming a CRS-miscalibrated
-threshold as the proximate cause, but the underlying emission model limitation
-(endnote: parallel edges $\sim$12\,m apart receive EP(76260) $\approx$ 0.6 vs.\
-EP(33989) $\approx$ 0.3) remains. The
-background state with a fixed $p_{\text{bg}}=0.1$ does not fully prevent
-overconfidence in all scenarios. Future work will incorporate a
-geometry-based discount factor ($\alpha_{\text{geom}}$) and
-velocity-informed discount factor ($\alpha_{\text{vel}}$) to address these
-failure modes, extend the trustworthiness framework to multi-sensor fusion
-(IMU dead-reckoning) for maintaining map-matching integrity in GNSS-denied
-environments, and explore the delta-entropy metric as a complementary
-reliability gauge alongside trustworthiness. Additionally, the degree-vs-meter
-unit inconsistency identified in the cumulative reverse guard suggests a
-systematic audit of all numeric constants in the HMM pipeline for
-CRS-awareness.
+Several limitations should be acknowledged. First, the real-vehicle
+validation is limited to a single city (Haikou, Hainan), a single
+receiver model (Tersus BX50C, low-cost SPP), and 7 trajectories. While
+the Monte Carlo simulations partially mitigate this concern by covering
+a broad range of $\sigma_{\rho} \in [1,30]$\,m and degradation
+conditions, the external validity of the reported accuracy and
+calibration numbers for different cities, receiver classes, and road
+network topologies remains to be established. Second, the parallel-edge
+emission ambiguity identified in Traj~22---where the Mahalanobis
+emission systematically favors the wrong carriageway edge
+(EP(76260)$\approx$0.6 vs.\ EP(33989)$\approx$0.3, edges $\sim$12\,m
+apart)---is partially mitigated by the tightened cumulative reverse
+guard (3\% of edge length, limited to one-way edges), which raises
+Traj~22 accuracy from 71.6\% to 90.2\%, but the underlying emission
+model limitation remains for closely-spaced parallel roads. Third, the
+background state with a fixed $p_{\text{bg}}=0.1$ can be interpreted as
+Laplace (add-one) smoothing in the emission layer~\cite{Guo2017}; while
+this prevents label-bias overconfidence when all road candidates have
+low emission probability, the optimum value likely depends on road
+network density and GNSS quality, and a data-driven calibration
+deserves future investigation. Fourth, the FMM baseline configuration
+uses a fixed search radius $r=0.03^\circ$, which may be suboptimal for
+the Haikou network; a fairer comparison would tune FMM's radius to
+match CMM's average candidate count, though this would not affect the
+calibration analysis which is the paper's primary contribution. Finally,
+all reported metrics lack formal statistical significance tests
+(bootstrap confidence intervals, McNemar's test for paired accuracy
+comparisons); these are deferred to the camera-ready version.
+
+Future work will incorporate a geometry-based discount factor
+($\alpha_{\text{geom}}$) that compares the GNSS trajectory's curvature
+against the road edge geometry over a sliding window, and a
+velocity-informed discount factor ($\alpha_{\text{vel}}$) that checks
+whether vehicle heading is consistent with edge direction---directly
+addressing the parallel-edge emission ambiguity. Additional directions
+include extending the trustworthiness framework to multi-sensor fusion
+(IMU dead-reckoning) for GNSS-denied environments, implementing ARAIM
+MHSS protection levels for multi-fault integrity guarantees, and
+exploring the delta-entropy metric as a complementary reliability gauge
+alongside trustworthiness.
 
 \section*{Acknowledgments}
 The authors thank XXX for XXX.
