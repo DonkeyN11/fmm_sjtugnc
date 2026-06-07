@@ -961,52 +961,39 @@ additional evidence, flagging potentially ambiguous epochs.
 \subsection{Summary of GNSS-Consistent HMM Formulation and Trustworthiness}
 
 \begin{algorithm}[t]
-\caption{CMM Map Matching with Probabilistic Trustworthiness}
+\caption{CMM: Covariance-Aware Map Matching with Trustworthiness}
 \label{alg:cmm_hmm}
 \begin{algorithmic}[1]
-\State \textbf{Input:} Road network $\mathcal{G}$, trajectory $Z=\{z_i\}_{i=1}^{N}$, covariance $\{\boldsymbol{\Sigma}_i\}_{i=1}^{N}$, HPL $\{r_i\}_{i=1}^{N}$, background prob. $p_{\text{bg}}$, lag $L$, UBODT $\mathcal{U}$
-\State \textbf{Output:} Optimal path $X^\star$, trustworthiness $\{\text{tw}_i\}_{i=1}^{N}$, n-best $\{\text{nb}_i\}_{i=1}^{N}$, entropy $\{H_i, \Delta H_i\}_{i=1}^{N}$
-\State Initialize lag buffer $\mathcal{B} \leftarrow \varnothing$, candidate sets $\mathcal{C}_{1 \dots N} \leftarrow \varnothing$
-\For{$i = 1, 2, \dots, N$}
-    \State Define search region $\Omega_i \leftarrow \{ x \in \mathbb{R}^2 : \|x - z_i\|_2 \le r_i \}$
-    \State $\mathcal{C}_{\mathrm{seg},i} \leftarrow \{ s \in \mathcal{G} : s \cap \Omega_i \neq \varnothing \}$
-    \If{$\mathcal{C}_{\mathrm{seg},i} = \varnothing$}
-        \State Mark epoch as gap; \textbf{continue}
-    \EndIf
-    \For{\textbf{each} $s_j \in \mathcal{C}_{\mathrm{seg},i}$}
-        \State $x_{i,j} \leftarrow \arg\min_{x \in s_j} (z_i - x)^{\mathrm{T}} \boldsymbol{\Sigma}_i^{-1} (z_i - x)$ \label{alg:ma_proj}
-        \State $\log p(z_i \mid x_{i,j}) \leftarrow -\frac{1}{2}\log(2\pi|\boldsymbol{\Sigma}_i|) - \frac{1}{2}\mathbf{d}_{i,j}^{\mathrm{T}}\boldsymbol{\Sigma}_i^{-1}\mathbf{d}_{i,j}$ \label{alg:emission}
-        \State $\mathcal{C}_{\mathrm{pnt},i} \leftarrow \mathcal{C}_{\mathrm{pnt},i} \cup \{x_{i,j}\}$
-    \EndFor
-    \State Append background pseudo-candidate $b$ with $\log p(z_i \mid b) \leftarrow \log p_{\text{bg}}$ to $\mathcal{C}_{\mathrm{pnt},i}$
-    \State Compute normalized transition weights $\log t_{a \to b}$ (Eq.~\eqref{eq:tp_normalized}) between $\mathcal{C}_{\mathrm{pnt},i-1}$ and $\mathcal{C}_{\mathrm{pnt},i}$
-    \State $\log \alpha_i(b) \leftarrow \log\!\sum_{a}\!\exp(\log\alpha_{i-1}(a)+\log t_{a\to b}) + \log p(z_i\mid s_i^{(b)})$ \label{alg:forward}
-    \State $\log \delta_i(b) \leftarrow \max_{a}[ \log\delta_{i-1}(a) + \log t_{a\to b}] + \log p(z_i\mid s_i^{(b)})$ \label{alg:viterbi}
+\State \textbf{Input:} $\mathcal{G}$, $\{z_i,\boldsymbol{\Sigma}_i,\text{HPL}_i\}_{i=1}^{N}$, $p_{\text{bg}}$, $L$
+\State \textbf{Output:} $X^\star$, $\{\text{tw}_i\}$, $\{\text{nb}_i\}$, $\{H_i,\Delta H_i\}$
+\State $\mathcal{B} \leftarrow \varnothing$ \hfill $\triangleright$ lag buffer
+\For{$i = 1 \ldots N$}
+    \State $\mathcal{C}_i \leftarrow \big\{ \arg\min_{x \in s} (z_i-x)^{\!\top}\!\boldsymbol{\Sigma}_i^{-1}(z_i-x) \;\big|\; s\!\in\!\mathcal{G},\,\|s-z_i\|_2\!\le\!\text{HPL}_i \big\}$
+    \If{$\mathcal{C}_i = \varnothing$} \State \textbf{continue} \EndIf
+    \State Append background pseudo-candidate with $\log p_{\text{bg}}$
+    \State Compute $\log t_{a\to b}$ via Eq.~\eqref{eq:tp_normalized} \hfill $\triangleright$ row-normalized TP
     \If{$i = 1$}
-        \State $\log \alpha_1(i) \leftarrow \log(1/K) + \log p(z_1\mid s_1^{(i)})$; $\log \delta_1(i) \leftarrow \log(1/K) + \log p(z_1\mid s_1^{(i)})$ \label{alg:init}
+        \State $\log\alpha_1(j) \leftarrow \log(1/|\mathcal{C}_1|) + \log p(z_1|s_1^{(j)})$, \quad $\log\delta_1(j) \leftarrow \log\alpha_1(j)$
+    \Else
+        \State $\log\alpha_i(b) \leftarrow \log\!\sum_a\!\exp(\log\alpha_{i-1}(a)+\log t_{a\to b}) + \log p(z_i|s_i^{(b)})$
+        \State $\log\delta_i(b) \leftarrow \max_a[\log\delta_{i-1}(a)+\log t_{a\to b}] + \log p(z_i|s_i^{(b)})$
     \EndIf
     \If{$L > 0$}
-        \State Push $\text{layer}_i = \{\mathcal{C}_{\mathrm{pnt},i}, \log\alpha_i, \log\delta_i, \log t\}$ to buffer $\mathcal{B}$
+        \State Push $(\mathcal{C}_i,\log\alpha_i,\log\delta_i,\log t)$ to $\mathcal{B}$
         \If{$|\mathcal{B}| > L$}
-            \State Let $\ell$ be oldest layer; compute $\beta_{\ell+L}(j)$ via Viterbi forward \label{alg:viterbi_fwd}
-            \State $\text{score}_\ell(j) \leftarrow \log\alpha_\ell(j) + \beta_{\ell+L}(j)$
-            \State $p_j \leftarrow \exp(\text{score}_\ell(j)) / \sum_k \exp(\text{score}_\ell(k))$
-            \State $\text{tw}_\ell \leftarrow \max_j p_j$; \quad $H_\ell \leftarrow -\sum_j p_j\log_2 p_j$
-            \State Pop oldest layer from $\mathcal{B}$
+            \State $\ell \leftarrow$ oldest; $\beta_{\ell+L}(j) \leftarrow L$-step Viterbi look-ahead (Eq.~\eqref{eq:viterbi_future})
+            \State $\text{score}_\ell(j) \leftarrow \log\alpha_\ell(j) + \beta_{\ell+L}(j)$; \hspace{4pt} $p_j \leftarrow \text{softmax}(\text{score}_\ell)_j$
+            \State $\text{tw}_\ell \leftarrow \max_j p_j$; \hspace{4pt} $H_\ell \leftarrow -\sum_j p_j\log_2 p_j$; \hspace{4pt} pop $\ell$ from $\mathcal{B}$
         \EndIf
     \Else
-        \State $\text{tw}_i \leftarrow \exp(\log\alpha_i(i^*)) / \sum_j \exp(\log\alpha_i(j))$ \quad (filtering posterior) \label{alg:tw}
-        \State $\text{nb}_i \leftarrow \exp(\log\alpha_i(j)) / \sum_k \exp(\log\alpha_i(k))$ \quad (top-3 road candidates) \label{alg:nbest}
-        \State $H_i \leftarrow -\sum_j p_j\log_2 p_j$; $\Delta H_i \leftarrow H_{\text{prior}} - H_i$
+        \State $\text{tw}_i \leftarrow \text{softmax}(\log\alpha_i)_{i^*}$; \hspace{4pt} $\text{nb}_i \leftarrow \text{top-3 softmax}(\log\alpha_i)$
+        \State $H_i \leftarrow -\sum_j p_j\log_2 p_j$; \hspace{4pt} $\Delta H_i \leftarrow \log_2|\mathcal{C}_i| - H_i$
     \EndIf
 \EndFor
-\If{$L > 0$}
-    \State \textbf{Flush buffer:} repeat smoothing for remaining layers with decreasing effective lag
-\EndIf
-\State Backtrack via stored backpointers to retrieve optimal path $X^\star$
-\State \textbf{return} $X^\star$, $\{\text{tw}_i\}_{i=1}^{N}$, $\{\text{nb}_i\}_{i=1}^{N}$, $\{H_i, \Delta H_i\}_{i=1}^{N}$
+\If{$L > 0$} \State Flush $\mathcal{B}$ with decreasing effective lag \EndIf
+\State $X^\star \leftarrow$ backtrack via Viterbi backpointers
+\State \Return $X^\star$, $\{\text{tw}_i\}$, $\{\text{nb}_i\}$, $\{H_i,\Delta H_i\}$
 \end{algorithmic}
-    \vspace{-10pt}
 \end{algorithm}
 
 
@@ -1371,8 +1358,8 @@ Total  & 16,155 & 269.2 min & 22.8 m & -- \\
 \end{table}
 \begin{figure}
     \centering
-    \includegraphics[width=0.5\linewidth]{figs/hainan_map.png}
-    \caption{dataset overview}
+    \includegraphics[width=1.0\linewidth]{figs/dataset_overview.png}
+    \caption{Hainan-06 dataset: Haikou road network (152,547 edges, gray) with 7 SPP GNSS trajectories (colored). Circles mark trajectory start points; arrows indicate driving direction. Inset: Haikou location on Hainan Island.}
     \label{fig:dataset}
 \end{figure}
 
