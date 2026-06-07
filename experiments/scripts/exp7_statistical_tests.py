@@ -55,7 +55,7 @@ def auc_score(labels, scores):
     tpr = np.cumsum(ls) / n_pos
     fpr = np.cumsum(1 - ls) / n_neg
     tpr = np.concatenate([[0], tpr]); fpr = np.concatenate([[0], fpr])
-    return float(np.trapezoid(tpr, fpr))
+    return float(np.trapz(tpr, fpr))
 
 def bootstrap_ci(data, stat_fn, n_bootstrap=10000, alpha=0.05):
     """Compute bootstrap (1-alpha) CI for a statistic."""
