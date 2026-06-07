@@ -117,6 +117,11 @@ sync.sh
 !experiments/config/*.json
 *.html
 
+# Generated figures
+*.svg
+*.png
+!docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/example.png
+
 AGENTS.md
 docs/Journal of Field Robotics - 2016 - Phillips - Is It What I Think It Is  Is It Where I Think It Is  Using Point‐Clouds for.pdf
 docs/literature/AMM_An_Adaptive_Online_Map_Matching_Algorithm.pdf

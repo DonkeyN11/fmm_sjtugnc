@@ -62,22 +62,42 @@ Code location: `src/mm/cmm/cmm_algorithm.cpp:2011-2114`
 | Ground truth | RTK post-processing (cm-level) |
 | RAIM HPL (median) | 22.8 m |
 
-### Calibration Results (ECE at 5m threshold)
-| Metric | CMM | FMM |
-|--------|-----|-----|
+### Three Types of ECE — Must Be Clearly Distinguished
+
+| ECE Type | Definition | FMM Value | CMM Value | Source |
+|----------|-----------|:---------:|:---------:|--------|
+| **EP-based ECE** | Calibration of emission probability P(z\|x) vs position error | 0.976 | 0.262 | `exp1_reliability.json` |
+| **Position-error ECE** | Calibration of trustworthiness vs horizontal position error (3m/5m/10m) | 0.989/0.978/0.942 | 0.122/0.121/0.099 | ARTICLE_REFINEMENT_NOTES (legacy) |
+| **TW-based ECE** | Calibration of trustworthiness vs segment-level correctness (10-bin) | **0.107** | **0.069** | Post-fix `aligned.csv`, paper abstract |
+
+**The paper now uses TW-based ECE as the primary metric** (reported in abstract as 0.069 CMM, 0.107 FMM).
+
+### Calibration Results (Legacy — Position-Error ECE at 5m threshold, PRE-FIX)
+| Metric | CMM (pre-fix) | FMM |
+|--------|:---:|:---:|
 | ECE (3m) | 0.122 | 0.989 |
 | ECE (5m) | 0.121 | 0.978 |
 | ECE (10m) | 0.099 | 0.942 |
 | MCE (5m) | 0.576 | 0.989 |
 | Brier (5m) | 0.165 | 0.420 |
 
-### Ablation Study (ECE at 5m)
+### TW-Based ECE (Current, Post-Fix, from aligned.csv)
+| Metric | CMM (post-fix) | FMM |
+|--------|:---:|:---:|
+| ECE (TW, 10-bin) | **0.069** | 0.107 |
+| TW separation | 0.291 | 0.085 |
+| AUC | 0.606 | 0.965 |
+| Accuracy | 96.9% | 88.1% |
+
+### Ablation Study (NEEDS RE-RUN — Pre-Fix Numbers)
 | Configuration | ECE(TW) | Delta ECE |
 |---|---|---|
 | FMM (isotropic) | 0.978 | -- |
 | + CMM anisotropic, L=0 | 0.121 | -0.857 |
 | + Fixed-lag (L=20) | 0.261 | +0.140 |
 | + PHMI integrity | 0.261 | +0.000 |
+
+**Note**: Above ablation uses position-error ECE (pre-fix). Needs re-run with post-fix CMM using TW-based ECE + accuracy + AUC + TW separation per configuration (see ESSAY_REFINEMENT_PLAN.md R6).
 
 **Key finding**: Anisotropic Mahalanobis emission contributes 87.6% of the calibration improvement. Fixed-lag smoothing degrades calibration with RAIM PL.
 
