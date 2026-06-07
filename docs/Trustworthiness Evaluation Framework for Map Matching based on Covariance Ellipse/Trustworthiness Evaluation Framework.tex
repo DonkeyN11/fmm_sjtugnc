@@ -58,10 +58,10 @@ on 7 GNSS trajectories collected in Haikou, Hainan China demonstrate
 that the proposed framework improves matching accuracy,
 probabilistic calibration, and mismatch detection over a
 fixed-isotropic HMM baseline. On real data, CMM achieves 96.9\%
-segment accuracy versus 88.0\% (FMM), reduces the Expected
+segment accuracy versus 88.1\% (FMM), reduces the Expected
 Calibration Error (ECE) from 0.107 to 0.069, and improves
 trustworthiness separation between correct and wrong matches by a
-factor of 3.3. The filtering posterior trustworthiness metric
+factor of 3.4. The filtering posterior trustworthiness metric
 attains an area under the ROC curve of 0.600 for mismatch detection,
 confirming its practical effectiveness as an integrity indicator for
 safety-critical map-matching applications. 
@@ -1400,7 +1400,7 @@ We evaluate the ability of the trustworthiness score to discriminate between cor
 \subsection{Matching Accuracy and Position Error}
 \label{sec:accuracy}
 
-Table~\ref{tab:per_traj_accuracy} reports per-trajectory segment accuracy and position error. CMM achieves 96.9\% overall accuracy vs.\ 88.0\% for FMM across 13,052 evaluable epochs, with a mean position error of 5.6\,m compared to 9.4\,m (P95: 13.5\,m vs.\ 40.3\,m). On all 7 trajectories, CMM outperforms or matches FMM. The most notable improvement over the baseline configuration is Traj~22, where a tightened cumulative reverse travel guard (reducing the threshold from 15\% to 3\% of edge length) raises accuracy from 72.9\% to 93.4\%, partially resolving the wrong-direction false lock discussed in Section~\ref{sec:roc}.
+Table~\ref{tab:per_traj_accuracy} reports per-trajectory segment accuracy and position error. CMM achieves 96.9\% overall accuracy vs.\ 88.1\% for FMM across 13,052 evaluable epochs, with a mean position error of 5.6\,m compared to 9.4\,m (P95: 13.5\,m vs.\ 40.3\,m). On all 7 trajectories, CMM outperforms or matches FMM. The most notable improvement over the baseline configuration is Traj~22, where a tightened cumulative reverse travel guard (reducing the threshold from 15\% to 3\% of edge length) raises accuracy from 72.9\% to 93.4\%, partially resolving the wrong-direction false lock discussed in Section~\ref{sec:roc}.
 
 \begin{table}[t]
 \caption{Per-Trajectory Accuracy and Position Error (13,052 evaluable epochs)}
@@ -1647,7 +1647,7 @@ matching pipeline. The key contributions are: (1)~an anisotropic
 Mahalanobis emission model with probabilistically normalized HMM
 components (background state, row-normalized transitions, uniform
 prior) that improves calibration over the traditional isotropic
-baseline (ECE reduced from 0.107 to 0.051); (2)~a filtering posterior
+baseline (ECE reduced from 0.107 to 0.069); (2)~a filtering posterior
 trustworthiness metric computed via the forward algorithm that provides
 a calibrated per-epoch confidence score, together with a complementary
 marginal filtering posterior (n\_best\_trustworthiness) for
@@ -1657,13 +1657,13 @@ receiver-reported PL with a rigorous integrity bound (median HPL
 22.8\,m).
 
 On real-vehicle data across 7 trajectories, CMM achieves 96.9\%
-segment accuracy (vs.\ 88.0\% for FMM), a 36\% relative ECE reduction,
-and 3.3$\times$ better trustworthiness separation between correct and
-wrong matches (CMM: 0.292 vs.\ FMM: 0.087). The filtering posterior
+segment accuracy (vs.\ 88.1\% for FMM), a 36\% relative ECE reduction,
+and 3.4$\times$ better trustworthiness separation between correct and
+wrong matches (CMM: 0.291 vs.\ FMM: 0.085). The filtering posterior
 trustworthiness attains an AUC of 0.600 for mismatch detection,
 providing a principled integrity indicator without requiring a
 separately trained anomaly detector. The modest AUC reflects the
-low false-match rate (3.1\%) — remaining mismatches are genuinely
+low false-match rate (3.1\%) --- remaining mismatches are genuinely
 ambiguous cases where no single-epoch score can discriminate.
 We further demonstrate that the high AUC of the FMM baseline (0.965)
 is an artifact of near-binary TW scores that lack actionable
@@ -1677,20 +1677,33 @@ the Monte Carlo simulations partially mitigate this concern by covering
 a broad range of $\sigma_{\rho} \in [1,30]$\,m and degradation
 conditions, the external validity of the reported accuracy and
 calibration numbers for different cities, receiver classes, and road
-network topologies remains to be established. Second, the parallel-edge
+network topologies remains to be established. Second, the RAIM-based HPL
+computation requires a minimum of 5 visible satellites; performance in
+urban canyons with frequent satellite blockage remains untested, and
+ARAIM MHSS~\cite{Zhang2019} is needed for multi-fault integrity
+guarantees in safety-critical applications. Third, the synthetic
+simulations use 8 satellites at 45--80$^\circ$ elevation with a single
+cross-road occlusion model---substantially cleaner than real urban
+multipath environments---and results should be interpreted as upper
+bounds on algorithm capability. Fourth, the parallel-edge
 emission ambiguity identified in Traj~22---where the Mahalanobis
 emission systematically favors the wrong carriageway edge
 (EP(76260)$\approx$0.6 vs.\ EP(33989)$\approx$0.3, edges $\sim$12\,m
 apart)---is partially mitigated by the tightened cumulative reverse
 guard (3\% of edge length, limited to one-way edges), which raises
 Traj~22 accuracy from 71.6\% to 93.4\%, but the underlying emission
-model limitation remains for closely-spaced parallel roads. Third, the
+model limitation remains for closely-spaced parallel roads. Fifth, on
+real data the fixed-lag smoothing degrades TW calibration (ECE
+increases from 0.069 at $L=0$ to 0.26 at $L=20$), suggesting that the
+RAIM-derived PL already encodes sufficient geometric uncertainty; lag
+smoothing may be beneficial for receivers that do not provide covariance
+outputs. Sixth, the
 background state with a fixed $p_{\text{bg}}=0.1$ can be interpreted as
 Laplace (add-one) smoothing in the emission layer~\cite{Guo2017}; while
 this prevents label-bias overconfidence when all road candidates have
 low emission probability, the optimum value likely depends on road
 network density and GNSS quality, and a data-driven calibration
-deserves future investigation. Fourth, the FMM baseline configuration
+deserves future investigation. Seventh, the FMM baseline configuration
 uses a fixed search radius $r=0.03^\circ$, which may be suboptimal for
 the Haikou network; a fairer comparison would tune FMM's radius to
 match CMM's average candidate count, though this would not affect the

@@ -1026,3 +1026,60 @@ This validates the fix: the regression is an artifact of naive seq-based edge ID
 ### Commit
 
 `92681c5` on `fix/cumulative-reverse-guard-3pct`: Paper §VI-G expanded, §VII updated, results table corrected.
+
+---
+
+## 2026-06-07 — Essay Refinement Plan & Execution
+
+### Ultracode Fanned-Out Analysis
+
+All 6 subagents (`docs/subagents/`) were cross-referenced against each other and against verified post-fix data (`aligned.csv`, 13,256 eval epochs). Key contradictions found and resolved:
+
+| Contradiction | Resolution |
+|--------------|------------|
+| REVIEW says accuracy=91.4%, ECE=0.072, AUC=0.764 | Updated to post-fix: 96.9%, 0.069, 0.606 |
+| ESSAY_REFINEMENT_EXPERT conflates EP vs TW ECE | 3-type ECE taxonomy documented |
+| ARTICLE_REFINEMENT_NOTES has stale pre-fix numbers | Updated with post-fix + ECE type clarification |
+| EXPERIMENT_EXPERT says "NOT COMMITTED on master" | Moved to `feature/essay-final-submission` |
+
+**Comprehensive refinement plan**: `docs/.../ESSAY_REFINEMENT_PLAN.md`
+
+### P0 Issues Status
+
+| P0 | Issue | Status |
+|:---|:------|:-------|
+| P0-1 | PL formula (ARAIM vs RAIM) | Partially resolved — §IV-A.2 now describes RAIM with ARAIM as future work |
+| P0-2 | No statistical tests | **Script created**: `experiments/scripts/exp7_statistical_tests.py` (bootstrap CI, McNemar, DeLong). TO RUN. |
+| P0-3 | "Exponential decay" claim | Partially resolved — text revised, no longer claims exponential decay |
+| P0-4 | Ablation study one sentence | **RESOLVED** — full ablation table exists (§VI-E, Table with 3 configs) |
+| P0-5 | ECE inconsistent (0.078 vs 0.072) | **RESOLVED** — 0.069 used throughout |
+| P0-6 | Missing limitations | **RESOLVED** — Limitations added to Conclusion (§VII) |
+
+### Paper Edits Applied (2026-06-07)
+
+1. **Number corrections**: FMM accuracy 88.0%→88.1%, TW separation ratio 3.3×→3.4×, CMM TW 0.292→0.291, FMM TW 0.087→0.085
+2. **ECE consistency**: Conclusion changed from 0.051→0.069 (matches abstract + verified data)
+3. **Limitations expanded**: Added RAIM satellite requirement, synthetic data limitations, fixed-lag smoothing degradation
+4. **Limitations renumbered**: First→Seventh sequential ordering
+
+### Branch & Commit
+
+- **Branch**: `feature/essay-final-submission` (created from master)
+- **Commit** `c447805`: Organize essay refinement — subagents, plan, figure scripts, RECORDS relocation
+
+### Current Verified Numbers (Post-Fix, from aligned.csv)
+
+| Metric | CMM | FMM |
+|--------|:---:|:---:|
+| Segment accuracy | **96.9%** | 88.1% |
+| TW ECE (10-bin) | **0.069** | 0.107 |
+| TW separation | **0.291** | 0.085 |
+| TW AUC | **0.606** | 0.965 |
+
+### Remaining Tasks
+
+1. Run `exp7_statistical_tests.py` — generate bootstrap CI + McNemar + DeLong results
+2. Add statistical significance table to paper (§VI)
+3. Re-run simulation experiments with post-fix CMM binary
+4. Expand references from 11 to 30+ entries
+5. Run reviewer re-check (zero P0 issues before submission)
