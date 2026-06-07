@@ -115,17 +115,19 @@
 \newlabel{eq:filtering_posterior}{{24}{8}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}2}Filtering Posterior (Trustworthiness)}{8}{}\protected@file@percent }
 \newlabel{eq:filtering_posterior_tw}{{25}{8}}
-\citation{FMM}
 \newlabel{subsec:lag_smoothing}{{\mbox  {IV-C}3}{9}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}3}Fixed-Lag Smoothing (Optional)}{9}{}\protected@file@percent }
 \newlabel{eq:viterbi_future}{{26}{9}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {IV-C}4}Information-Theoretic Metrics}{9}{}\protected@file@percent }
 \newlabel{eq:delta_entropy}{{27}{9}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {IV-D}}Summary of GNSS-Consistent HMM Formulation and Trustworthiness}{9}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Trustworthiness in different road segments}}{9}{}\protected@file@percent }
-\newlabel{fig:trustworthiness}{{9}{9}}
+\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces CMM: Covariance-Aware Map Matching with Trustworthiness}}{9}{}\protected@file@percent }
+\newlabel{alg:cmm_hmm}{{1}{9}}
 \@writefile{toc}{\contentsline {section}{\numberline {V}Simulation Study}{9}{}\protected@file@percent }
 \newlabel{sec:simulation}{{V}{9}}
+\citation{FMM}
+\@writefile{lof}{\contentsline {figure}{\numberline {9}{\ignorespaces Trustworthiness in different road segments}}{10}{}\protected@file@percent }
+\newlabel{fig:trustworthiness}{{9}{10}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-A}}Simulation Environment and Data Generation}{10}{}\protected@file@percent }
 \newlabel{sec:sim_environment}{{\mbox  {V-A}}{10}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-A}1}Ground-Truth Trajectory Generation}{10}{}\protected@file@percent }
@@ -133,34 +135,33 @@
 \newlabel{eq:sim_pr}{{28}{10}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-A}3}Weighted Least-Squares Positioning with RAIM-FDE}{10}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-A}4}Degradation Modes}{10}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Simulation Configuration}}{10}{}\protected@file@percent }
-\newlabel{tab:mc_setup}{{I}{10}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-B}}Experiment 1: Covariance Model Validation}{10}{}\protected@file@percent }
 \newlabel{sec:exp1}{{\mbox  {V-B}}{10}}
+\@writefile{lot}{\contentsline {table}{\numberline {I}{\ignorespaces Simulation Configuration}}{11}{}\protected@file@percent }
+\newlabel{tab:mc_setup}{{I}{11}}
 \@writefile{lof}{\contentsline {figure}{\numberline {10}{\ignorespaces Covariance model validation at $\sigma _{\rho }=10$\,m. Top-left: histogram of squared Mahalanobis distance vs.\ $\chi ^2(2)$. Top-right: P-P plot. Bottom-left: whitened errors with $1\sigma $/$2\sigma $ bounds. Bottom-right: radial error CDF vs.\ Rayleigh prediction.}}{11}{}\protected@file@percent }
 \newlabel{fig:consistency_overview}{{10}{11}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-C}}Experiment 2: Protection Level Coverage and FDE Performance}{11}{}\protected@file@percent }
 \newlabel{sec:exp2}{{\mbox  {V-C}}{11}}
 \@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-C}1}Stanford Plot Analysis}{11}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Stanford plots across conditions at $\sigma _{\rho }=30$\,m. Top-left: nominal (no occlusion, no fault). Top-right: with step fault ($P=0.3$, $U(100,500)$\,m). Bottom-left: with cross-road occlusion ($45^\circ $ wedge). Bottom-right: occlusion + fault.}}{11}{}\protected@file@percent }
-\newlabel{fig:stanford}{{11}{11}}
-\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces RAIM Protection Level Coverage Summary}}{11}{}\protected@file@percent }
-\newlabel{tab:stanford}{{II}{11}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-D}}Experiment 3: Parameter Sensitivity --- CMM vs.\ FMM}{11}{}\protected@file@percent }
 \newlabel{sec:exp3}{{\mbox  {V-D}}{11}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-D}1}Sigma Sensitivity}{11}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {11}{\ignorespaces Stanford plots across conditions at $\sigma _{\rho }=30$\,m. Top-left: nominal (no occlusion, no fault). Top-right: with step fault ($P=0.3$, $U(100,500)$\,m). Bottom-left: with cross-road occlusion ($45^\circ $ wedge). Bottom-right: occlusion + fault.}}{12}{}\protected@file@percent }
+\newlabel{fig:stanford}{{11}{12}}
+\@writefile{lot}{\contentsline {table}{\numberline {II}{\ignorespaces RAIM Protection Level Coverage Summary}}{12}{}\protected@file@percent }
+\newlabel{tab:stanford}{{II}{12}}
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-D}1}Sigma Sensitivity}{12}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-D}2}Sample Rate Sensitivity}{12}{}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {12}{\ignorespaces CMM vs.\ FMM sigma sensitivity ($k=16$, $L=5$). (a) Mean point error vs.\ $\sigma _{\rho }$. (b) Segment accuracy. (c) ECE of trustworthiness. (d) ROC AUC. (e) Reliability diagram at $\sigma _{\rho }=10$\,m. (f) ROC curves at $\sigma _{\rho }=10$\,m.}}{12}{}\protected@file@percent }
 \newlabel{fig:sigma_sweep}{{12}{12}}
 \@writefile{lot}{\contentsline {table}{\numberline {III}{\ignorespaces Sigma Sensitivity: CMM vs.\ FMM ($k=16$, $L=5$, 20 trajectories per level)}}{12}{}\protected@file@percent }
 \newlabel{tab:sigma_sweep}{{III}{12}}
-\@writefile{toc}{\contentsline {subsubsection}{\numberline {\mbox  {V-D}2}Sample Rate Sensitivity}{12}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-E}}Experiment 4: Wrong Emission Model --- Effect of Sigma Mismatch}{12}{}\protected@file@percent }
-\newlabel{sec:exp4}{{\mbox  {V-E}}{12}}
 \@writefile{lof}{\contentsline {figure}{\numberline {13}{\ignorespaces Sample rate sensitivity: (a) Segment accuracy, (b) ECE, (c) ROC AUC, (d) Point error vs.\ sample interval. Solid: CMM; Dashed: FMM.}}{12}{}\protected@file@percent }
 \newlabel{fig:sample_rate}{{13}{12}}
-\@writefile{lof}{\contentsline {figure}{\numberline {14}{\ignorespaces Effect of emission model mismatch. (a) Point error, (b) Segment accuracy, (c) ECE (key metric), (d) Trust separation ($\mu _{\text  {correct}}-\mu _{\text  {wrong}}$), (e) Reliability diagrams per mismatch level, (f) ECE vs.\ $\sigma _{\rho }^{\text  {true}}-\sigma _{\text  {wls}}$.}}{12}{}\protected@file@percent }
-\newlabel{fig:mismatch}{{14}{12}}
-\citation{FMM}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-E}}Experiment 4: Wrong Emission Model --- Effect of Sigma Mismatch}{13}{}\protected@file@percent }
+\newlabel{sec:exp4}{{\mbox  {V-E}}{13}}
+\@writefile{lof}{\contentsline {figure}{\numberline {14}{\ignorespaces Effect of emission model mismatch. (a) Point error, (b) Segment accuracy, (c) ECE (key metric), (d) Trust separation ($\mu _{\text  {correct}}-\mu _{\text  {wrong}}$), (e) Reliability diagrams per mismatch level, (f) ECE vs.\ $\sigma _{\rho }^{\text  {true}}-\sigma _{\text  {wls}}$.}}{13}{}\protected@file@percent }
+\newlabel{fig:mismatch}{{14}{13}}
 \@writefile{lot}{\contentsline {table}{\numberline {IV}{\ignorespaces Sigma Mismatch Analysis ($\sigma _{\text  {wls}}=20$\,m, $k=16$)}}{13}{}\protected@file@percent }
 \newlabel{tab:mismatch}{{IV}{13}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-F}}Experiment 5: Robustness Under Degraded Conditions}{13}{}\protected@file@percent }
@@ -168,55 +169,56 @@
 \@writefile{lof}{\contentsline {figure}{\numberline {15}{\ignorespaces CMM vs.\ FMM under four degradation conditions at $\sigma _{\rho }=30$\,m. (a) Point error, (b) Segment accuracy, (c) ECE, (d) ROC AUC, (e) Reliability diagram (CMM, all conditions), (f) ROC curves (CMM, all conditions).}}{13}{}\protected@file@percent }
 \newlabel{fig:degraded}{{15}{13}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {V-G}}Discussion of Simulation Findings}{13}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {V}{\ignorespaces Degraded Condition Performance ($\sigma _{\rho }=30$\,m, $k=16$)}}{13}{}\protected@file@percent }
-\newlabel{tab:degraded}{{V}{13}}
-\@writefile{toc}{\contentsline {section}{\numberline {VI}Real Vehicle Experiment and Algorithm Validation}{13}{}\protected@file@percent }
-\newlabel{sec:real-experiment}{{VI}{13}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Dataset}{13}{}\protected@file@percent }
+\citation{FMM}
+\@writefile{lot}{\contentsline {table}{\numberline {V}{\ignorespaces Degraded Condition Performance ($\sigma _{\rho }=30$\,m, $k=16$)}}{14}{}\protected@file@percent }
+\newlabel{tab:degraded}{{V}{14}}
+\@writefile{toc}{\contentsline {section}{\numberline {VI}Real Vehicle Experiment and Algorithm Validation}{14}{}\protected@file@percent }
+\newlabel{sec:real-experiment}{{VI}{14}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-A}}Dataset}{14}{}\protected@file@percent }
 \@writefile{lot}{\contentsline {table}{\numberline {VI}{\ignorespaces Hainan-06 Dataset Summary}}{14}{}\protected@file@percent }
 \newlabel{tab:dataset}{{VI}{14}}
-\@writefile{lof}{\contentsline {figure}{\numberline {16}{\ignorespaces dataset overview}}{14}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {16}{\ignorespaces Hainan-06 dataset: Haikou road network (152,547 edges, gray) with 7 SPP GNSS trajectories (colored). Circles mark trajectory start points; arrows indicate driving direction. Inset: Haikou location on Hainan Island.}}{14}{}\protected@file@percent }
 \newlabel{fig:dataset}{{16}{14}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-B}}Compared Methods}{14}{}\protected@file@percent }
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-C}}Performance Metrics}{14}{}\protected@file@percent }
-\@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces Per-Trajectory Accuracy and Position Error (13,052 evaluable epochs)}}{14}{}\protected@file@percent }
-\newlabel{tab:per_traj_accuracy}{{VII}{14}}
-\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces Calibration Error Metrics: CMM vs. FMM}}{14}{}\protected@file@percent }
-\newlabel{tab:calibration}{{VIII}{14}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-D}}Matching Accuracy and Position Error}{14}{}\protected@file@percent }
-\newlabel{sec:accuracy}{{\mbox  {VI-D}}{14}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-E}}Probabilistic Calibration Analysis}{14}{}\protected@file@percent }
-\newlabel{sec:calibration}{{\mbox  {VI-E}}{14}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-F}}Ablation Study}{14}{}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {VII}{\ignorespaces Per-Trajectory Accuracy and Position Error (13,052 evaluable epochs)}}{15}{}\protected@file@percent }
+\newlabel{tab:per_traj_accuracy}{{VII}{15}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-D}}Matching Accuracy and Position Error}{15}{}\protected@file@percent }
+\newlabel{sec:accuracy}{{\mbox  {VI-D}}{15}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-E}}Probabilistic Calibration Analysis}{15}{}\protected@file@percent }
+\newlabel{sec:calibration}{{\mbox  {VI-E}}{15}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-F}}Ablation Study}{15}{}\protected@file@percent }
 \@writefile{lof}{\contentsline {figure}{\numberline {17}{\ignorespaces Reliability diagram at 5\,m threshold: CMM vs.\ FMM. The diagonal represents perfect calibration.}}{15}{}\protected@file@percent }
 \newlabel{fig:reliability}{{17}{15}}
-\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces Ablation Study: Per-Component ECE on Real Data (13,052 epochs)}}{15}{}\protected@file@percent }
-\newlabel{tab:ablation}{{IX}{15}}
+\@writefile{lot}{\contentsline {table}{\numberline {VIII}{\ignorespaces Calibration Error Metrics: CMM vs. FMM}}{15}{}\protected@file@percent }
+\newlabel{tab:calibration}{{VIII}{15}}
 \@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-G}}Statistical Significance}{15}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {18}{\ignorespaces ECE ablation study: per-component contribution to calibration improvement. Left: absolute ECE per configuration. Right: stepwise ECE decomposition showing the marginal contribution of each model component.}}{15}{}\protected@file@percent }
-\newlabel{fig:ablation}{{18}{15}}
-\@writefile{lot}{\contentsline {table}{\numberline {X}{\ignorespaces Bootstrap 95\% Confidence Intervals and Hypothesis Tests (13,256 epochs)}}{15}{}\protected@file@percent }
-\newlabel{tab:statistical}{{X}{15}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-H}}Lag Sweep Analysis}{15}{}\protected@file@percent }
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-I}}Trustworthiness Discrimination Analysis}{15}{}\protected@file@percent }
-\newlabel{sec:tw_discrimination}{{\mbox  {VI-I}}{15}}
-\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-J}}ROC Analysis}{15}{}\protected@file@percent }
-\newlabel{sec:roc}{{\mbox  {VI-J}}{15}}
+\@writefile{lot}{\contentsline {table}{\numberline {IX}{\ignorespaces Ablation Study: Per-Component ECE on Real Data (13,052 epochs)}}{16}{}\protected@file@percent }
+\newlabel{tab:ablation}{{IX}{16}}
+\@writefile{lof}{\contentsline {figure}{\numberline {18}{\ignorespaces ECE ablation study: per-component contribution to calibration improvement. Left: absolute ECE per configuration. Right: stepwise ECE decomposition showing the marginal contribution of each model component.}}{16}{}\protected@file@percent }
+\newlabel{fig:ablation}{{18}{16}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-H}}Lag Sweep Analysis}{16}{}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-I}}Trustworthiness Discrimination Analysis}{16}{}\protected@file@percent }
+\newlabel{sec:tw_discrimination}{{\mbox  {VI-I}}{16}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {\mbox  {VI-J}}ROC Analysis}{16}{}\protected@file@percent }
+\newlabel{sec:roc}{{\mbox  {VI-J}}{16}}
+\@writefile{lot}{\contentsline {table}{\numberline {X}{\ignorespaces Bootstrap 95\% CI and Hypothesis Tests (13,256 epochs)}}{16}{}\protected@file@percent }
+\newlabel{tab:statistical}{{X}{16}}
 \@writefile{lof}{\contentsline {figure}{\numberline {19}{\ignorespaces ECE vs.\ lag\_steps across all 7 trajectories. Left: per-trajectory curves. Right: cross-trajectory mean with $\pm $1 S.D. band.}}{16}{}\protected@file@percent }
 \newlabel{fig:lag_sweep}{{19}{16}}
-\@writefile{lot}{\contentsline {table}{\numberline {XI}{\ignorespaces Trustworthiness Separation: CMM vs. FMM}}{16}{}\protected@file@percent }
-\newlabel{tab:tw_separation}{{XI}{16}}
 \@writefile{toc}{\contentsline {paragraph}{\numberline {\mbox  {VI-J}0a}Failure Case: Traj 22 Wrong-Direction False Lock.}{16}{}\protected@file@percent }
-\@writefile{lof}{\contentsline {figure}{\numberline {20}{\ignorespaces Distribution of trustworthiness scores for correct (blue) and wrong (red) matches. CMM achieves substantial separation between the two distributions ($\Delta \mu = 0.356$), while FMM scores are compressed near 1.0 regardless of correctness.}}{16}{}\protected@file@percent }
-\newlabel{fig:tw_histogram}{{20}{16}}
-\@writefile{lof}{\contentsline {figure}{\numberline {21}{\ignorespaces ROC curve: trustworthiness as mismatch detector (CMM AUC = 0.600, FMM AUC = 0.965). The modest CMM AUC reflects the low false-match rate (3.1\%); the FMM AUC is inflated by near-binary TW scores (s.d.\ 0.039).}}{16}{}\protected@file@percent }
-\newlabel{fig:fig_roc_comparison}{{21}{16}}
+\@writefile{lot}{\contentsline {table}{\numberline {XI}{\ignorespaces Trustworthiness Separation: CMM vs. FMM}}{17}{}\protected@file@percent }
+\newlabel{tab:tw_separation}{{XI}{17}}
+\@writefile{lof}{\contentsline {figure}{\numberline {20}{\ignorespaces Distribution of trustworthiness scores for correct (blue) and wrong (red) matches. CMM achieves substantial separation between the two distributions ($\Delta \mu = 0.356$), while FMM scores are compressed near 1.0 regardless of correctness.}}{17}{}\protected@file@percent }
+\newlabel{fig:tw_histogram}{{20}{17}}
+\@writefile{toc}{\contentsline {section}{\numberline {VII}Conclusion}{17}{}\protected@file@percent }
+\@writefile{lof}{\contentsline {figure}{\numberline {21}{\ignorespaces ROC curve: trustworthiness as mismatch detector (CMM AUC = 0.600, FMM AUC = 0.965). The modest CMM AUC reflects the low false-match rate (3.1\%); the FMM AUC is inflated by near-binary TW scores (s.d.\ 0.039).}}{17}{}\protected@file@percent }
+\newlabel{fig:fig_roc_comparison}{{21}{17}}
+\@writefile{lof}{\contentsline {figure}{\numberline {22}{\ignorespaces Trajectory 22 trustworthiness timeline showing the wrong-direction false lock (epochs 1680--1935). Top: TW and error over time. Bottom: map view with matched and ground-truth edges.}}{17}{}\protected@file@percent }
+\newlabel{fig:traj22_failure}{{22}{17}}
 \citation{Zhang2019}
 \citation{Guo2017}
 \citation{Bai2023}
-\@writefile{lof}{\contentsline {figure}{\numberline {22}{\ignorespaces Trajectory 22 trustworthiness timeline showing the wrong-direction false lock (epochs 1680--1935). Top: TW and error over time. Bottom: map view with matched and ground-truth edges.}}{17}{}\protected@file@percent }
-\newlabel{fig:traj22_failure}{{22}{17}}
-\@writefile{toc}{\contentsline {section}{\numberline {VII}Conclusion}{17}{}\protected@file@percent }
 \bibdata{references}
 \bibcite{FMM}{1}
 \bibcite{HMM}{2}
@@ -237,6 +239,7 @@
 \bibcite{Taguchi2019}{17}
 \bibcite{Hansson2021}{18}
 \bibcite{Qu2023}{19}
+\@writefile{toc}{\contentsline {section}{References}{18}{}\protected@file@percent }
 \bibcite{Feng2023}{20}
 \bibcite{Zhang2018}{21}
 \bibcite{Zhang2019}{22}
@@ -259,15 +262,4 @@
 \bibcite{Wang2023_PMHT}{39}
 \bibcite{Zhang2022_Geodesy}{40}
 \bibcite{Bai2023}{41}
-\@writefile{toc}{\contentsline {section}{References}{18}{}\protected@file@percent }
-\@writefile{loa}{\contentsline {algorithm}{\numberline {1}{\ignorespaces CMM Map Matching with Probabilistic Trustworthiness}}{19}{}\protected@file@percent }
-\newlabel{alg:cmm_hmm}{{1}{19}}
-\newlabel{alg:ma_proj}{{11}{19}}
-\newlabel{alg:emission}{{12}{19}}
-\newlabel{alg:forward}{{17}{19}}
-\newlabel{alg:viterbi}{{18}{19}}
-\newlabel{alg:init}{{20}{19}}
-\newlabel{alg:viterbi_fwd}{{25}{19}}
-\newlabel{alg:tw}{{32}{19}}
-\newlabel{alg:nbest}{{33}{19}}
 \gdef \@abspage@last{19}

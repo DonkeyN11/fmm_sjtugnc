@@ -1200,20 +1200,21 @@ Table~\ref{tab:sigma_sweep} reports the key metrics. At low noise ($\sigma_{\rho
 \centering
 \caption{Sigma Sensitivity: CMM vs.\ FMM ($k=16$, $L=5$, 20 trajectories per level)}
 \label{tab:sigma_sweep}
-\small
-\begin{tabular}{lccccccc}
+\footnotesize
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccccc}
 \toprule
 & \multicolumn{3}{c}{CMM} & \multicolumn{3}{c}{FMM} \\
 \cmidrule(lr){2-4} \cmidrule(lr){5-7}
 $\sigma_{\rho}$ & Acc. & ECE & AUC & Acc. & ECE & AUC \\
 \midrule
-1\,m  & 0.999 & 0.243 & 0.803 & 0.998 & 0.003 & 0.594 \\
-5\,m  & 0.999 & 0.238 & 0.842 & 0.894 & 0.224 & 0.816 \\
-10\,m & 0.960 & 0.163 & 0.711 & 0.721 & 0.428 & 0.681 \\
-15\,m & 0.989 & 0.262 & 0.664 & 0.743 & 0.466 & 0.694 \\
-20\,m & 0.986 & 0.299 & 0.702 & 0.758 & 0.496 & 0.564 \\
-25\,m & 0.774 & 0.294 & 0.731 & 0.722 & 0.540 & 0.410 \\
-30\,m & 0.768 & 0.134 & 0.828 & 0.562 & 0.479 & 0.480 \\
+1\,m  & .999 & .243 & .803 & .998 & .003 & .594 \\
+5\,m  & .999 & .238 & .842 & .894 & .224 & .816 \\
+10\,m & .960 & .163 & .711 & .721 & .428 & .681 \\
+15\,m & .989 & .262 & .664 & .743 & .466 & .694 \\
+20\,m & .986 & .299 & .702 & .758 & .496 & .564 \\
+25\,m & .774 & .294 & .731 & .722 & .540 & .410 \\
+30\,m & .768 & .134 & .828 & .562 & .479 & .480 \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -1284,18 +1285,20 @@ The fault condition causes the largest ECE increase for CMM (0.134 $\to$ 0.247),
 \centering
 \caption{Degraded Condition Performance ($\sigma_{\rho}=30$\,m, $k=16$)}
 \label{tab:degraded}
-\resizebox{\columnwidth}{!}{%
-\begin{tabular}{lcccccc}
+\footnotesize
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{@{}lcccccc@{}}
 \toprule
-Condition & CMM Acc. & CMM ECE & CMM AUC & FMM Acc. & FMM ECE & FMM AUC \\
+& \multicolumn{3}{c}{CMM} & \multicolumn{3}{c}{FMM} \\
+\cmidrule(lr){2-4} \cmidrule(lr){5-7}
+Condition & Acc. & ECE & AUC & Acc. & ECE & AUC \\
 \midrule
 Clean           & 0.768 & 0.134 & 0.828 & 0.562 & 0.479 & 0.480 \\
 Fault           & 0.717 & 0.247 & 0.706 & 0.591 & 0.476 & 0.489 \\
 Occlusion       & 0.897 & 0.181 & 0.835 & 0.610 & 0.464 & 0.533 \\
 Occlusion+Fault & 0.780 & 0.147 & 0.764 & 0.610 & 0.458 & 0.528 \\
 \bottomrule
-\end{tabular}%
-}
+\end{tabular}
 \end{table}
 
 \subsection{Discussion of Simulation Findings}
@@ -1512,25 +1515,24 @@ all key metrics and apply McNemar's test for paired accuracy comparison and the
 DeLong test for AUC comparison.
 
 \begin{table}[t]
-\caption{Bootstrap 95\% Confidence Intervals and Hypothesis Tests (13,256 epochs)}
+\caption{Bootstrap 95\% CI and Hypothesis Tests (13,256 epochs)}
 \label{tab:statistical}
 \centering
-\small
-\setlength{\tabcolsep}{4pt}
+\resizebox{\columnwidth}{!}{%
 \begin{tabular}{@{}lcccc@{}}
 \toprule
-Metric & CMM [95\% CI] & FMM [95\% CI] & $\Delta$ [95\% CI] & $p$-value \\
+Metric & CMM [95\% CI] & FMM [95\% CI] & $\Delta$ [95\% CI] & $p$ \\
 \midrule
-Segment accuracy & 0.969 [0.967,0.972] & 0.881 [0.875,0.887] & +0.088 [+0.082,+0.095] & $<10^{-4}$ \\
-ECE (TW, 10-bin) & 0.068 [0.065,0.072] & 0.107 [0.101,0.112] & $-$0.038 & --- \\
-ROC AUC           & 0.606 [0.577,0.654] & 0.965 [0.960,0.970] & $-$0.360 & 0.0003 \\
-TW separation     & 0.291 [0.253,0.328] & 0.085 [0.079,0.092] & +0.206 & --- \\
+Accuracy & 0.969 [.967,.972] & 0.881 [.875,.887] & +0.088 [+.082,+.095] & $<\!10^{-4}$ \\
+ECE (TW) & 0.068 [.065,.072] & 0.107 [.101,.112] & $-$0.038 & --- \\
+AUC      & 0.606 [.577,.654] & 0.965 [.960,.970] & $-$0.360 & 0.0003 \\
+TW sep.  & 0.291 [.253,.328] & 0.085 [.079,.092] & +0.206 & --- \\
 \bottomrule
-\end{tabular}
-
+\end{tabular}%
+}
 \smallskip
 \par\noindent\footnotesize
-$p$-values: McNemar's test (Yates correction) for accuracy; DeLong test (bootstrap) for AUC. Non-significant differences for ECE and TW separation arise from the non-nested nature of these metrics (ECE is evaluated on different TW distributions). All differences are in the expected direction (CMM superior on accuracy, ECE, and TW separation; FMM AUC inflated by TW compression artifact---see \S\ref{sec:roc}).
+$p$-values: McNemar (Yates) for accuracy; DeLong (bootstrap) for AUC. All differences in expected direction (CMM superior on accuracy, ECE, TW separation; FMM AUC inflated by TW compression---see \S\ref{sec:roc}).
 \end{table}
 
 McNemar's test confirms that CMM's accuracy advantage is highly significant
