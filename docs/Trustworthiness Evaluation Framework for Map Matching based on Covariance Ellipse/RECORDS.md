@@ -1083,3 +1083,55 @@ All 6 subagents (`docs/subagents/`) were cross-referenced against each other and
 3. Re-run simulation experiments with post-fix CMM binary
 4. Expand references from 11 to 30+ entries
 5. Run reviewer re-check (zero P0 issues before submission)
+
+---
+
+## 2026-06-07 (17:00) — Final P0 Closeout & Citation Expansion
+
+### Statistical Tests Added to Paper
+
+- New §VI subsection "Statistical Significance" inserted after Ablation Study
+- Bootstrap 95% CI table: McNemar p<1e-4 (all 7 trajectories individual p<1e-4), DeLong z=-3.63, p=0.0003
+- All CIs exclude zero or are directionally consistent
+
+### Reference Expansion & Validation
+
+- **Before**: 25 cited references
+- **After**: 38 cited references (1 uncited: Phillips2016, retained as field context)
+- Added citations for: Hashemi2016, Goh2012, Jagadeesh2017, Taguchi2019, Feng2023, Duffield2020, Elsayed2024, Lee2023, Xia2023, Neamati2023, Zhang2022_Geodesy, Park2024, Bai2023
+
+### Reference Fixes
+
+| Ref | Fix |
+|-----|-----|
+| Li2023 | Journal corrected (Cartography & GIS, not Int. J. Appl. Earth Obs.), full metadata |
+| Maharmeh2024→Maharmeh2025 | Journal (Sensors, not IEEE Access), year (2025), full metadata |
+| Kim2019 | Paper text updated to match actual content (binary road marking map) |
+
+### Paper Edits
+
+| Edit | Detail |
+|------|--------|
+| TW discrimination: 3.3×→3.4× | Verified against data (0.291/0.085=3.42) |
+| FMM TW wrong: 0.909→0.911 | Consistent across all sections |
+| Cross-reference fix | fig:roc_curve → fig:fig_roc_comparison |
+| P1-10: pAUC discussion expanded | Low-FPR regime analysis retained |
+| P1-12: Laplace smoothing | Connected in limitations (line 1741) |
+
+### P0 Final Closeout (Zero Remaining)
+
+| P0 | Issue | Resolution |
+|:---|:------|:-----------|
+| P0-1 | PL formula | RAIM described, ARAIM → future work |
+| P0-2 | No statistical tests | Full bootstrap CI table in §VI |
+| P0-3 | Exponential decay | "Collapses toward zero" — correct |
+| P0-4 | Ablation one sentence | Full 3-row table + figure |
+| P0-5 | ECE inconsistent | 0.069 used throughout |
+| P0-6 | Missing limitations | 8 limitations, sequentially ordered |
+
+### Final LaTeX Status
+
+- **Pages**: 19
+- **References**: 38 cited
+- **Warnings**: 0 (clean compile)
+- **Compilation**: pdflatex → bibtex → pdflatex × 3 — zero errors

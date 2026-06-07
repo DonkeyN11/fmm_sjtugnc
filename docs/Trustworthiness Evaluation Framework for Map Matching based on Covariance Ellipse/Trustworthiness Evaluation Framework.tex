@@ -114,7 +114,7 @@ position the present work at their intersection.
 Hidden Markov Model (HMM)-based map matching, introduced by Newson and
 Krumm~\cite{HMM}, has become the dominant paradigm for large-scale trajectory
 inference from noisy GNSS observations. Comprehensive surveys~\cite{Quddus2007,
-Hashemi2014, Chao2020, Singh2023} consistently rank HMM-based methods as the
+Hashemi2014, Hashemi2016, Chao2020, Singh2023} consistently rank HMM-based methods as the
 most accurate for online matching, and W\"{o}ltche's recent benchmark of
 open-source implementations~\cite{Woltche2023} confirms that HMM remains
 competitive against reinforcement-learning alternatives in both accuracy and
@@ -128,14 +128,21 @@ Recent research has pushed HMM map matching along several dimensions:
 distance tables~\cite{FMM} and learned road-network indexes~\cite{Liu2025_LiMM};
 \textit{topological robustness}, through second-order Markov
 models~\cite{Fu2021,Guo2025_HMM} and CRF-hybrid architectures that mitigate
-label bias in locally normalized HMMs~\cite{Li2024_IJDE};
+label bias in locally normalized HMMs~\cite{Li2024_IJDE} and candidate point
+grouping with trajectory connectivity constraints~\cite{Li2023};
 \textit{sparse-data resilience}, through virtual-point interpolation for
 low-frequency trajectories~\cite{Wang2024} and incremental algorithms for
-mobile-phone signaling data~\cite{Huang2024}; and \textit{lane-level
+mobile-phone signaling data~\cite{Huang2024};
+\textit{real-time performance}, through sliding-window
+Viterbi~\cite{Goh2012} and route-choice-augmented HMMs~\cite{Jagadeesh2017,Taguchi2019};
+and \textit{lane-level
 accuracy}, through lane-change transition priors on high-definition
 maps~\cite{Hansson2021}.  Qu \emph{et al.}~\cite{Qu2023} systematically
 classified four HMM failure modes, confirming that parallel-road and
-junction ambiguities remain the dominant error sources.
+junction ambiguities remain the dominant error sources. Feng
+\emph{et al.}~\cite{Feng2023} analyzed spatial-temporal vehicle routing
+patterns, highlighting the role of road network topology in matching
+accuracy.
 
 Despite these advances, a critical limitation persists across the entire
 HMM map-matching literature: \textbf{every method cited above assumes an
@@ -157,14 +164,22 @@ satellite observations through residual-based consistency checks and computes
 a Horizontal Protection Level (HPL), a statistical bound on position error
 at a specified integrity risk (e.g., $10^{-5}$).  Advanced RAIM
 (ARAIM)~\cite{Zhang2019} extends this to multi-constellation, multi-fault
-scenarios through solution-separation hypothesis testing.  A recent survey
-by Maharmeh \emph{et al.}~\cite{Maharmeh2025} finds that 73\% of
+scenarios through solution-separation hypothesis testing.  Recent work has
+extended integrity concepts to automotive applications: PPP-RTK fault
+identification~\cite{Elsayed2024}, IMU fault protection levels~\cite{Lee2023},
+integrity-constrained factor graph optimization~\cite{Xia2023},
+and risk-aware localization with set-membership uncertainty bounds~\cite{Neamati2023}.  A recent
+survey by Maharmeh \emph{et al.}~\cite{Maharmeh2025} finds that 73\% of
 integrity research remains GNSS-centric, with growing automotive
 interest~\cite{Maaref2022,AlHage2023}.
 
 In the localization domain, several works have touched on uncertainty-aware
 map matching without formally integrating integrity concepts.  Kim \emph{et
-al.}~\cite{Kim2019} integrated binary road marking maps with vehicle sensors for precise positioning, demonstrating that map feature quality directly affects localization reliability.
+al.}~\cite{Kim2019} integrated binary road marking maps with vehicle sensors
+for precise positioning, demonstrating that map feature quality directly
+affects localization reliability. Park and Chung~\cite{Park2024} proposed
+uncertainty-aware LiDAR-based localization that quantifies pose estimation
+confidence.
 Lahrech and Soulhi~\cite{Lahrech2023} employed Mahalanobis distance within a
 particle filter for map-matched positioning during GPS outages.  These works
 use isolated components of the GNSS stochastic model, but \textbf{none
@@ -193,7 +208,10 @@ In map matching, only a handful of works address reliability at all.  Quddus
 (0--100) using GPS quality indicators and heading agreement, achieving
 98.2\% valid warnings with integrated GPS/DR.  Kempinska \emph{et
 al.}~\cite{Kempinska2017} introduced confidence scores alongside
-point-to-edge matches in a probabilistic ST-Matching framework.  Wang
+point-to-edge matches in a probabilistic ST-Matching framework; Duffield and
+Singh~\cite{Duffield2020} proposed online particle smoothing for map matching,
+demonstrating that posterior uncertainty estimates improve matching
+robustness.  Wang
 \emph{et al.}~\cite{Wang2023_PMHT} weighted candidate locations by geometric
 distance in a multi-hypothesis tracker, using local map information density
 as a confidence proxy.  Quddus \emph{et al.}~\cite{Quddus2007} noted as
@@ -487,7 +505,7 @@ $3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$) is extracted
 \label{eq:sigma_i}
 \end{equation}
 In practice, $\boldsymbol{\Sigma}_i$ is obtained from standard receiver output messages such as NMEA GST, which provide
-the confidence ellipse parameters that can be directly converted to the covariance form~\cite{Zhang2018}.
+the confidence ellipse parameters that can be directly converted to the covariance form~\cite{Zhang2018}. More sophisticated stochastic models incorporate terrain topography effects for improved accuracy in canyon environments~\cite{Zhang2022_Geodesy}.
 
 \begin{figure}[htbp]
     \centering
@@ -1601,7 +1619,7 @@ example, parallel edges on opposite sides of a dual carriageway---where
 no per-epoch score can reliably discriminate. In contrast, FMM's AUC of
 0.965 is an artifact of TW compression: FMM assigns TW $\approx 1.0$ to
 nearly every epoch regardless of correctness (standard deviation 0.039),
-so the tiny spread between correct (0.996) and wrong (0.909) scores
+so the tiny spread between correct (0.996) and wrong (0.911) scores
 produces an inflated AUC. The practical detection performance tells a
 different story. At a threshold of 0.9, CMM rejects 52\% of wrong matches
 while retaining 85\% of correct matches; FMM rejects only 26\% of wrong
@@ -1757,7 +1775,8 @@ against the road edge geometry over a sliding window, and a
 velocity-informed discount factor ($\alpha_{\text{vel}}$) that checks
 whether vehicle heading is consistent with edge direction---directly
 addressing the parallel-edge emission ambiguity. Additional directions
-include extending the trustworthiness framework to multi-sensor fusion
+include extending the trustworthiness framework to multi-sensor
+fusion~\cite{Bai2023}
 (IMU dead-reckoning) for GNSS-denied environments, implementing ARAIM
 MHSS protection levels for multi-fault integrity guarantees, and
 exploring the delta-entropy metric as a complementary reliability gauge
