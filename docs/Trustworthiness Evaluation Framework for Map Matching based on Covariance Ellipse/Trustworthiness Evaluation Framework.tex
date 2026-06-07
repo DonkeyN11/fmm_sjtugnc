@@ -106,10 +106,10 @@ In summary, the key innovation of this work is to make HMM-based map matching ex
 \section{Related Work}
 \label{sec:related_work}
 
-In this chapter, three streams of research are reviewd to identify the gap each leaves open, and
+In this chapter, three streams of research are reviewed to identify the gap each leaves open, and
 position the present work at their intersection.
 
-\subsection{HMM-Based Map Matching: Dominant Paradigm with an Isotropic Blind Spot}
+\subsection{HMM-Based Map Matching}
 
 Hidden Markov Model (HMM)-based map matching, introduced by Newson and
 Krumm~\cite{HMM}, has become the dominant paradigm for large-scale trajectory
@@ -118,48 +118,47 @@ Hashemi2014, Hashemi2016, Chao2020, Singh2023} consistently rank HMM-based metho
 most accurate for online matching, and W\"{o}ltche's recent benchmark of
 open-source implementations~\cite{Woltche2023} confirms that HMM remains
 competitive against reinforcement-learning alternatives in both accuracy and
-computational speed. The standard formulation---isotropic Gaussian emission,
-Viterbi decoding over a road-network transition graph---achieves
+computational speed. The standard formulation including isotropic Gaussian emission,
+Viterbi decoding over a road-network transition graph, achieves
 $>$90\% segment accuracy on dense urban networks at sub-meter GPS error
 levels~\cite{FMM}.
 
 Recent research has pushed HMM map matching along several dimensions:
-\textit{computational efficiency}, through precomputed upper-bound
+\textit{1.computational efficiency} improvement through precomputed upper-bound
 distance tables~\cite{FMM} and learned road-network indexes~\cite{Liu2025_LiMM};
-\textit{topological robustness}, through second-order Markov
+\textit{2.topological robustness} through second-order Markov
 models~\cite{Fu2021} and CRF-hybrid architectures that mitigate
 label bias in locally normalized HMMs~\cite{Li2024_IJDE} and candidate point
 grouping with trajectory connectivity constraints~\cite{Li2023};
-\textit{sparse-data resilience}, through virtual-point interpolation for
+\textit{3.sparse-data resilience} by virtual-point interpolation for
 low-frequency trajectories~\cite{Wang2024} and incremental algorithms for
 mobile-phone signaling data~\cite{Huang2024};
-\textit{real-time performance}, through sliding-window
+\textit{4.real-time performance} through sliding-window
 Viterbi~\cite{Goh2012} and route-choice-augmented HMMs~\cite{Jagadeesh2017,Taguchi2019};
-and \textit{lane-level
-accuracy}, through lane-change transition priors on high-definition
-maps~\cite{Hansson2021}.  Qu \emph{et al.}~\cite{Qu2023} systematically
+and \textit{5.lane-level
+accuracy} employing lane-change transition priors on high-definition
+maps~\cite{Hansson2021}. Also some research has addressed the drawback of HMM map matching, 
+Qu \emph{et al.}~\cite{Qu2023} systematically
 classified four HMM failure modes, confirming that parallel-road and
-junction ambiguities remain the dominant error sources. Feng
-\emph{et al.}~\cite{Feng2023} analyzed spatial-temporal vehicle routing
-patterns, highlighting the role of road network topology in matching
-accuracy.
+junction ambiguities remain the dominant error sources. 
 
-Despite these advances, a critical limitation persists across the entire
-HMM map-matching literature: \textbf{every method cited above assumes an
+Despite these research, a critical limitation persists across the entire
+HMM map-matching literature: methods cited above assume an
 isotropic Gaussian emission model with a fixed, scalar error standard
-deviation.}  This simplification discards the per-epoch $2\times2$ covariance
+deviation. This simplification discards the per-epoch $2D$ covariance
 matrix $\boldsymbol{\Sigma}_t$ that modern GNSS receivers output through
-standard NMEA messages, treating positioning uncertainty as uniform in all
+standard NMEA messages, treating positioning uncertainty as uniform or heuristics model in all
 directions regardless of satellite geometry, multipath conditions, or
 atmospheric effects.  The present work addresses this gap by replacing the
 scalar emission model with a GNSS-stochastic formulation that propagates
 the full covariance matrix through all HMM stages.
 
-\subsection{GNSS Integrity: Protection Levels Never Integrated into Map Matching}
+\subsection{GNSS Integrity and Protection Levels}
 
-GNSS integrity---the ability to provide timely warnings when the system
-should not be used---originated in safety-critical aviation.  Receiver
-Autonomous Integrity Monitoring (RAIM)~\cite{Zhang2018} detects faulty
+The idea of GNSS integrity is rooted in the stochastic nature of positioning errors, 
+providing the ability of timely warnings when the system
+should not be used, which could serve as a reflection of the GNSS uncertainty bounds.  
+Receiver Autonomous Integrity Monitoring (RAIM)~\cite{Zhang2018} detects faulty
 satellite observations through residual-based consistency checks and computes
 a Horizontal Protection Level (HPL), a statistical bound on position error
 at a specified integrity risk (e.g., $10^{-5}$).  Advanced RAIM
@@ -168,34 +167,33 @@ scenarios through solution-separation hypothesis testing.  Recent work has
 extended integrity concepts to automotive applications: PPP-RTK fault
 identification~\cite{Elsayed2024}, IMU fault protection levels~\cite{Lee2023},
 integrity-constrained factor graph optimization~\cite{Xia2023},
-and risk-aware localization with set-membership uncertainty bounds~\cite{Neamati2023}.  A recent
-survey by Maharmeh \emph{et al.}~\cite{Maharmeh2025} finds that 73\% of
-integrity research remains GNSS-centric, with growing automotive
-interest~\cite{Maaref2022,AlHage2023}.
-
-In the localization domain, several works have touched on uncertainty-aware
-map matching without formally integrating integrity concepts.  Kim \emph{et
+and risk-aware localization with set-membership uncertainty bounds~\cite{Neamati2023}.  
+% A recent survey by Maharmeh \emph{et al.}~\cite{Maharmeh2025} finds that 73\% of
+% integrity research remains GNSS-centric, with growing automotive
+% interest~\cite{Maaref2022,AlHage2023}.
+In the map matching domain, Quddus 
+\emph{et al.}~\cite{Quddus2007} noted as early as 2007 that integrity monitoring 
+for map matching is an important research direction. Yet little works have touched 
+on uncertainty-aware map matching with formally integrating integrity concepts.Kim \emph{et
 al.}~\cite{Kim2019} integrated binary road marking maps with vehicle sensors
 for precise positioning, demonstrating that map feature quality directly
-affects localization reliability. Park and Chung~\cite{Park2024} proposed
-uncertainty-aware LiDAR-based localization that quantifies pose estimation
-confidence.
+affects localization reliability. 
 Lahrech and Soulhi~\cite{Lahrech2023} employed Mahalanobis distance within a
-particle filter for map-matched positioning during GPS outages.  These works
-use isolated components of the GNSS stochastic model, but \textbf{none
-integrate Protection Level computation and integrity risk as first-class
-citizens of the HMM emission and candidate-search framework.}
+particle filter for map-matched positioning during GPS outages. These works
+use isolated components of the GNSS stochastic model, but
+integrate Protection Level computation and integrity risk into the HMM emission 
+and candidate-search framework is still absent.
 
-The present work bridges this gap: RAIM-derived HPL serves as an adaptive,
-geometry-driven candidate search radius (tight under good geometry, widening
-under degradation), and the integrity risk $P_{\text{HMI}}$ appears explicitly
-in the emission probability normalization.
+Present work bridges this gap: RAIM-derived HPL serves as an adaptive,
+geometry driven candidate search radius which tightens under good geometry, widening
+under degradation, and the integrity risk $P_{\text{HMI}}$ appears explicitly
+in the emission probability normalization to enhance the discriminability of candidate points.
 
-\subsection{Probabilistic Calibration: Map Matching Confidence Has Never Been Validated}
+\subsection{Probabilistic Calibration of Map Matching Confidence}
 
 While map matching accuracy is extensively studied, whether the reported
 confidence scores reflect true correctness probabilities has received almost
-no attention.  In machine learning, Expected Calibration Error
+no attention. In machine learning, Expected Calibration Error
 (ECE)~\cite{Guo2017} and reliability diagrams are standard tools for
 evaluating whether a classifier's confidence matches its empirical accuracy.
 Nixon \emph{et al.}~\cite{Nixon2019} identified pathologies in the
@@ -203,10 +201,10 @@ standard ECE metric, and Chidambaram and Ge~\cite{Chidambaram2025} showed that
 proper scoring rules must accompany ECE to prevent trivial recalibration
 from appearing state-of-the-art.
 
-In map matching, only a handful of works address reliability at all.  Quddus
+Little works address reliability in map matching.  Quddus
 \emph{et al.}~\cite{Quddus2006} proposed a fuzzy-logic integrity metric
-(0--100) using GPS quality indicators and heading agreement, achieving
-98.2\% valid warnings with integrated GPS/DR.  Kempinska \emph{et
+ using GPS quality indicators and heading agreement, achieving
+98.2\% valid warnings with integrated GPS/DR. Kempinska \emph{et
 al.}~\cite{Kempinska2017} introduced confidence scores alongside
 point-to-edge matches in a probabilistic ST-Matching framework; Duffield and
 Singh~\cite{Duffield2020} proposed online particle smoothing for map matching,
@@ -214,44 +212,36 @@ demonstrating that posterior uncertainty estimates improve matching
 robustness.  Wang
 \emph{et al.}~\cite{Wang2023_PMHT} weighted candidate locations by geometric
 distance in a multi-hypothesis tracker, using local map information density
-as a confidence proxy.  Quddus \emph{et al.}~\cite{Quddus2007} noted as
-early as 2007 that integrity monitoring for map matching is an important
-research direction.
-
-\textbf{No prior work, however, has evaluated the probabilistic calibration
-of HMM map matching outputs through reliability diagrams and ECE
-decomposition.}  The trustworthiness scores reported by existing methods are
-heuristic---they lack the formal probabilistic semantics required for
-safety-critical integrity applications.
+as a confidence proxy. No prior work, however, has evaluated the 
+probabilistic calibration of HMM map matching outputs through external 
+consistency indicators such as reliability diagrams and ECE decomposition.  
+The trustworthiness scores proposed in this work provide the formal probabilistic 
+semantics required for safety-critical integrity applications.
 
 \subsection{Position of the Present Work}
 
 This paper occupies the intersection of the three gaps identified above.
 We propose a unified framework that (i)~replaces the isotropic HMM emission
-model with a full GNSS-covariance-consistent formulation,
+model with a full GNSS-stochastic-consistent formulation,
 (ii)~integrates RAIM-derived Protection Levels and integrity risk into
 candidate search and emission normalization, and (iii)~introduces the
-filtering posterior as a \emph{calibrated} per-epoch trustworthiness metric,
+filtering posterior as a calibrated per-epoch trustworthiness metric,
 validated through reliability diagrams, ECE, and ablation analysis.  To our
 knowledge, this is the first work to apply rigorous probabilistic calibration
-to map matching and to demonstrate that a GNSS-uncertainty-consistent emission
+to map matching and to demonstrate that a GNSS-stochastic-consistent emission
 model yields both higher accuracy and better-calibrated confidence than the
 conventional isotropic approach.
 
-\section{HMM-Based Map Matching: Classical Framework}
+\section{Classical Framework of HMM Map Matching }
 \label{sec:HMM_classic}
-Hidden Markov Model (HMM)–based map matching is the most 
-widely adopted approaches for inferring a vehicle's road position from noisy
-GNSS observations, for its principled probabilistic
-formulation and ability to incorporate topological constraints using the
-road network graph. This section provides a concise introduction to the 
+This section provides a concise introduction to the 
 classical HMM map-matching pipeline, which forms the foundation of our
-proposed covariance-aware framework.
+proposed GNSS-stochastic-consistent framework.
 
 \subsection{Problem Formulation}
 Let $\{z_i\}_{i=1}^n$ denote the sequence of GNSS observations, and let
 $\mathcal{C}_i = \{x_{i,1}, x_{i,2}, \ldots\}$ denote the candidate road
-positions associated with observation $z_i$, constructed by projecting $z_i$
+positions associated with observation $z_i$ on road segment $s_{i,1}$, constructed by projecting $z_i$
 onto nearby road segments. The objective of map matching is to determine the
 most probable sequence of road states
 \[
@@ -271,7 +261,7 @@ solution is the maximum a posteriori (MAP) estimate:
     \label{fig:example}
 \end{figure}
 
-\subsection{Posterior Factorization and HMM Components}
+\subsection{Posterior Factorization of HMM Components}
 Under the Markov assumption, the posterior in \eqref{eq:HMM_MAP} factorizes as
 \begin{equation}
     P(X \mid Z) \propto
@@ -287,16 +277,15 @@ where:
     \item $P(z_i \mid x_i)$ is the \emph{emission probability} describing how
           likely a GNSS fix is produced from candidate state $x_i$.
     \item $P(x_i \mid x_{i-1})$ is the \emph{transition probability} describing
-          the feasibility of moving between successive road states.
+          the feasibility of moving between successive road segments.
     \item $P(x_1)$ is the prior distribution for the initial state.
 \end{itemize}
 
 The optimal path is computed efficiently via the Viterbi algorithm. Thus,
 traditional HMM map matching consists of two foundational components:
-\textbf{emission modeling} and
-\textbf{transition modeling}.
+emission modeling and transition modeling.
 
-\subsection{Classical Hidden Markov Model based Map Matching}
+\subsection{Classical Emission and Transition Model based Map Matching}
 \subsubsection{Classical Emission Probability}
 In most existing HMM-based map-matching systems (e.g., FMM and many
 OpenStreetMap toolchains), the emission probability is modeled as a
@@ -314,11 +303,11 @@ where $\sigma$ is an empirically tuned GNSS error standard deviation that
 is kept constant over time and space. This choice is attractive because
 it is simple, computationally efficient, and easy to calibrate.
 However, it assumes that GNSS errors are
-(i) stationary in time,
+(i) stationary in time or heuristically modeled,
 (ii) isotropic in the horizontal plane, and
 (iii) independent of the surrounding environment.
-As a consequence, it does not exploit the rich uncertainty information
-(such as covariance matrices or protection levels) that modern GNSS
+As a consequence, it does not exploit the rich uncertainty information,
+such as covariance matrices or protection levels that modern GNSS
 receivers can provide.
 
 \subsubsection{Classical Transition Probability}
@@ -342,8 +331,8 @@ $z_{i-1}$ and $z_i$, and $\beta$ is a scale parameter controlling how rapidly
 the transition probability decays with increasing discrepancy between
 network and GNSS distances. This model
 favors road paths whose length is consistent with the observed GNSS
-motion, while rejecting topologically infeasible transitions (e.g.,
-driving against one-way restrictions or crossing disconnected links).
+motion, while rejecting topologically infeasible transitions, e.g.,
+driving against one-way restrictions or crossing disconnected links.
 
 \subsubsection{Dynamic Programming via the Viterbi Algorithm}
 Given the factorization in~\eqref{eq:posterior_factorized}, the optimal
@@ -407,12 +396,11 @@ how reliable this solution is. In dense urban road networks, multiple
 topologically valid paths may be consistent with the GNSS observations, and
 the classical framework provides no mechanism to assess ambiguity or detect
 potential mismatch events. This limitation is critical for safety-related
-applications---such as road pricing, autonomous driving, or integrity
-monitoring---where reliability must be quantified, not assumed.
+applications, such as road pricing, autonomous driving, or integrity
+monitoring, where reliability must be quantified, not assumed.
 
 \begin{figure*}[htbp]
     \centering
-    % 不再额外缩放，已经是两栏宽度
     \begin{tikzpicture}[
         >=stealth,
         node distance=0.9cm and 0.8cm,
@@ -424,14 +412,13 @@ monitoring---where reliability must be quantified, not assumed.
                     minimum height=0.95cm, font=\footnotesize}
     ]
 
-    % ------- Classical HMM (top row) -------
+    
     \node[box] (c1) {GNSS \\ $z_i$};
     \node[box, right=of c1] (c2) {Candidate search \\ fixed radius};
     \node[box, right=of c2] (c3) {Euclidean projection \\ candidates};
     \node[box, right=of c3] (c4) {Emission \\ $\mathcal{N}(0,\sigma^2 I)$};
     \node[box, right=of c4] (c5) {Trustworthiness check: \\ None};
 
-    % 行标题：取 c1 和 c4 的中点作为参考点
     \coordinate (ctop) at ($(c1)!0.5!(c5)$);
     \node[above=0.55cm of ctop, font=\scriptsize\bfseries]
         {Classical HMM Map Matching};
@@ -441,8 +428,6 @@ monitoring---where reliability must be quantified, not assumed.
     \draw[->] (c3) -- (c4);
     \draw[->] (c4) -- (c5);
 
-    % ------- Proposed (bottom row) -------
-    % 注意：逐个 below=of c1,c2,c3,c4，保证四列对齐
     \node[boxP, below=0.9cm of c1] (p1) {GNSS \\ $z_i$, $\mathbf{Q}_i$};
     \node[boxP, below=0.9cm of c2] (p2) {Adaptive candidate search \\  HPL};
     \node[boxP, below=0.9cm of c3] (p3) {Mahalanobis projection \\ candidates};
@@ -459,7 +444,6 @@ monitoring---where reliability must be quantified, not assumed.
     \draw[->] (p3) -- (p4);
     \draw[->] (p4) -- (p5);
 
-    % dashed separator（画在两行中间）
     \draw[dashed] ($(c1.south west)+(-0.2,-0.5)$) -- ($(c5.south east)+(0.2,-0.5)$);
 
     \end{tikzpicture}
@@ -478,7 +462,13 @@ replacing heuristic components with probabilistically grounded counterparts.
 
 \section{GNSS-Consistent HMM and Trustworthiness Evaluation}
 \label{sec:proposed}
-This section presents an enhanced Hidden Markov Model (HMM)–based map-matching formulation called \textbf{Covariance-aware Map Matching using HMM } that incorporates GNSS positioning uncertainty at three levels: candidate search region definition, candidate point generation, and emission probability modeling. A final subsection introduces a trustworthiness statistic derived from the joint likelihood of the optimal HMM path, enabling consistency evaluation between GNSS observations and the road network. For brevity, the proposed method is referred to as \textbf{CMM} in the remainder of this paper.
+This section presents an enhanced HMM map matching formulation called 
+\textbf{Covariance-aware Map Matching} that incorporates GNSS positioning 
+uncertainty at three levels: candidate search region definition, candidate point generation, 
+and emission probability modeling. A final subsection introduces a 
+trustworthiness statistic derived from the joint likelihood of the optimal HMM path, 
+enabling consistency evaluation between GNSS observations and the road network. 
+For brevity, the proposed method is referred to as \textbf{CaMM} in the remainder of this paper.
 
 \subsection{GNSS Stochastic Error model and Protection Level}
 
@@ -487,11 +477,11 @@ This section presents an enhanced Hidden Markov Model (HMM)–based map-matching
 
 The most common positioning method is single-point positioning (SPP). The GNSS position solution and its associated
 uncertainty are obtained through a weighted least-squares (WLS) estimation
-based on pseudorange observations.
-
-\subsubsection{GNSS positioning covariance from weighted least-squares}
-
-Given $m$ tracked satellites with pseudorange observations $\boldsymbol{\rho} \in \mathbb{R}^m$, geometry matrix $\mathbf{H} \in \mathbb{R}^{m \times 4}$, and weight matrix $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$ (the inverse of the pseudorange noise covariance), the WLS position estimate and its $4\times 4$ covariance matrix are~\cite{Zhang2018}
+based on pseudorange observations.Given $m$ tracked satellites with pseudorange 
+observations $\boldsymbol{\rho} \in \mathbb{R}^m$, geometry matrix 
+$\mathbf{H} \in \mathbb{R}^{m \times 4}$, and weight matrix $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$ 
+, the inverse of the pseudorange noise covariance, the WLS position estimate 
+and its $4\times 4$ covariance matrix are~\cite{Zhang2018}
 \begin{equation}
 \widehat{\Delta\mathbf{x}} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1} \mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{y},
 \qquad
@@ -544,7 +534,7 @@ The HPL is then computed as
 \mathrm{HPL} = K \cdot \sigma_{\mathrm{major}},
 \label{eq:hpl_raim}
 \end{equation}
-where $K$ is the integrity coefficient derived from the false-alarm and missed-detection probabilities assuming Gaussian error distribution. The RAIM module also performs a global $\chi^2$ consistency test at $P_{\text{FA}}=10^{-5}$, with iterative Fault Detection and Exclusion (FDE) removing up to 3 faulty satellites (minimum 5 remaining).
+where $K$ is the integrity coefficient derived from the false-alarm and missed-detection probabilities assuming Gaussian error distribution. The RAIM module also performs a global $\chi^2$ consistency test at $P_{\text{FA}}=10^{-5}$, with iterative Fault Detection and Exclusion (FDE) removing faulty satellites (minimum 5 remaining).
 
 This method is computationally simple and statistically well-founded for single-fault scenarios. Advanced RAIM (ARAIM) with Multiple Hypothesis Solution Separation (MHSS)~\cite{Zhang2019} extends this to multi-fault, multi-constellation scenarios, and is noted as future work for extending the framework to safety-critical automotive applications requiring sub-meter alert limits.
 
@@ -555,15 +545,15 @@ In this work, the HPL serves as an adaptive, geometry-driven candidate search ra
 \label{subsec:gnss_consistent_hmm}
 
 This section reformulates the HMM map-matching framework so that all core
-elements---states, observations, candidate generation, and emission
-likelihoods---are explicitly consistent with the stochastic GNSS error model.
+elements, including states, observations, candidate generation, and emission
+likelihoods, are explicitly consistent with the stochastic GNSS error model.
 Unlike the classical formulation, which assumes fixed isotropic uncertainty,
 the proposed framework incorporates the full covariance information
-$\boldsymbol{\Sigma}_i$ (or equivalently PL-based bounds) provided by modern GNSS
-receivers. This establishes a unified probabilistic treatment of uncertainty
+$\boldsymbol{\Sigma}_i$ provided by modern GNSS
+receivers. This establishes a unified probabilistic model of uncertainty
 throughout the entire HMM pipeline.
 
-\subsubsection{States and Observations with Covariance}
+\subsubsection{States and Observations with Covariance as Inputs}
 \label{subsubsec:states_observations}
 
 Let
@@ -575,11 +565,11 @@ denote the horizontal GNSS position estimate at epoch $i$, and let
 \boldsymbol{\Sigma}_i \in \mathbb{R}^{2\times 2}
 \]
 be the corresponding GNSS positioning covariance matrix obtained from the
-weighted least-squares (WLS) solution or receiver-reported confidence ellipse
-(e.g., NMEA \texttt{GST}). The pair $(z_i, \boldsymbol{\Sigma}_i)$ therefore
+WLS solution or receiver-reported confidence ellipse from NMEA \texttt{GST}. 
+The pair $(z_i, \boldsymbol{\Sigma}_i)$ therefore
 represents a stochastic observation whose uncertainty is explicitly modeled.
 
-Given the uncertainty-aware candidate search region (e.g., the
+Given the uncertainty-aware candidate search region, i.e. the
 HPL-based disk $\Omega_i$), the set of feasible road segments for epoch $i$
 is
 \[
@@ -611,13 +601,6 @@ candidate collection
 \]
 and the emission probability model and transition model defined in later
 subsections operate entirely on this covariance-aware state representation.
-
-By embedding GNSS covariance directly into the observation model and candidate
-generation process, the resulting HMM formulation provides a statistically
-accurate description of the measurement process and forms the basis for both
-improved map-matching accuracy and integrity-aware trustworthiness evaluation.
-
-
 
 \subsubsection{HPL-based candidate segment search}
 % Your candidate road segment search using Ω_i and HPL_i
@@ -788,7 +771,7 @@ parameters must be properly normalized.
 The raw Gaussian density from Eq.~\eqref{eq:cov_emission} is scaled to
 account for the possibility that the vehicle is not on any mapped road.
 A background pseudo-candidate $b$ with fixed emission probability
-$p_{\text{bg}}$ (default 0.1) represents the ``off-road'' hypothesis.
+$p_{\text{bg}}$ (default 0.1) represents the off-road hypothesis.
 For each real candidate $j$, the effective emission is
 \begin{equation}
 p'(z_i \mid x_{i,j}) = (1 - p_{\text{bg}}) \cdot p(z_i \mid x_{i,j}),
@@ -855,26 +838,11 @@ $\delta_t(i) \leq \alpha_t(i)$ holds for all $t$ and $i$. The gap
 $\alpha_t(i) - \delta_t(i)$ encodes the cumulative ambiguity from
 competing paths converging to the same candidate.
 
-All probability parameters---emission $p(z_t \mid s_t^{(b)})$ (with
+All probability parameters including emission $p(z_t \mid s_t^{(b)})$ (with
 background state, Eq.~\eqref{eq:bg_emission}), transition
 $t_{a \to b}$ (row-normalized, Eq.~\eqref{eq:tp_normalized}), and
-prior $\pi$ (Eq.~\eqref{eq:uniform_prior})---are properly normalized
+prior $\pi$ (Eq.~\eqref{eq:uniform_prior}), are properly normalized
 as described in Section~\ref{subsec:prob_normalization}.
-
-\subsubsection{Marginal Filtering Posterior (Per-Candidate)}
-
-The marginal posterior probability of candidate $i$ at epoch $t$
-given all past observations is:
-\begin{equation}
-P(s_t^{(i)} \mid z_{1:t})
-= \frac{\alpha_t(i)}{\sum_{j} \alpha_t(j)},
-\label{eq:filtering_posterior}
-\end{equation}
-where the denominator sums over all $K$ real candidates plus the
-background pseudo-candidate.  This quantity, reported as
-\texttt{n\_best\_trustworthiness}, represents the probability that
-the vehicle occupies edge $i$ at epoch $t$ considering all possible
-paths through the trellis.
 
 \subsubsection{Filtering Posterior (Trustworthiness)}
 
@@ -893,49 +861,31 @@ Eq.~\eqref{eq:log_forward} and $i^*$ is the Viterbi-optimal
 candidate at epoch $t$.  This is a valid probability $\in [0,1]$
 that varies per-epoch with local GNSS evidence.
 
-The joint path posterior $P(H^*_{1:t} \mid z_{1:t}) = \delta_t(i^*) / \sum_j \alpha_t(j)$
-is a complementary formulation that quantifies the probability that the
-entire Viterbi path up to epoch $t$ is correct.  However, the
-forward-sum denominator $\sum_j \alpha_t(j)$ aggregates probability
-mass over \emph{all} paths reaching each candidate at layer $t$,
-whereas the Viterbi numerator $\delta_t(i^*)$ tracks only the single
-best-scoring path.  At road junctions where multiple distinct routes
-converge to the same winning edge, the forward sum receives
-contributions from many suboptimal branches, creating a gap $\delta_t
-\ll \sum\alpha_t$ that widens with trajectory length.  Consequently,
-the joint posterior collapses toward zero (e.g., to $\sim 10^{-15}$
-after $10^3$ epochs in our experiments), rendering it useless as a
-per-epoch mismatch detector.  The filtering posterior avoids this
-degeneracy by normalizing probabilities within a single layer via
-softmax, making it the preferred per-epoch metric for practical
-mismatch detection.  The joint posterior remains useful as a
-trajectory-level confidence score computed at the terminal epoch only.
+% \subsubsection{Fixed-Lag Smoothing (Optional)}
+% \label{subsec:lag_smoothing}
 
-\subsubsection{Fixed-Lag Smoothing (Optional)}
-\label{subsec:lag_smoothing}
-
-To incorporate future evidence and sharpen the posterior, the forward
-computation can be extended with a \emph{fixed-lag smoothing}
-mechanism.  When a smoothing lag $L > 0$ is configured, a buffer of
-$L$ future layers is maintained.  For each candidate $i$ at the oldest
-buffered layer $t$, a Viterbi-style forward pass through the $L$-step
-look-ahead window accumulates the best achievable future path score:
-\begin{equation}
-\beta_{t+L}(i)
-= \max_{\{s_{t+1},\dots,s_{t+L}\}}
-\sum_{\tau=t+1}^{t+L}
-\Big[ \log t_{s_{\tau-1} \to s_\tau}
-     + \log p(z_\tau \mid s_\tau) \Big],
-\label{eq:viterbi_future}
-\end{equation}
-and the smoothed score becomes
-$\text{score}_t(i) = \log \alpha_t(i) + \beta_{t+L}(i)$,
-with softmax normalization as in Eq.~\eqref{eq:filtering_posterior}.
-On real data with RAIM-derived PLs, the optimal lag is $L=0$
-(see Section~\ref{sec:simulation}), indicating that the protection
-level already encodes sufficient geometric uncertainty and that the
-anisotropic emission model provides adequate discriminative power
-without temporal smoothing.
+% To incorporate future evidence and sharpen the posterior, the forward
+% computation can be extended with a \emph{fixed-lag smoothing}
+% mechanism.  When a smoothing lag $L > 0$ is configured, a buffer of
+% $L$ future layers is maintained.  For each candidate $i$ at the oldest
+% buffered layer $t$, a Viterbi-style forward pass through the $L$-step
+% look-ahead window accumulates the best achievable future path score:
+% \begin{equation}
+% \beta_{t+L}(i)
+% = \max_{\{s_{t+1},\dots,s_{t+L}\}}
+% \sum_{\tau=t+1}^{t+L}
+% \Big[ \log t_{s_{\tau-1} \to s_\tau}
+%      + \log p(z_\tau \mid s_\tau) \Big],
+% \label{eq:viterbi_future}
+% \end{equation}
+% and the smoothed score becomes
+% $\text{score}_t(i) = \log \alpha_t(i) + \beta_{t+L}(i)$,
+% with softmax normalization as in Eq.~\eqref{eq:filtering_posterior}.
+% On real data with RAIM-derived PLs, the optimal lag is $L=0$
+% (see Section~\ref{sec:simulation}), indicating that the protection
+% level already encodes sufficient geometric uncertainty and that the
+% anisotropic emission model provides adequate discriminative power
+% without temporal smoothing.
 
 \subsubsection{Information-Theoretic Metrics}
 
