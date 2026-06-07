@@ -21,6 +21,11 @@
 \providecommand{\BIBdecl}{\relax}
 \BIBdecl
 
+\bibitem{FMM}
+C.~Yang and G.~Gidófalvi, ``Fast map matching, an algorithm integrating hidden
+  markov model with precomputation,'' \emph{International Journal of
+  Geographical Information Science}, vol.~32, no.~3, pp. 547--570, 2018.
+
 \bibitem{HMM}
 \BIBentryALTinterwordspacing
 P.~Newson and J.~Krumm, ``Hidden markov map matching through noise and
@@ -42,6 +47,11 @@ M.~Hashemi and H.~A. Karimi, ``A critical review of real-time map-matching
   algorithms: {Current} issues and future directions,'' \emph{Computers,
   Environment and Urban Systems}, vol.~48, pp. 153--165, 2014.
 
+\bibitem{Hashemi2016}
+------, ``A weight-based map-matching algorithm for vehicle navigation in
+  complex urban networks,'' \emph{Journal of Intelligent Transportation
+  Systems}, vol.~20, no.~6, pp. 573--590, 2016.
+
 \bibitem{Chao2020}
 P.~Chao, Y.~Xu, W.~Hua, and X.~Zhou, ``A survey on map-matching algorithms,''
   in \emph{Proc. Australasian Database Conference (ADC)}.\hskip 1em plus 0.5em
@@ -58,15 +68,41 @@ A.~W{\"o}ltche, ``Open source map matching with {Markov} decision processes:
   {A} new method and a detailed benchmark with existing approaches,''
   \emph{Transactions in GIS}, vol.~27, no.~7, pp. 1959--1991, 2023.
 
-\bibitem{FMM}
-C.~Yang and G.~Gidófalvi, ``Fast map matching, an algorithm integrating hidden
-  markov model with precomputation,'' \emph{International Journal of
-  Geographical Information Science}, vol.~32, no.~3, pp. 547--570, 2018.
-
 \bibitem{Liu2025_LiMM}
 Z.~Liu, N.~Wu, B.~Li, and T.~He, ``Learning road network index structure for
   efficient map matching,'' \emph{IEEE Transactions on Knowledge and Data
   Engineering}, 2025.
+
+\bibitem{Fu2021}
+G.~Fu, J.~Zhang, X.~Li, and S.~Xu, ``An online map matching algorithm based on
+  second-order hidden {Markov} model,'' \emph{Journal of Advanced
+  Transportation}, vol. 2021, pp. 1--17, 2021.
+
+\bibitem{Guo2025_HMM}
+Q.~Guo, M.~Li, and H.~Zhang, ``Adaptive map matching algorithm using
+  second-order hidden {Markov} models for complex scenarios,'' \emph{Bulletin
+  of Surveying and Mapping}, vol.~0, no.~3, p.~93, 2025.
+
+\bibitem{Li2024_IJDE}
+Z.~Li, Y.~Zhang, and F.~Chen, ``A novel map matching method based on improved
+  hidden {Markov} and conditional random fields model,'' \emph{International
+  Journal of Digital Earth}, vol.~17, no.~1, 2024.
+
+\bibitem{Wang2024}
+W.~Wang, Q.~Yu, R.~Duan, Q.~Jin, X.~Deng, and C.~Chen, ``Low-frequency
+  trajectory map-matching method based on probability interpolation,''
+  \emph{Transactions in GIS}, vol.~28, no.~7, pp. 2262--2280, 2024.
+
+\bibitem{Huang2024}
+X.~Huang, Y.~Li, H.~Wu, and B.~Zhu, ``Accurate map matching method for mobile
+  phone signaling data under spatio-temporal uncertainty,'' \emph{IEEE
+  Transactions on Intelligent Transportation Systems}, 2024.
+
+\bibitem{Goh2012}
+C.~Y. Goh, J.~Dauwels, N.~Mitrovic, M.~T. Asif, A.~Oran, and P.~Jaillet,
+  ``Online map-matching based on {Hidden} {Markov} model for real-time traffic
+  sensing applications,'' in \emph{Proceedings of the 15th International IEEE
+  Conference on Intelligent Transportation Systems (ITSC)}, 2012, pp. 776--781.
 
 \bibitem{Jagadeesh2017}
 G.~R. Jagadeesh and T.~Srikanthan, ``Online map-matching of noisy and sparse
@@ -79,40 +115,9 @@ S.~Taguchi, S.~Koide, and T.~Yoshimura, ``Online map matching with route
   prediction,'' \emph{IEEE Transactions on Intelligent Transportation Systems},
   vol.~20, no.~1, pp. 338--347, 2019.
 
-\bibitem{Wang2024}
-W.~Wang, Q.~Yu, R.~Duan, Q.~Jin, X.~Deng, and C.~Chen, ``Low-frequency
-  trajectory map-matching method based on probability interpolation,''
-  \emph{Transactions in GIS}, vol.~28, no.~7, pp. 2262--2280, 2024.
-
-\bibitem{Li2023}
-H.~Li, Q.~Zhu, and Y.~Wang, ``An improved hidden {Markov} model based map
-  matching algorithm,'' \emph{International Journal of Applied Earth
-  Observation and Geoinformation}, 2023.
-
-\bibitem{Li2024_IJDE}
-Z.~Li, Y.~Zhang, and F.~Chen, ``A novel map matching method based on improved
-  hidden {Markov} and conditional random fields model,'' \emph{International
-  Journal of Digital Earth}, vol.~17, no.~1, 2024.
-
-\bibitem{Fu2021}
-G.~Fu, J.~Zhang, X.~Li, and S.~Xu, ``An online map matching algorithm based on
-  second-order hidden {Markov} model,'' \emph{Journal of Advanced
-  Transportation}, vol. 2021, pp. 1--17, 2021.
-
-\bibitem{Guo2025_HMM}
-Q.~Guo, M.~Li, and H.~Zhang, ``Adaptive map matching algorithm using
-  second-order hidden {Markov} models for complex scenarios,'' \emph{Bulletin
-  of Surveying and Mapping}, vol.~0, no.~3, p.~93, 2025.
-
-\bibitem{Goh2012}
-C.~Y. Goh, J.~Dauwels, N.~Mitrovic, M.~T. Asif, A.~Oran, and P.~Jaillet,
-  ``Online map-matching based on {Hidden} {Markov} model for real-time traffic
-  sensing applications,'' in \emph{Proceedings of the 15th International IEEE
-  Conference on Intelligent Transportation Systems (ITSC)}, 2012, pp. 776--781.
-
-\bibitem{Duffield2020}
-S.~Duffield and S.~S. Singh, ``Online particle smoothing with application to
-  map-matching,'' \emph{arXiv preprint arXiv:2012.04602}, 2020.
+\bibitem{Hansson2021}
+A.~Hansson, E.~Korsbacka, E.~Munthe, and H.~Lind, ``Lane-level map matching
+  based on {HMM},'' in \emph{IEEE Intelligent Vehicles Symposium (IV)}, 2021.
 
 \bibitem{Qu2023}
 B.~Qu, S.~Yang, Y.~Qian, and C.~Wen, ``{HMM}-based map matching and
@@ -120,14 +125,10 @@ B.~Qu, S.~Yang, Y.~Qian, and C.~Wen, ``{HMM}-based map matching and
   \emph{ISPRS International Journal of Geo-Information}, vol.~12, no.~8, p.
   310, 2023.
 
-\bibitem{Huang2024}
-X.~Huang, Y.~Li, H.~Wu, and B.~Zhu, ``Accurate map matching method for mobile
-  phone signaling data under spatio-temporal uncertainty,'' \emph{IEEE
-  Transactions on Intelligent Transportation Systems}, 2024.
-
-\bibitem{Hansson2021}
-A.~Hansson, E.~Korsbacka, E.~Munthe, and H.~Lind, ``Lane-level map matching
-  based on {HMM},'' in \emph{IEEE Intelligent Vehicles Symposium (IV)}, 2021.
+\bibitem{Feng2023}
+J.~Feng, F.~Du, Y.~Jiang, and X.~Luo, ``Spatial-temporal analysis of vehicle
+  routing problem from online car-hailing trajectories,'' \emph{ISPRS
+  International Journal of Geo-Information}, vol.~12, no.~2, p.~56, 2023.
 
 \bibitem{Zhang2018}
 P.~Zhang, P.~Chen, D.~Song, and G.~Fan, ``Research on {GNSS} receiver
@@ -139,9 +140,31 @@ S.~Zhang, Z.~Wang, and Z.~Gao, ``Research on exact thresholds for {ARAIM}
   {MHSS} fault monitoring,'' \emph{Mathematical Problems in Engineering}, vol.
   2019, 2019.
 
-\bibitem{Maharmeh2024}
+\bibitem{Elsayed2024}
+H.~Elsayed, A.~El-Mowafy, and K.~Wang, ``A new method for fault identification
+  in real-time integrity monitoring of autonomous vehicles positioning using
+  {PPP-RTK},'' \emph{GPS Solutions}, vol.~28, p.~32, 2024.
+
+\bibitem{Lee2023}
+J.~Lee, J.~Lee, and C.~G. Park, ``Navigation safety assurance of a {KF}-based
+  {GNSS}/{IMU} system: {Protection} levels against {IMU} failure,''
+  \emph{NAVIGATION: Journal of the Institute of Navigation}, vol.~70, no.~4,
+  2023.
+
+\bibitem{Xia2023}
+X.~Xia, L.-T. Hsu, and W.~Wen, ``Integrity-constrained factor graph
+  optimization for {GNSS} positioning,'' in \emph{IEEE/ION Position, Location
+  and Navigation Symposium (PLANS)}, 2023, pp. 414--420.
+
+\bibitem{Neamati2023}
+D.~Neamati, N.~Motee, and G.~Gao, ``Risk-aware autonomous localization with
+  {Mosaic} {Zonotope} shadow matching,'' \emph{Artificial Intelligence}, vol.
+  322, p. 103952, 2023.
+
+\bibitem{Maharmeh2025}
 E.~Maharmeh, Z.~Alsayed, and F.~Nashashibi, ``A comprehensive survey on the
-  integrity of localization systems,'' \emph{IEEE Access}, 2024, under review.
+  integrity of localization systems,'' \emph{Sensors}, vol.~25, no.~2, p. 358,
+  2025.
 
 \bibitem{Maaref2022}
 M.~Maaref and Z.~M. Kassas, ``Autonomous integrity monitoring for vehicular
@@ -155,16 +178,6 @@ J.~Al~Hage, N.~Salvatico, and P.~Bonnifait, ``High integrity localization of
   \emph{IEEE 26th International Conference on Intelligent Transportation
   Systems (ITSC)}, 2023.
 
-\bibitem{Elsayed2024}
-H.~Elsayed, A.~El-Mowafy, and K.~Wang, ``A new method for fault identification
-  in real-time integrity monitoring of autonomous vehicles positioning using
-  {PPP-RTK},'' \emph{GPS Solutions}, vol.~28, p.~32, 2024.
-
-\bibitem{Xia2023}
-X.~Xia, L.-T. Hsu, and W.~Wen, ``Integrity-constrained factor graph
-  optimization for {GNSS} positioning,'' in \emph{IEEE/ION Position, Location
-  and Navigation Symposium (PLANS)}, 2023, pp. 414--420.
-
 \bibitem{Kim2019}
 K.~Kim, J.~Im, M.~Heo, and G.~Jee, ``Precise vehicle position and heading
   estimation using a binary road marking map,'' \emph{Journal of Sensors}, vol.
@@ -174,22 +187,6 @@ K.~Kim, J.~Im, M.~Heo, and G.~Jee, ``Precise vehicle position and heading
 G.~Park and W.~Chung, ``Uncertainty-aware {LiDAR}-based localization for
   outdoor mobile robots,'' \emph{Journal of Field Robotics}, vol.~41, no.~8,
   pp. 2790--2804, 2024.
-
-\bibitem{Neamati2023}
-D.~Neamati, N.~Motee, and G.~Gao, ``Risk-aware autonomous localization with
-  {Mosaic} {Zonotope} shadow matching,'' \emph{Artificial Intelligence}, vol.
-  322, p. 103952, 2023.
-
-\bibitem{Lee2023}
-J.~Lee, J.~Lee, and C.~G. Park, ``Navigation safety assurance of a {KF}-based
-  {GNSS}/{IMU} system: {Protection} levels against {IMU} failure,''
-  \emph{NAVIGATION: Journal of the Institute of Navigation}, vol.~70, no.~4,
-  2023.
-
-\bibitem{Zhang2022_Geodesy}
-Z.~Zhang, Y.~Li, X.~He, W.~Chen, and B.~Li, ``A composite stochastic model
-  considering the terrain topography for real-time {GNSS} monitoring in canyon
-  environments,'' \emph{Journal of Geodesy}, vol.~96, p.~79, 2022.
 
 \bibitem{Lahrech2023}
 A.~Lahrech and A.~Soulhi, ``Vehicle positioning in urban environments using
@@ -224,16 +221,19 @@ K.~Kempinska, T.~Davies, J.~Shawe-Taylor, and P.~Longley, ``Probabilistic
   the 20th AGILE Conference on Geographic Information Science}.\hskip 1em plus
   0.5em minus 0.4em\relax Springer, 2017.
 
+\bibitem{Duffield2020}
+S.~Duffield and S.~S. Singh, ``Online particle smoothing with application to
+  map-matching,'' \emph{arXiv preprint arXiv:2012.04602}, 2020.
+
 \bibitem{Wang2023_PMHT}
 X.~Wang, C.~Gilliam, A.~Kealy, J.~Close, and B.~Moran, ``Probabilistic map
   matching for robust inertial navigation aiding,'' \emph{NAVIGATION: Journal
   of the Institute of Navigation}, vol.~70, no.~2, 2023.
 
-\bibitem{Phillips2016}
-T.~G. Phillips, M.~E. Green, and P.~R. McAree, ``Is it what {I} think it is?
-  {Is} it where {I} think it is? {Using} point-clouds for diagnostic testing of
-  a digging assembly's form and pose for an autonomous mining shovel,''
-  \emph{Journal of Field Robotics}, vol.~33, no.~7, pp. 1013--1033, 2016.
+\bibitem{Zhang2022_Geodesy}
+Z.~Zhang, Y.~Li, X.~He, W.~Chen, and B.~Li, ``A composite stochastic model
+  considering the terrain topography for real-time {GNSS} monitoring in canyon
+  environments,'' \emph{Journal of Geodesy}, vol.~96, p.~79, 2022.
 
 \bibitem{Bai2023}
 X.~Bai and L.-T. Hsu, ``{GVIM}: {GNSS}/visual/{IMU}/map integration via sliding
