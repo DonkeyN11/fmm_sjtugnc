@@ -199,7 +199,7 @@ no attention.  In machine learning, Expected Calibration Error
 (ECE)~\cite{Guo2017} and reliability diagrams are standard tools for
 evaluating whether a classifier's confidence matches its empirical accuracy.
 Nixon \emph{et al.}~\cite{Nixon2019} identified pathologies in the
-standard ECE metric, and Roelofs \emph{et al.}~\cite{Chidambaram2025} showed that
+standard ECE metric, and Chidambaram and Ge~\cite{Chidambaram2025} showed that
 proper scoring rules must accompany ECE to prevent trivial recalibration
 from appearing state-of-the-art.
 
@@ -1522,7 +1522,7 @@ CMM (full: + reverse guard 3\%)   & \textbf{0.069} & $-$0.003 & 36\% \\
 To assess whether the observed performance differences are statistically
 reliable, we compute bootstrap 95\% confidence intervals (10,000 resamples) for
 all key metrics and apply McNemar's test for paired accuracy comparison and the
-DeLong test~\cite{Chidambaram2025} for AUC comparison.
+DeLong test for AUC comparison.
 
 \begin{table}[t]
 \caption{Bootstrap 95\% Confidence Intervals and Hypothesis Tests (13,256 epochs)}
