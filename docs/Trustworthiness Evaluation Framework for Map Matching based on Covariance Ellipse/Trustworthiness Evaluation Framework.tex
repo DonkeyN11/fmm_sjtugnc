@@ -475,43 +475,27 @@ For brevity, the proposed method is referred to as \textbf{CaMM} in the remainde
 \subsubsection{GNSS positioning and state covariance}
 % WLS formulation, state covariance Σ_z, horizontal covariance Σ_i
 
-The most common positioning method is single-point positioning (SPP). The GNSS position solution and its associated
-uncertainty are obtained through a weighted least-squares (WLS) estimation
-based on pseudorange observations.Given $m$ tracked satellites with pseudorange 
-observations $\boldsymbol{\rho} \in \mathbb{R}^m$, geometry matrix 
-$\mathbf{H} \in \mathbb{R}^{m \times 4}$, and weight matrix $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$ 
-, the inverse of the pseudorange noise covariance, the WLS position estimate 
-and its $4\times 4$ covariance matrix are~\cite{Zhang2018}
+The per-epoch covariance matrix $\boldsymbol{\Sigma}_i$ that drives our anisotropic emission model originates from the GNSS position estimation process. For single-point positioning (SPP) with $m$ tracked satellites, the linearized pseudorange observation equation is
 \begin{equation}
-\widehat{\Delta\mathbf{x}} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1} \mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{y},
+\mathbf{y} = \mathbf{H} \Delta\mathbf{x} + \boldsymbol{\varepsilon}, \quad \boldsymbol{\varepsilon} \sim \mathcal{N}(\mathbf{0}, \boldsymbol{\Sigma}_{\rho}),
+\label{eq:pseudo_linear}
+\end{equation}
+where $\mathbf{y} \in \mathbb{R}^{m}$ is the observed-minus-computed pseudorange residual vector, $\mathbf{H} \in \mathbb{R}^{m \times 4}$ the geometry matrix relating receiver position to satellite ranges, $\Delta\mathbf{x}$ the state correction (receiver position and clock bias), and $\boldsymbol{\Sigma}_{\rho}$ the pseudorange measurement noise covariance. The weighted least-squares (WLS) solution and its $4\times 4$ state covariance follow as~\cite{Zhang2018}
+\begin{equation}
+\widehat{\Delta\mathbf{x}} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{y},
 \qquad
-\boldsymbol{\Sigma}_{x} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}.
+\boldsymbol{\Sigma}_{x} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1},
 \label{eq:wls_cov}
 \end{equation}
-The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$ (comprising the East and North components of the
-$3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$) is extracted for the emission model:
+where $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$.
+\label{eq:wls_cov}
+\end{equation}
+The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$, comprising the East and North components of the $3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$, is extracted for the emission model:
 \begin{equation}
 \boldsymbol{\Sigma}_i = \begin{bmatrix} \sigma_E^2 & \sigma_{EN} \\ \sigma_{EN} & \sigma_N^2 \end{bmatrix}.
 \label{eq:sigma_i}
 \end{equation}
-In practice, $\boldsymbol{\Sigma}_i$ is obtained from standard receiver output messages such as NMEA GST, which provide
-the confidence ellipse parameters that can be directly converted to the covariance form~\cite{Zhang2018}. More sophisticated stochastic models incorporate terrain topography effects for improved accuracy in canyon environments~\cite{Zhang2022_Geodesy}.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=1\linewidth]{figs/covariance.png}
-    \caption{Visual representation of the GNSS positioning covariance calculation process. The final position uncertainty (Right) is a function of the satellite geometry matrix $\mathbf{H}$ (Left) and the pseudorange measurement noise $\boldsymbol{\Sigma}_{\rho}$ (Middle). This process results in the anisotropic error ellipse $\boldsymbol{\Sigma}_i$ used in our probability emission model.}
-    \label{fig:covariance}
-\end{figure}
-
-In practical GNSS receivers, this covariance matrix is often made available
-through standard output messages such as the NMEA \texttt{GST} sentence, which
-provides axis-aligned or rotated confidence ellipse parameters that can be
-converted into $\boldsymbol{\Sigma}_{pos}$. This covariance encapsulates the
-combined effects of satellite geometry, atmospheric errors, multipath, and
-measurement noise, and therefore serves as the statistical basis for the
-covariance-aware emission probability model introduced in the following
-subsection.
+Equation~\eqref{eq:wls_cov} reveals the two factors that shape $\boldsymbol{\Sigma}_i$: the satellite geometry $\mathbf{H}$ determines the directional structure of uncertainty (e.g., elongation along the satellite line-of-sight deficit direction), while the pseudorange noise levels in $\boldsymbol{\Sigma}_{\rho}$ scale the overall magnitude. Together they produce the anisotropic error ellipse that our emission model exploits (Fig.~\ref{fig:covariance}). In practice, $\boldsymbol{\Sigma}_i$ is available from standard NMEA \texttt{GST} messages output by modern receivers, which report confidence ellipse parameters directly convertible to covariance form. More sophisticated stochastic models that incorporate terrain topography effects can further refine $\boldsymbol{\Sigma}_i$ in canyon environments~\cite{Zhang2022_Geodesy}.
 
 \subsubsection{Integrity monitoring and horizontal protection level}
 
