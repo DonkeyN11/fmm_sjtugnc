@@ -78,15 +78,16 @@ G.~Fu, J.~Zhang, X.~Li, and S.~Xu, ``An online map matching algorithm based on
   second-order hidden {Markov} model,'' \emph{Journal of Advanced
   Transportation}, vol. 2021, pp. 1--17, 2021.
 
-\bibitem{Guo2025_HMM}
-Q.~Guo, M.~Li, and H.~Zhang, ``Adaptive map matching algorithm using
-  second-order hidden {Markov} models for complex scenarios,'' \emph{Bulletin
-  of Surveying and Mapping}, vol.~0, no.~3, p.~93, 2025.
-
 \bibitem{Li2024_IJDE}
 Z.~Li, Y.~Zhang, and F.~Chen, ``A novel map matching method based on improved
   hidden {Markov} and conditional random fields model,'' \emph{International
   Journal of Digital Earth}, vol.~17, no.~1, 2024.
+
+\bibitem{Li2023}
+B.~Li, Z.~Cai, M.~Kang, S.~Su, L.~Jiang, Y.~Ge, and Y.~Niu, ``An improved
+  hidden {Markov} model-based map matching algorithm considering candidate
+  point grouping and trajectory connectivity,'' \emph{Cartography and
+  Geographic Information Science}, vol.~50, no.~4, pp. 351--370, 2023.
 
 \bibitem{Wang2024}
 W.~Wang, Q.~Yu, R.~Duan, Q.~Jin, X.~Deng, and C.~Chen, ``Low-frequency
@@ -94,9 +95,10 @@ W.~Wang, Q.~Yu, R.~Duan, Q.~Jin, X.~Deng, and C.~Chen, ``Low-frequency
   \emph{Transactions in GIS}, vol.~28, no.~7, pp. 2262--2280, 2024.
 
 \bibitem{Huang2024}
-X.~Huang, Y.~Li, H.~Wu, and B.~Zhu, ``Accurate map matching method for mobile
-  phone signaling data under spatio-temporal uncertainty,'' \emph{IEEE
-  Transactions on Intelligent Transportation Systems}, 2024.
+Y.~Huang, D.~Wang, W.~Xu, Z.~Cai, and F.~Fu, ``Accurate map matching method for
+  mobile phone signaling data under spatio-temporal uncertainty,'' \emph{IEEE
+  Transactions on Intelligent Transportation Systems}, vol.~25, no.~2, pp.
+  1418--1429, 2024.
 
 \bibitem{Goh2012}
 C.~Y. Goh, J.~Dauwels, N.~Mitrovic, M.~T. Asif, A.~Oran, and P.~Jaillet,
@@ -116,14 +118,15 @@ S.~Taguchi, S.~Koide, and T.~Yoshimura, ``Online map matching with route
   vol.~20, no.~1, pp. 338--347, 2019.
 
 \bibitem{Hansson2021}
-A.~Hansson, E.~Korsbacka, E.~Munthe, and H.~Lind, ``Lane-level map matching
-  based on {HMM},'' in \emph{IEEE Intelligent Vehicles Symposium (IV)}, 2021.
+A.~Hansson, E.~Korsberg, R.~Maghsood, E.~Nord{\'e}n, and Selpi, ``Lane-level
+  map matching based on {HMM},'' \emph{IEEE Transactions on Intelligent
+  Vehicles}, vol.~6, no.~3, pp. 430--439, 2021.
 
 \bibitem{Qu2023}
-B.~Qu, S.~Yang, Y.~Qian, and C.~Wen, ``{HMM}-based map matching and
+L.~Qu, Y.~Zhou, J.~Li, Q.~Yu, and X.~Jiang, ``{HMM}-based map matching and
   spatiotemporal analysis for matching errors with taxi trajectories,''
   \emph{ISPRS International Journal of Geo-Information}, vol.~12, no.~8, p.
-  310, 2023.
+  330, 2023.
 
 \bibitem{Feng2023}
 J.~Feng, F.~Du, Y.~Jiang, and X.~Luo, ``Spatial-temporal analysis of vehicle
@@ -157,9 +160,9 @@ X.~Xia, L.-T. Hsu, and W.~Wen, ``Integrity-constrained factor graph
   and Navigation Symposium (PLANS)}, 2023, pp. 414--420.
 
 \bibitem{Neamati2023}
-D.~Neamati, N.~Motee, and G.~Gao, ``Risk-aware autonomous localization with
-  {Mosaic} {Zonotope} shadow matching,'' \emph{Artificial Intelligence}, vol.
-  322, p. 103952, 2023.
+D.~Neamati, S.~Bhamidipati, and G.~Gao, ``Risk-aware autonomous localization in
+  harsh urban environments with mosaic zonotope shadow matching,''
+  \emph{Artificial Intelligence}, vol. 324, p. 104000, 2023.
 
 \bibitem{Maharmeh2025}
 E.~Maharmeh, Z.~Alsayed, and F.~Nashashibi, ``A comprehensive survey on the
@@ -170,7 +173,7 @@ E.~Maharmeh, Z.~Alsayed, and F.~Nashashibi, ``A comprehensive survey on the
 M.~Maaref and Z.~M. Kassas, ``Autonomous integrity monitoring for vehicular
   navigation with cellular signals of opportunity and an {IMU},'' \emph{IEEE
   Transactions on Intelligent Transportation Systems}, vol.~23, no.~6, pp.
-  5582--5594, 2022.
+  5586--5601, 2022.
 
 \bibitem{AlHage2023}
 J.~Al~Hage, N.~Salvatico, and P.~Bonnifait, ``High integrity localization of
@@ -192,7 +195,7 @@ G.~Park and W.~Chung, ``Uncertainty-aware {LiDAR}-based localization for
 A.~Lahrech and A.~Soulhi, ``Vehicle positioning in urban environments using
   particle filtering-based {GPS}, odometry, and map data fusion,''
   \emph{International Journal of Electrical and Computer Engineering (IJECE)},
-  vol.~13, no.~4, pp. 4072--4084, 2023.
+  vol.~13, no.~4, pp. 3924--3938, 2023.
 
 \bibitem{Guo2017}
 C.~Guo, G.~Pleiss, Y.~Sun, and K.~Q. Weinberger, ``On calibration of modern
@@ -205,10 +208,14 @@ J.~Nixon, M.~W. Dusenberry, L.~Zhang, G.~Jerfel, and D.~Tran, ``Measuring
   Conference on Computer Vision and Pattern Recognition (CVPR) Workshops},
   2019, pp. 38--41.
 
-\bibitem{Roelofs2024}
-R.~Roelofs, N.~Cain, J.~Shlens, and M.~C. Mozer, ``Reassessing how to compare
-  and improve the calibration of machine learning models,'' \emph{Journal of
-  Machine Learning Research}, vol.~25, pp. 1--71, 2024.
+\bibitem{Chidambaram2025}
+\BIBentryALTinterwordspacing
+M.~Chidambaram and R.~Ge, ``Reassessing how to compare and improve the
+  calibration of machine learning models,'' in \emph{International Conference
+  on Learning Representations}, Y.~Yue, A.~Garg, N.~Peng, F.~Sha, and R.~Yu,
+  Eds., vol. 2025, 2025, pp. 61\,542--61\,570. [Online]. Available:
+  \url{https://proceedings.iclr.cc/paper_files/paper/2025/file/9a30247fcca95299c2fd48d4667282de-Paper-Conference.pdf}
+\BIBentrySTDinterwordspacing
 
 \bibitem{Quddus2006}
 M.~A. Quddus, W.~Y. Ochieng, and R.~B. Noland, ``Integrity of map-matching
