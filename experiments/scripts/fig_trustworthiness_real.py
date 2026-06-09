@@ -62,8 +62,9 @@ def get_range(data, tid, seq_s, seq_e):
 seg_a = get_range(rows, "11", 498, 604)
 # (b) Traj 22 junction: seq 333-388, TW~0.59
 seg_b = get_range(rows, "22", 333, 388)
-# (c) Traj 22 parallel false lock: seq 1680-1750, low TW
-seg_c = get_range(rows, "22", 1680, 1750)
+# (c) Traj 21 wrong-match with TW drop then recovery: seq 2315-2350
+# Wrong at 2324-2337 (TW~0.05-0.79), recovers at 2338 (TW→1.0)
+seg_c = get_range(rows, "21", 2315, 2350)
 
 def plot_panel(ax, seg, roads, bbox_pad=0.005, title=""):
     """Plot road network + trajectory colored by TW."""
