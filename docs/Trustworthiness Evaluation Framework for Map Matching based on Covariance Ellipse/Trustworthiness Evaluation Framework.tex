@@ -24,7 +24,7 @@
 \begin{document}
 \emergencystretch=1em
 
-\title{Trustworthiness Evaluation of Map Matching Leveraging Probabilistic GNSS Covariance Ellipse Models}
+\title{Trustworthiness Evaluation of Map Matching Consistent with GNSS stochastic model}
 % framework；elliptical; EMM
 
 \author{Chenzhang Ning, Rong Yang, Xingqun Zhan, Yawei Zhai~\IEEEmembership{Shanghai Jiao Tong University,~Shanghai,~China,}
@@ -33,7 +33,7 @@
 
 % The paper headers
 \markboth{IEEE Transactions on Intelligent Transportation Systems}%
-{Ning: Trustworthiness Evaluation of Map Matching with GNSS Covariance Ellipse}
+{Ning: Trustworthiness Evaluation of Map Matching Consistent with GNSS stochastic model}
 
 
 \maketitle
@@ -80,12 +80,12 @@ matching is a fundamental component in intelligent transportation systems, high-
 However, GNSS receivers, through messages such as NMEA GST, provide real-time estimates of the positioning covariance, which reflects both the instantaneous accuracy and the correlation structure of measurement errors. Despite the availability of this information, current map-matching frameworks rarely integrate this information into the probabilistic formulation. 
 As a result, the emission probability in conventional HMM map matching cannot faithfully represent the varying reliability of GNSS measurements, thus limiting the algorithm’s ability to detect mismatches and provide trustworthiness information required for safety-critical applications. In this paper, we define \emph{trustworthiness} as the per-epoch filtering posterior probability $P(x_t = i^* \mid z_{1:t})$ that the Viterbi-optimal road edge $i^*$ is correct given all GNSS observations up to epoch $t$---a principled, calibrated confidence score that varies with local positioning quality and road network geometry.
 % need to redraw
-\begin{figure}[htbp]
+\begin{figure*}[t]
     \centering
-    \includegraphics[width=1\linewidth]{figs/abstract figure.png}
+    \includegraphics[width=1\textwidth]{figs/abstract figure.png}
     \caption{Comparison between traditional isotropic HMM and the proposed covariance-aware framework.}
     \label{fig:abstract}
-\end{figure}
+\end{figure*}
 
 In a nutshell, this paper proposes a GNSS-uncertainty-aware
 map-matching framework together with a trustworthiness evaluation theory that
@@ -399,65 +399,6 @@ potential mismatch events. This limitation is critical for safety-related
 applications, such as road pricing, autonomous driving, or integrity
 monitoring, where reliability must be quantified, not assumed.
 
-\begin{figure*}[htbp]
-    \centering
-    \begin{tikzpicture}[
-        >=stealth,
-        node distance=0.9cm and 0.8cm,
-        box/.style={draw, rounded corners, fill=gray!10,
-                    align=center, minimum width=2.7cm,
-                    minimum height=0.95cm, font=\footnotesize},
-        boxP/.style={draw, rounded corners, fill=blue!10,
-                    align=center, minimum width=2.7cm,
-                    minimum height=0.95cm, font=\footnotesize}
-    ]
-
-    
-    \node[box] (c1) {GNSS \\ $z_i$};
-    \node[box, right=of c1] (c2) {Candidate search \\ fixed radius};
-    \node[box, right=of c2] (c3) {Euclidean projection \\ candidates};
-    \node[box, right=of c3] (c4) {Emission \\ $\mathcal{N}(0,\sigma^2 I)$};
-    \node[box, right=of c4] (c5) {Trustworthiness check: \\ None};
-
-    \coordinate (ctop) at ($(c1)!0.5!(c5)$);
-    \node[above=0.55cm of ctop, font=\scriptsize\bfseries]
-        {Classical HMM Map Matching};
-
-    \draw[->] (c1) -- (c2);
-    \draw[->] (c2) -- (c3);
-    \draw[->] (c3) -- (c4);
-    \draw[->] (c4) -- (c5);
-
-    \node[boxP, below=0.9cm of c1] (p1) {GNSS \\ $z_i$, $\mathbf{Q}_i$};
-    \node[boxP, below=0.9cm of c2] (p2) {Adaptive candidate search \\  HPL};
-    \node[boxP, below=0.9cm of c3] (p3) {Mahalanobis projection \\ candidates};
-    \node[boxP, below=0.9cm of c4] (p4) {Emission \
-    \ $\mathcal{N}(0,\mathbf{\Sigma}_i)$};
-    \node[boxP, below=0.9cm of c5] (p5) {Trustworthiness check: \\ joint probability};
-
-    \coordinate (cbottom) at ($(p1)!0.5!(p5)$);
-    \node[below=0.55cm of cbottom, font=\scriptsize\bfseries]
-        {Proposed Covariance-Aware Method};
-
-    \draw[->] (p1) -- (p2);
-    \draw[->] (p2) -- (p3);
-    \draw[->] (p3) -- (p4);
-    \draw[->] (p4) -- (p5);
-
-    \draw[dashed] ($(c1.south west)+(-0.2,-0.5)$) -- ($(c5.south east)+(0.2,-0.5)$);
-
-    \end{tikzpicture}
-
-    \caption{Comparison between classical HMM map matching (top) and the proposed covariance-aware framework (bottom). The proposed method incorporates GNSS covariance, adaptive candidate search, and a Mahalanobis-based emission model.}
-    \label{fig:HMM_vs_proposed}
-\end{figure*}
-
-\medskip
-Figure~\ref{fig:HMM_vs_proposed} summarizes these limitations visually by
-contrasting the classical pipeline with the proposed GNSS-consistent,
-covariance-aware formulation. The latter addresses all four shortcomings by
-replacing heuristic components with probabilistically grounded counterparts.
-
 % ---------------------------------------------------------------------------
 
 \section{GNSS-Consistent HMM and Trustworthiness Evaluation}
@@ -487,15 +428,31 @@ where $\mathbf{y} \in \mathbb{R}^{m}$ is the observed-minus-computed pseudorange
 \boldsymbol{\Sigma}_{x} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1},
 \label{eq:wls_cov}
 \end{equation}
+
 where $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$.
-\label{eq:wls_cov}
-\end{equation}
-The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$, comprising the East and North components of the $3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$, is extracted for the emission model:
+\label{eq:wls_cov}.The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$, comprising the East and North components of the $3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$, is extracted for the emission model:
 \begin{equation}
 \boldsymbol{\Sigma}_i = \begin{bmatrix} \sigma_E^2 & \sigma_{EN} \\ \sigma_{EN} & \sigma_N^2 \end{bmatrix}.
 \label{eq:sigma_i}
 \end{equation}
 Equation~\eqref{eq:wls_cov} reveals the two factors that shape $\boldsymbol{\Sigma}_i$: the satellite geometry $\mathbf{H}$ determines the directional structure of uncertainty (e.g., elongation along the satellite line-of-sight deficit direction), while the pseudorange noise levels in $\boldsymbol{\Sigma}_{\rho}$ scale the overall magnitude. Together they produce the anisotropic error ellipse that our emission model exploits (Fig.~\ref{fig:covariance}). In practice, $\boldsymbol{\Sigma}_i$ is available from standard NMEA \texttt{GST} messages output by modern receivers, which report confidence ellipse parameters directly convertible to covariance form. More sophisticated stochastic models that incorporate terrain topography effects can further refine $\boldsymbol{\Sigma}_i$ in canyon environments~\cite{Zhang2022_Geodesy}.
+
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1\linewidth]{figs/covariance.png}
+    \caption{Visual representation of the GNSS positioning covariance calculation process. The final position uncertainty (Right) is a function of the satellite geometry matrix $\mathbf{H}$ (Left) and the pseudorange measurement noise $\boldsymbol{\Sigma}_{\rho}$ (Middle). This process results in the anisotropic error ellipse $\boldsymbol{\Sigma}_i$ used in our probability emission model.}
+    \label{fig:covariance}
+\end{figure}
+
+In practical GNSS receivers, this covariance matrix is often made available
+through standard output messages such as the NMEA \texttt{GST} sentence, which
+provides axis-aligned or rotated confidence ellipse parameters that can be
+converted into $\boldsymbol{\Sigma}_{pos}$. This covariance encapsulates the
+combined effects of satellite geometry, atmospheric errors, multipath, and
+measurement noise, and therefore serves as the statistical basis for the
+covariance-aware emission probability model introduced in the following
+subsection.
 
 \subsubsection{Integrity monitoring and horizontal protection level}
 
@@ -537,7 +494,7 @@ $\boldsymbol{\Sigma}_i$ provided by modern GNSS
 receivers. This establishes a unified probabilistic model of uncertainty
 throughout the entire HMM pipeline.
 
-\subsubsection{States and Observations with Covariance as Inputs}
+\subsubsection{Posterior Probabilities of Hidden States Conditioned on  Observations with Covariance}
 \label{subsubsec:states_observations}
 
 Let
@@ -553,8 +510,10 @@ WLS solution or receiver-reported confidence ellipse from NMEA \texttt{GST}.
 The pair $(z_i, \boldsymbol{\Sigma}_i)$ therefore
 represents a stochastic observation whose uncertainty is explicitly modeled.
 
+In the following part in this section, the primary ideas of deriving the posterior probability of candidates in each epoch and output the optimal one with its trustworthiness is described in detail. 
+
 Given the uncertainty-aware candidate search region, i.e. the
-HPL-based disk $\Omega_i$), the set of feasible road segments for epoch $i$
+HPL-based disk $\Omega_i$, the set of feasible road segments for epoch $i$
 is
 \[
 \mathcal{C}_{\mathrm{seg},i}
@@ -661,13 +620,6 @@ the anisotropic covariance ellipse in the original coordinate frame is mapped to
 \end{equation}
 
 which means that Mahalanobis projection in the original coordinates is exactly equivalent to Euclidean orthogonal projection in the whitened coordinates. Thus, the proposed approach can be interpreted as performing projection after shaping the coordinate frame so that the GNSS uncertainty becomes spherical. 
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=1\linewidth]{figs/maha_vs_eu.png}
-    \caption{Illustration of Euclidean projection versus Mahalanobis projection under an anisotropic GNSS covariance ellipse. }
-    \label{fig:maha_vs_eu}
-\end{figure}
 
 This perspective highlights that the Mahalanobis projection is the statistically appropriate projection operator when GNSS errors are anisotropic, whereas Euclidean projection implicitly assumes a spherical uncertainty model that is generally violated in practical GNSS environments. Fig.~\ref{fig:measprob} provides a more detailed illustration of the emission probability under the anisotropic covariance model.
 
@@ -794,7 +746,7 @@ suitable for calibration analysis.
 
 \subsection{Forward Recursions and Trustworthiness Computation}
 
-Given the observation sequence $Z=\{z_1,\ldots,z_N\}$ and the HMM
+Given the observation sequence $Z=\{z_1,\ldots,z_t\}$ and the HMM
 defined above, let $\alpha_t(i) = P(z_{1:t}, s_t^{(i)})$ denote the
 forward probability, computed via the standard HMM recursion in
 log-space:
@@ -844,32 +796,6 @@ where $\alpha_t(j)$ is the forward probability from
 Eq.~\eqref{eq:log_forward} and $i^*$ is the Viterbi-optimal
 candidate at epoch $t$.  This is a valid probability $\in [0,1]$
 that varies per-epoch with local GNSS evidence.
-
-% \subsubsection{Fixed-Lag Smoothing (Optional)}
-% \label{subsec:lag_smoothing}
-
-% To incorporate future evidence and sharpen the posterior, the forward
-% computation can be extended with a \emph{fixed-lag smoothing}
-% mechanism.  When a smoothing lag $L > 0$ is configured, a buffer of
-% $L$ future layers is maintained.  For each candidate $i$ at the oldest
-% buffered layer $t$, a Viterbi-style forward pass through the $L$-step
-% look-ahead window accumulates the best achievable future path score:
-% \begin{equation}
-% \beta_{t+L}(i)
-% = \max_{\{s_{t+1},\dots,s_{t+L}\}}
-% \sum_{\tau=t+1}^{t+L}
-% \Big[ \log t_{s_{\tau-1} \to s_\tau}
-%      + \log p(z_\tau \mid s_\tau) \Big],
-% \label{eq:viterbi_future}
-% \end{equation}
-% and the smoothed score becomes
-% $\text{score}_t(i) = \log \alpha_t(i) + \beta_{t+L}(i)$,
-% with softmax normalization as in Eq.~\eqref{eq:filtering_posterior}.
-% On real data with RAIM-derived PLs, the optimal lag is $L=0$
-% (see Section~\ref{sec:simulation}), indicating that the protection
-% level already encodes sufficient geometric uncertainty and that the
-% anisotropic emission model provides adequate discriminative power
-% without temporal smoothing.
 
 \subsubsection{Information-Theoretic Metrics}
 
@@ -1166,39 +1092,6 @@ To evaluate robustness to observation sparsity, CMM and FMM are tested at subsam
 
 Fig.~\ref{fig:sample_rate} shows that CMM maintains stable segment accuracy and ECE across all sample rates, indicating that the covariance-based emission model provides sufficient discriminative power even with sparse observations. At $\sigma_{\rho}=5$\,m, CMM accuracy stays above 99.7\% from 1\,s to 10\,s intervals. At $\sigma_{\rho}=15$\,m, FMM accuracy improves from 74.3\% (1\,s) to 99.3\% (10\,s), suggesting that lower-frequency sampling filters high-frequency noise that confuses the isotropic emission model. This is a notable finding: while CMM is robust to sampling rate by design (the Mahalanobis emission adapts to the covariance magnitude), FMM benefits from temporal decimation because the effective noise reduction compensates for the lack of anisotropic modeling.
 
-\subsection{Experiment 4: Wrong Emission Model --- Effect of Sigma Mismatch}
-\label{sec:exp4}
-
-In practice, the WLS solver's assumed pseudorange noise $\sigma_{\text{wls}}$ may differ from the true $\sigma_{\rho}^{\text{true}}$, producing systematically biased covariance estimates. This experiment isolates the effect of such mismatch by fixing the WLS noise model at $\sigma_{\text{wls}}=20$\,m while varying the true pseudorange noise $\sigma_{\rho}^{\text{true}} \in \{10,15,20,25,30\}$\,m. When $\sigma_{\rho}^{\text{true}} < \sigma_{\text{wls}}$ (e.g., pr10\_wls20), the reported covariance is \emph{over-conservative}: the error ellipse is too large relative to the true error. When $\sigma_{\rho}^{\text{true}} > \sigma_{\text{wls}}$ (e.g., pr30\_wls20), the covariance is \emph{over-confident}: the ellipse is too small.
-
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=1.0\linewidth]{figs/mismatch_analysis.png}
-    \caption{Effect of emission model mismatch. (a) Point error, (b) Segment accuracy, (c) ECE (key metric), (d) Trust separation ($\mu_{\text{correct}}-\mu_{\text{wrong}}$), (e) Reliability diagrams per mismatch level, (f) ECE vs.\ $\sigma_{\rho}^{\text{true}}-\sigma_{\text{wls}}$.}
-    \label{fig:mismatch}
-\end{figure}
-
-Fig.~\ref{fig:mismatch} and Table~\ref{tab:mismatch} report the results. The key finding is that CMM achieves minimum ECE (0.048) when the emission model is correctly specified ($\sigma_{\rho}^{\text{true}}=\sigma_{\text{wls}}=20$\,m). The ECE degradation is asymmetric: over-confident emission ($\sigma_{\rho}^{\text{true}}>\sigma_{\text{wls}}$) degrades calibration more severely (ECE=0.22--0.23) than over-conservative emission ($\sigma_{\rho}^{\text{true}}<\sigma_{\text{wls}}$, ECE=0.08). The trustworthiness separation between correct and wrong edges follows the same pattern, peaking at 0.496 under correct specification and dropping to 0.188 under severe over-confidence. These results confirm that the covariance-based emission model is well-calibrated when correctly specified and degrades gracefully under moderate mismatch, but becomes unreliable under large over-confidence --- a scenario that the RAIM-FDE module is designed to prevent.
-
-\begin{table}[htbp]
-\centering
-\caption{Sigma Mismatch Analysis ($\sigma_{\text{wls}}=20$\,m, $k=16$)}
-\label{tab:mismatch}
-\footnotesize
-\setlength{\tabcolsep}{2.5pt}
-\begin{tabular}{lccccc}
-\toprule
-$\sigma_{\rho}^{\text{true}}$ & Mismatch & CMM Acc. & CMM ECE & FMM Acc. & FMM ECE \\
-\midrule
-10\,m & $-10$ (over-cons.) & 0.999 & 0.082 & 0.525 & 0.378 \\
-15\,m & $-5$ & 0.878 & 0.192 & 0.632 & 0.477 \\
-20\,m & $0$ (correct)    & 0.782 & \textbf{0.048} & 0.446 & 0.410 \\
-25\,m & $+5$ & 0.899 & 0.234 & 0.673 & 0.478 \\
-30\,m & $+10$ (over-conf.)& 0.931 & 0.215 & 0.587 & 0.464 \\
-\bottomrule
-\end{tabular}}
-\end{table}
-
 \subsection{Experiment 5: Robustness Under Degraded Conditions}
 \label{sec:exp5}
 
@@ -1479,24 +1372,6 @@ bootstrap CIs show that the 95\% confidence bounds for CMM and FMM accuracy do
 not overlap, and the 95\% CI for the accuracy difference
 [+0.082, +0.095] excludes zero, confirming a robust improvement.
 
-\subsection{Lag Sweep Analysis}
-Fig.~\ref{fig:lag_sweep} shows the ECE of trustworthiness as a
-function of the smoothing lag for all 7 trajectories. With
-RAIM-derived protection levels, the cross-trajectory optimal lag is
-$L=0$—fixed-lag smoothing does not improve calibration.
-This is because the tight PL (median 22.8\,m) already restricts the
-candidate set to a small region, so the softmax posterior is
-well-concentrated even without future evidence. The lag sweep
-confirms that the anisotropic Mahalanobis emission model itself is
-the dominant calibration contributor.
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=1.0\linewidth]{figs/lag_sweep_multitraj.png}
-    \caption{ECE vs.\ lag\_steps across all 7 trajectories. Left: per-trajectory curves. Right: cross-trajectory mean with $\pm$1 S.D. band.}
-    \label{fig:lag_sweep}
-\end{figure}
-
 \subsection{Trustworthiness Discrimination Analysis}
 \label{sec:tw_discrimination}
 
@@ -1709,6 +1584,42 @@ alongside trustworthiness.
 The authors thank XXX for XXX.
 
 \bibliography{references}
+
+\appendix
+
+\section{Experiment for Effect of Sigma Mismatch}
+\label{sec:expAppendixA}
+
+In practice, the WLS solver's assumed pseudorange noise $\sigma_{\text{wls}}$ may differ from the true $\sigma_{\rho}^{\text{true}}$, producing systematically biased covariance estimates. This experiment isolates the effect of such mismatch by fixing the WLS noise model at $\sigma_{\text{wls}}=20$\,m while varying the true pseudorange noise $\sigma_{\rho}^{\text{true}} \in \{10,15,20,25,30\}$\,m. When $\sigma_{\rho}^{\text{true}} < \sigma_{\text{wls}}$ (e.g., pr10\_wls20), the reported covariance is \emph{over-conservative}: the error ellipse is too large relative to the true error. When $\sigma_{\rho}^{\text{true}} > \sigma_{\text{wls}}$ (e.g., pr30\_wls20), the covariance is \emph{over-confident}: the ellipse is too small.
+
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1.0\linewidth]{figs/mismatch_analysis.png}
+    \caption{Effect of emission model mismatch. (a) Point error, (b) Segment accuracy, (c) ECE (key metric), (d) Trust separation ($\mu_{\text{correct}}-\mu_{\text{wrong}}$), (e) Reliability diagrams per mismatch level, (f) ECE vs.\ $\sigma_{\rho}^{\text{true}}-\sigma_{\text{wls}}$.}
+    \label{fig:mismatch}
+\end{figure}
+
+Fig.~\ref{fig:mismatch} and Table~\ref{tab:mismatch} report the results. The key finding is that CMM achieves minimum ECE (0.048) when the emission model is correctly specified ($\sigma_{\rho}^{\text{true}}=\sigma_{\text{wls}}=20$\,m). The ECE degradation is asymmetric: over-confident emission ($\sigma_{\rho}^{\text{true}}>\sigma_{\text{wls}}$) degrades calibration more severely (ECE=0.22--0.23) than over-conservative emission ($\sigma_{\rho}^{\text{true}}<\sigma_{\text{wls}}$, ECE=0.08). The trustworthiness separation between correct and wrong edges follows the same pattern, peaking at 0.496 under correct specification and dropping to 0.188 under severe over-confidence. These results confirm that the covariance-based emission model is well-calibrated when correctly specified and degrades gracefully under moderate mismatch, but becomes unreliable under large over-confidence --- a scenario that the RAIM-FDE module is designed to prevent.
+
+\begin{table}[htbp]
+\centering
+\caption{Sigma Mismatch Analysis ($\sigma_{\text{wls}}=20$\,m, $k=16$)}
+\label{tab:mismatch}
+\footnotesize
+\setlength{\tabcolsep}{2.5pt}
+\begin{tabular}{lccccc}
+\toprule
+$\sigma_{\rho}^{\text{true}}$ & Mismatch & CMM Acc. & CMM ECE & FMM Acc. & FMM ECE \\
+\midrule
+10\,m & $-10$ (over-cons.) & 0.999 & 0.082 & 0.525 & 0.378 \\
+15\,m & $-5$ & 0.878 & 0.192 & 0.632 & 0.477 \\
+20\,m & $0$ (correct)    & 0.782 & \textbf{0.048} & 0.446 & 0.410 \\
+25\,m & $+5$ & 0.899 & 0.234 & 0.673 & 0.478 \\
+30\,m & $+10$ (over-conf.)& 0.931 & 0.215 & 0.587 & 0.464 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
 
 \end{document}
 
