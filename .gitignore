@@ -11,6 +11,7 @@ input/trajectory/
 .claude/
 .playwright-cli/
 docs/literatures/
+docs/figs0609.bak
 experiments/output/
 experiments/data/
 
