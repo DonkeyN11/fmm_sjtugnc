@@ -60,8 +60,8 @@ def get_range(data, tid, seq_s, seq_e):
 
 # (a) Traj 11 highway: seq 498-604, TW~0.999
 seg_a = get_range(rows, "11", 498, 604)
-# (b) Traj 22 junction: seq 333-388, TW~0.59
-seg_b = get_range(rows, "22", 333, 388)
+# (b) Traj 22 varied geometry: seq 300-499, 200 epochs, TW 0.30-0.95
+seg_b = get_range(rows, "22", 300, 499)
 # (c) Traj 21 wrong-match with TW drop then recovery: seq 2315-2350
 # Wrong at 2324-2337 (TW~0.05-0.79), recovers at 2338 (TW→1.0)
 seg_c = get_range(rows, "21", 2315, 2350)
@@ -118,7 +118,7 @@ def plot_panel(ax, seg, roads, bbox_pad=0.005, title=""):
 fig, axes = plt.subplots(1, 3, figsize=(7.5, 2.8))
 
 plot_panel(axes[0], seg_a, all_roads, 0.004, "(a) Highway — High TW, Unambiguous")
-plot_panel(axes[1], seg_b, all_roads, 0.003, "(b) Junction — Medium TW, Branching")
+plot_panel(axes[1], seg_b, all_roads, 0.008, "(b) Urban Arterial — TW Varies with Road Geometry")
 plot_panel(axes[2], seg_c, all_roads, 0.004, "(c) Dual Carriageway — Low TW, False Lock")
 
 fig.suptitle("Trustworthiness on Real Road Networks: Hainan-06 Dataset (SPP, 7 Trajectories)",
