@@ -27,7 +27,7 @@
 \title{Trustworthiness Evaluation of Map Matching Consistent with GNSS stochastic model}
 % framework；elliptical; EMM
 
-\author{Chenzhang Ning, Rong Yang, Xingqun Zhan, Yawei Zhai~\IEEEmembership{Shanghai Jiao Tong University,~Shanghai,~China,}
+\author{Chenzhang Ning, Rong Yang, Xingqun Zhan, Yawei Zhai，Yulong Sun~\IEEEmembership{Shanghai Jiao Tong University,~Shanghai,~China,}
         % <-this % stops a space
 \thanks{Manuscript received XX XX, 2025; revised XX XX, 2025.}}
 
@@ -550,12 +550,12 @@ Given the HPL-based search disk $\Omega_i$ defined in Eq.~\eqref{eq:candidate_se
 \begin{equation}
 x_{i,j}
 =
-\arg\min_{x \in s_j}
+\arg\min_{x \in x_j}
 \left( z_i - x \right)^{\mathrm{T}}
 \boldsymbol{\Sigma}_i^{-1}
 \left( z_i - x \right),
 \qquad
-s_j \in \mathcal{C}_{\mathrm{seg},i},
+x_j \in \mathcal{C}_{\mathrm{seg},i},
 \label{eq:ma_project}
 \end{equation}
 yielding the candidate point set $\mathcal{C}_{\mathrm{pnt},i} = \{ x_{i,1}, x_{i,2}, \ldots \}$ for epoch $i$. Compared with conventional Euclidean (orthogonal) projection, which implicitly assumes isotropic uncertainty, the Mahalanobis operator weights the distance by the inverse covariance, thereby favoring candidates aligned with the principal axes of the GNSS error ellipse.
@@ -583,12 +583,10 @@ p(z_i \mid x_{i,j})
 \mathbf{d}_{i,j}^{\mathrm{T}}
 \boldsymbol{\Sigma}_i^{-1}
 \mathbf{d}_{i,j}
-\right],
-\qquad
-\mathbf{d}_{i,j} = z_i - x_{i,j},
+\right].
 \label{eq:cov_emission}
 \end{equation}
-which is precisely the multivariate Gaussian density evaluated at the residual $\mathbf{d}_{i,j}$. Compared with the classical fixed-variance isotropic model $\mathcal{N}(0,\sigma^2 I)$, the covariance-based emission~\eqref{eq:cov_emission} incorporates the full GNSS error geometry: it tightens the likelihood under good satellite geometry, avoids overconfidence in degraded environments, and remains statistically consistent with the underlying GNSS stochastic model.
+where $\mathbf{d}_{i,j} = z_i - x_{i,j}$, which is precisely the multivariate Gaussian density evaluated at the residual $\mathbf{d}_{i,j}$. Compared with the classical fixed-variance isotropic model $\mathcal{N}(0,\sigma^2 I)$, the covariance-based emission~\eqref{eq:cov_emission} incorporates the full GNSS error geometry: it tightens the likelihood under good satellite geometry, avoids overconfidence in degraded environments, and remains statistically consistent with the underlying GNSS stochastic model.
 
 \begin{figure}[htbp]
     \centering
@@ -610,12 +608,10 @@ A background pseudo-candidate $b$ with fixed emission probability
 $p_{\text{bg}}$ (default 0.1) represents the off-road hypothesis.
 For each real candidate $j$, the effective emission is
 \begin{equation}
-p'(z_i \mid x_{i,j}) = (1 - p_{\text{bg}}) \cdot p(z_i \mid x_{i,j}),
-\qquad
-p'(z_i \mid b) = p_{\text{bg}}.
+p'(z_i \mid x_{i,j}) = (1 - p_{\text{bg}}) \cdot p(z_i \mid x_{i,j}).
 \label{eq:bg_emission}
 \end{equation}
-This prevents overconfidence when all road candidates have low likelihood,
+where $p'(z_i \mid b) = p_{\text{bg}}$. This prevents overconfidence when all road candidates have low likelihood,
 since the background state absorbs probability mass in the softmax
 denominator.
 
@@ -647,26 +643,26 @@ suitable for calibration analysis.
 \subsection{Forward Recursions and Trustworthiness Computation}
 
 Given the observation sequence $Z=\{z_1,\ldots,z_t\}$ and the HMM
-defined above, let $\alpha_t(i) = P(z_{1:t}, s_t^{(i)})$ denote the
+defined above, let $\alpha_t(i) = P(z_{1:t}, x_t^{(i)})$ denote the
 forward probability, computed via the standard HMM recursion in
 log-space:
 \begin{equation}
 \log \alpha_t(b)
 = \log \sum_{a} \exp\!\big(\log \alpha_{t-1}(a) + \log t_{a \to b}\big)
-+ \log p(z_t \mid s_t^{(b)}),
++ \log p(z_t \mid x_t^{(b)}),
 \label{eq:log_forward}
 \end{equation}
 where the initial condition is
-$\log \alpha_1(i) = \log\pi(i) + \log p(z_1 \mid s_1^{(i)})$ with the
+$\log \alpha_1(i) = \log\pi(i) + \log p(z_1 \mid x_1^{(i)})$ with the
 uniform prior $\pi(i) = 1/K$ (Eq.~\eqref{eq:uniform_prior}).
 
 Similarly, the Viterbi (maximum) probability
-$\delta_t(i) = \max_{s_{1:t-1}} P(z_{1:t}, s_{1:t-1}, s_t^{(i)})$
+$\delta_t(i) = \max_{x_{1:t-1}} P(z_{1:t}, x_{1:t-1}, x_t^{(i)})$
 is:
 \begin{equation}
 \log \delta_t(b)
 = \max_{a}\!\big(\log \delta_{t-1}(a) + \log t_{a \to b}\big)
-+ \log p(z_t \mid s_t^{(b)}).
++ \log p(z_t \mid x_t^{(b)}).
 \label{eq:log_viterbi}
 \end{equation}
 Because the maximum over paths cannot exceed the sum,
@@ -674,7 +670,7 @@ $\delta_t(i) \leq \alpha_t(i)$ holds for all $t$ and $i$. The gap
 $\alpha_t(i) - \delta_t(i)$ encodes the cumulative ambiguity from
 competing paths converging to the same candidate.
 
-All probability parameters including emission $p(z_t \mid s_t^{(b)})$ (with
+All probability parameters including emission $p(z_t \mid x_t^{(b)})$ (with
 background state, Eq.~\eqref{eq:bg_emission}), transition
 $t_{a \to b}$ (row-normalized, Eq.~\eqref{eq:tp_normalized}), and
 prior $\pi$ (Eq.~\eqref{eq:uniform_prior}), are properly normalized
@@ -701,7 +697,7 @@ that varies per-epoch with local GNSS evidence.
 
 To complement trustworthiness, we compute the posterior entropy
 $H_t = -\sum_i p_i \log_2 p_i$, where
-$p_i = P(s_t^{(i)} \mid z_{1:t})$ from Eq.~\eqref{eq:filtering_posterior}.
+$p_i = P(x_t^{(i)} \mid z_{1:t})$ from Eq.~\eqref{eq:filtering_posterior_tw}.
 The information gain (delta entropy) relative to the prior distribution is
 \begin{equation}
 \Delta H_t = H_{\text{prior}}^{t} - H_t,
@@ -710,8 +706,8 @@ The information gain (delta entropy) relative to the prior distribution is
 where $H_{\text{prior}}^{t} = \log_2(K_t)$ for the first epoch
 (uniform prior), and for subsequent epochs $H_{\text{prior}}^{t}$ is the
 entropy of the predictive distribution
-$P(s_t^{(b)} \mid z_{1:t-1})
- \propto \sum_a P(s_{t-1}^{(a)} \mid z_{1:t-1}) \, t_{a \to b}$.
+$P(x_t^{(b)} \mid z_{1:t-1})
+ \propto \sum_a P(x_{t-1}^{(a)} \mid z_{1:t-1}) \, t_{a \to b}$.
 A large $\Delta H_t$ indicates that the emission probabilities
 strongly resolve the uncertainty propagated from the previous layer;
 $\Delta H_t \approx 0$ suggests the GNSS observation provides little
@@ -733,26 +729,19 @@ additional evidence, flagging potentially ambiguous epochs.
     \State Append background pseudo-candidate with $\log p_{\text{bg}}$
     \State Compute $\log t_{a\to b}$ via Eq.~\eqref{eq:tp_normalized} \hfill $\triangleright$ row-normalized TP
     \If{$i = 1$}
-        \State $\log\alpha_1(j) \leftarrow \log(1/|\mathcal{C}_1|) + \log p(z_1|s_1^{(j)})$, \quad $\log\delta_1(j) \leftarrow \log\alpha_1(j)$
+        \State $\log\alpha_1(j) \leftarrow \log(1/|\mathcal{C}_1|) + \log p(z_1|x_1^{(j)})$, \quad $\log\delta_1(j) \leftarrow \log\alpha_1(j)$
     \Else
-        \State $\log\alpha_i(b) \leftarrow \log\!\sum_a\!\exp(\log\alpha_{i-1}(a)+\log t_{a\to b}) + \log p(z_i|s_i^{(b)})$
-        \State $\log\delta_i(b) \leftarrow \max_a[\log\delta_{i-1}(a)+\log t_{a\to b}] + \log p(z_i|s_i^{(b)})$
+        \State $\log\alpha_i(b) \leftarrow \log\!\sum_a\!\exp(\log\alpha_{i-1}(a)+\log t_{a\to b}) + \log p(z_i|x_i^{(b)})$
+        \State $\log\delta_i(b) \leftarrow \max_a[\log\delta_{i-1}(a)+\log t_{a\to b}] + \log p(z_i|x_i^{(b)})$
     \EndIf
-    \If{$L > 0$}
-        \State Push $(\mathcal{C}_i,\log\alpha_i,\log\delta_i,\log t)$ to $\mathcal{B}$
-        \If{$|\mathcal{B}| > L$}
-            \State $\ell \leftarrow$ oldest; $\beta_{\ell+L}(j) \leftarrow L$-step Viterbi look-ahead (Eq.~\eqref{eq:viterbi_future})
-            \State $\text{score}_\ell(j) \leftarrow \log\alpha_\ell(j) + \beta_{\ell+L}(j)$; \hspace{4pt} $p_j \leftarrow \text{softmax}(\text{score}_\ell)_j$
-            \State $\text{tw}_\ell \leftarrow \max_j p_j$; \hspace{4pt} $H_\ell \leftarrow -\sum_j p_j\log_2 p_j$; \hspace{4pt} pop $\ell$ from $\mathcal{B}$
-        \EndIf
-    \Else
-        \State $\text{tw}_i \leftarrow \text{softmax}(\log\alpha_i)_{i^*}$; \hspace{4pt} $\text{nb}_i \leftarrow \text{top-3 softmax}(\log\alpha_i)$
+
+        \State $\text{tw}_i \leftarrow \text{softmax}(\log\alpha_i)_{i^*}$; 
         \State $H_i \leftarrow -\sum_j p_j\log_2 p_j$; \hspace{4pt} $\Delta H_i \leftarrow \log_2|\mathcal{C}_i| - H_i$
-    \EndIf
+        
 \EndFor
-\If{$L > 0$} \State Flush $\mathcal{B}$ with decreasing effective lag \EndIf
+
 \State $X^\star \leftarrow$ backtrack via Viterbi backpointers
-\State \Return $X^\star$, $\{\text{tw}_i\}$, $\{\text{nb}_i\}$, $\{H_i,\Delta H_i\}$
+\State \Return $X^\star$, $\{\text{tw}_i\}$, $\{H_i,\Delta H_i\}$
 \end{algorithmic}
 \end{algorithm}
 
@@ -793,7 +782,7 @@ normalization and interpretation are required.
 \section{Simulation Study}
 \label{sec:simulation}
 
-This section presents five experiments designed to systematically evaluate the proposed covariance-aware HMM framework. Experiment~1 validates the internal consistency of the covariance-based emission model through statistical goodness-of-fit tests. Experiment~2 assesses the RAIM-derived Protection Level (PL) coverage via Stanford plots and quantifies Fault Detection and Exclusion (FDE) performance under injected step faults and cross-road occlusion. Experiment~3 conducts a comprehensive parameter sensitivity sweep, comparing CMM against FMM across pseudorange noise levels $\sigma_{\rho}\in[1,30]$\,m and sample rates $f_s\in[0.1,1.0]$\,Hz using segment-level accuracy, Expected Calibration Error (ECE), and ROC/AUC. Experiment~4 analyzes the effect of a misspecified emission model, where the WLS solver assumes a fixed $\sigma_{\text{wls}}=20$\,m while the true pseudorange noise varies from 10 to 30\,m. Experiment~5 evaluates robustness under combined degradation: step fault injection and cross-road satellite occlusion at $\sigma=30$\,m.
+This section presents five simulations designed to systematically evaluate the proposed covariance-aware HMM framework. Experiment~1 validates the internal consistency of the covariance-based emission model through statistical goodness-of-fit tests. Experiment~2 assesses the RAIM-derived Protection Level (PL) coverage via Stanford plots and quantifies Fault Detection and Exclusion (FDE) performance under injected step faults and cross-road occlusion. Experiment~3 conducts a comprehensive parameter sensitivity sweep, comparing CMM against FMM across pseudorange noise levels $\sigma_{\rho}\in[1,30]$\,m and sample rates $f_s\in[1,10]$\,Hz using segment-level accuracy, Expected Calibration Error (ECE), and ROC/AUC. Experiment~4 analyzes the effect of a misspecified emission model, where the WLS solver assumes a fixed $\sigma_{\text{wls}}=20$\,m while the true pseudorange noise varies from 10 to 30\,m. Experiment~5 evaluates robustness under combined degradation: step fault injection and cross-road satellite occlusion at $\sigma=30$\,m.
 
 All experiments share the Haikou, Hainan road network (\texttt{input/map/hainan/edges.shp}, EPSG-projected) and a precomputed UBODT table. Both CMM and FMM are configured with $k=16$ candidates per epoch. CMM uses a protection-level multiplier of 3, PHMI $=10^{-5}$, a fixed smoothing lag of $L=5$, a background probability $p_{\text{bg}}=0.1$, and a window length of 100 epochs; FMM uses a fixed search radius $r=0.03^\circ$ and isotropic GPS error $\sigma=0.001^\circ$, following the standard configuration in~\cite{FMM}. For the real-vehicle experiments (Section~\ref{sec:real-experiment}), CMM uses $L=0$ as the optimal configuration given the tight RAIM-derived protection levels.
 
@@ -1522,5 +1511,3 @@ $\sigma_{\rho}^{\text{true}}$ & Mismatch & CMM Acc. & CMM ECE & FMM Acc. & FMM E
 
 
 \end{document}
-
-

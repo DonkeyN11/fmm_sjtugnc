@@ -14,6 +14,13 @@ docs/literatures/
 docs/figs0609.bak
 experiments/output/
 experiments/data/
+.claude/
+.gemini/
+.github/
+.playwight-cli/
+.playwright/
+.vscode/
+
 
 # Doc files
 
@@ -128,5 +135,4 @@ docs/Journal of Field Robotics - 2016 - Phillips - Is It What I Think It Is  Is 
 docs/literature/AMM_An_Adaptive_Online_Map_Matching_Algorithm.pdf
 docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/Trustworthiness Evaluation Framework.pdf
 experiments/Records.md
-CLAUDE.md
 CLAUDE.md

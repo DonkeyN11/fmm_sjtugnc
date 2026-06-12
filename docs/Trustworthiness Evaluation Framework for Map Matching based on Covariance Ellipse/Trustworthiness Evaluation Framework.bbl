@@ -128,11 +128,6 @@ L.~Qu, Y.~Zhou, J.~Li, Q.~Yu, and X.~Jiang, ``{HMM}-based map matching and
   \emph{ISPRS International Journal of Geo-Information}, vol.~12, no.~8, p.
   330, 2023.
 
-\bibitem{Feng2023}
-J.~Feng, F.~Du, Y.~Jiang, and X.~Luo, ``Spatial-temporal analysis of vehicle
-  routing problem from online car-hailing trajectories,'' \emph{ISPRS
-  International Journal of Geo-Information}, vol.~12, no.~2, p.~56, 2023.
-
 \bibitem{Zhang2018}
 P.~Zhang, P.~Chen, D.~Song, and G.~Fan, ``Research on {GNSS} receiver
   autonomous integrity monitoring method based on {M}-estimation,''
@@ -164,32 +159,10 @@ D.~Neamati, S.~Bhamidipati, and G.~Gao, ``Risk-aware autonomous localization in
   harsh urban environments with mosaic zonotope shadow matching,''
   \emph{Artificial Intelligence}, vol. 324, p. 104000, 2023.
 
-\bibitem{Maharmeh2025}
-E.~Maharmeh, Z.~Alsayed, and F.~Nashashibi, ``A comprehensive survey on the
-  integrity of localization systems,'' \emph{Sensors}, vol.~25, no.~2, p. 358,
-  2025.
-
-\bibitem{Maaref2022}
-M.~Maaref and Z.~M. Kassas, ``Autonomous integrity monitoring for vehicular
-  navigation with cellular signals of opportunity and an {IMU},'' \emph{IEEE
-  Transactions on Intelligent Transportation Systems}, vol.~23, no.~6, pp.
-  5586--5601, 2022.
-
-\bibitem{AlHage2023}
-J.~Al~Hage, N.~Salvatico, and P.~Bonnifait, ``High integrity localization of
-  intelligent vehicles with {Student's} t filtering and fault exclusion,'' in
-  \emph{IEEE 26th International Conference on Intelligent Transportation
-  Systems (ITSC)}, 2023.
-
 \bibitem{Kim2019}
 K.~Kim, J.~Im, M.~Heo, and G.~Jee, ``Precise vehicle position and heading
   estimation using a binary road marking map,'' \emph{Journal of Sensors}, vol.
   2019, 2019.
-
-\bibitem{Park2024}
-G.~Park and W.~Chung, ``Uncertainty-aware {LiDAR}-based localization for
-  outdoor mobile robots,'' \emph{Journal of Field Robotics}, vol.~41, no.~8,
-  pp. 2790--2804, 2024.
 
 \bibitem{Lahrech2023}
 A.~Lahrech and A.~Soulhi, ``Vehicle positioning in urban environments using
