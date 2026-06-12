@@ -45,26 +45,26 @@ methods still treat the global navigation satellite system (GNSS) as a fixed, is
 uncertainty information provided by modern receivers, including covariance
 matrices, protection levels, and integrity risk bounds, and prevents current
 algorithms from quantifying the reliability of their own outputs. This paper
-addresses this gap by introducing a GNSS-uncertainty-consistent HMM framework
-for both map matching and trustworthiness evaluation. The proposed approach
-takes the full GNSS stochastic model (covariance, protection level, and
-integrity framework), propagates it consistently through all stages of HMM-based
-map matching—including candidate search, candidate projection, and emission
-modeling—and then uses the same probabilistic machinery to define a
+addresses this gap by introducing a GNSS-consistent HMM (GcHMM) framework
+for map matching with trustworthiness evaluation. The proposed approach
+takes the full GNSS stochastic model (positioning error covariance and protection 
+level), propagates it consistently through all stages of HMM-based
+map matching, including candidate search, candidate projection, and emission
+modeling, and then uses the same probabilistic machinery to define a
 trustworthiness metric that predicts mismatch events with measurable diagnostic
 power.
+
 Empirically, Monte Carlo simulations and real-vehicle experiments
-on 7 GNSS trajectories collected in Haikou, Hainan China demonstrate
+on 16155 GNSS observations collected in Hainan, China demonstrate
 that the proposed framework improves matching accuracy,
-probabilistic calibration, and mismatch detection over a
+probabilistic calibration, and mismatch detection over traditional
 fixed-isotropic HMM baseline. On real data, CMM achieves 96.9\%
-segment accuracy versus 88.1\% (FMM), reduces the Expected
-Calibration Error (ECE) from 0.107 to 0.069, and improves
-trustworthiness separation between correct and wrong matches by a
-factor of 3.4. The filtering posterior trustworthiness metric
-attains an area under the ROC curve of 0.600 for mismatch detection,
+segment accuracy versus 88.1\% (FMM), reduces the expected
+calibration error (ECE) from 0.107 to 0.069, achieveing an area under 
+the ROC curve of 0.600 for mismatch detection,
 confirming its practical effectiveness as an integrity indicator for
-safety-critical map-matching applications. 
+safety-critical map-matching applications. Both codes and dataset are open sourced
+for regeneration and further academic exploration.
 \end{abstract}
 
 \begin{IEEEkeywords}
@@ -78,7 +78,7 @@ trustworthiness evaluation, safety-critical navigation.
 matching is a fundamental component in intelligent transportation systems, high-precision navigation, and safety-critical location-based services. Its objective is to infer the correct road segment and trajectory from noisy global navigation satellite system (GNSS) observations and a digital road map. Traditional hidden Markov model (HMM)–based map-matching algorithms, such as those implemented in fast map matching (FMM) ~\cite{FMM} and its variants, have demonstrated strong performance in large-scale deployments due to their computational efficiency and topological consistency. However, a critical limitation remains: most existing algorithms assume a static, isotropic GNSS error model, typically represented by a fixed circular Gaussian noise distribution or a heuristic parameter. This assumption ignores the dynamic, anisotropic, and environment-dependent characteristics of GNSS uncertainty, which are especially pronounced in urban canyons, elevated roads, tunnels, and foliage-covered corridors.
 
 However, GNSS receivers, through messages such as NMEA GST, provide real-time estimates of the positioning covariance, which reflects both the instantaneous accuracy and the correlation structure of measurement errors. Despite the availability of this information, current map-matching frameworks rarely integrate this information into the probabilistic formulation. 
-As a result, the emission probability in conventional HMM map matching cannot faithfully represent the varying reliability of GNSS measurements, thus limiting the algorithm’s ability to detect mismatches and provide trustworthiness information required for safety-critical applications. In this paper, we define \emph{trustworthiness} as the per-epoch filtering posterior probability $P(x_t = i^* \mid z_{1:t})$ that the Viterbi-optimal road edge $i^*$ is correct given all GNSS observations up to epoch $t$---a principled, calibrated confidence score that varies with local positioning quality and road network geometry.
+As a result, the emission probability in conventional HMM map matching cannot faithfully represent the varying reliability of GNSS measurements, thus limiting the algorithm’s ability to detect mismatches and provide trustworthiness information required for safety-critical applications. In this paper, we proposed the GNSS-consistent HMM-based map matching framework which defines \emph{trustworthiness} by the per-epoch filtering posterior probability $P(x_t = i^* \mid z_{1:t})$ that the Viterbi-optimal road edge $i^*$ is correct given all GNSS observations up to epoch $t$. The proposed trustworthiness can be served as principled, calibrated confidence score that varies with local positioning quality and road network geometry.
 % need to redraw
 \begin{figure*}[t]
     \centering
@@ -87,15 +87,12 @@ As a result, the emission probability in conventional HMM map matching cannot fa
     \label{fig:abstract}
 \end{figure*}
 
-In a nutshell, this paper proposes a GNSS-uncertainty-aware
-map-matching framework together with a trustworthiness evaluation theory that
-treats map matching not only as an optimization problem but also as a
-reliability assessment task. The main contributions are summarized as follows:
+The main contributions are summarized as follows:
 
 \begin{itemize}
-\item Proposed an anisotropic GNSS covariance based emission model with a probabilistically normalized HMM framework. This research replaces the heuristic isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS covariance matrix. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from a Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
+\item Proposed an anisotropic GNSS positioning error covariance based emission model with a probabilistically normalized HMM framework. This research replaces the heuristic isotropic Gaussian emission with a GNSS stochastic formulation that uses the per-epoch GNSS positioning error covariance matrix. Candidate search is guided by the Horizontal Protection Level (HPL) obtained from Receiver Autonomous Integrity Monitor (RAIM) computation, and candidate points are projected via Mahalanobis distance rather than Euclidean distance. This removes the heuristic scalar search radius and isotropic emission probability variance assumption, making the emission probabilities statistically consistent with the actual GNSS stochastic error model.
 
-\item  Deriving the filtering posterior as a per-epoch trustworthiness statistic. The \emph{filtering posterior} $P(x_t = i^* \mid z_{1:t})$ is introduced as the primary trustworthiness metric, quantifying the probability that the matched road edge is correct given all observations up to epoch $t$, computed via the forward algorithm with proper probabilistic normalization including row-normalized transitions, uniform initial prior, and a background state representing the off-road hypothesis. Information-theoretic metrics including posterior entropy $H_t$ and delta entropy $\Delta H_t$ that quantify the residual ambiguity at each epoch is exploited.
+\item  Derived a filtering posterior as a per-epoch trustworthiness statistic. The \emph{filtering posterior} $P(x_t = i^* \mid z_{1:t})$ is introduced as the primary trustworthiness metric, quantifying the probability that the matched road edge is correct given all observations up to epoch $t$, computed via the forward algorithm with proper probabilistic normalization including row-normalized transitions, uniform initial prior, and a background state representing the off-road hypothesis. Information-theoretic metrics including posterior entropy $H_t$ and delta entropy $\Delta H_t$ that quantify the residual ambiguity at each epoch is exploited.
 
 \item Comprehensive evaluation with probabilistic calibration analysis. The proposed method is evaluated via Monte Carlo simulations and on 7 real GNSS trajectories (16,155 epochs) collected in Haikou, Hainan, with RTK ground truth. Evaluations include Expected Calibration Error (ECE), reliability diagrams, trustworthiness separation analysis, and ROC analysis. CMM achieves 96.9\% accuracy and an ECE of 0.069---a 36\% reduction relative to the FMM baseline (ECE=0.107)---while the filtering posterior trustworthiness attains 3.4 times better correct--wrong separation than the baseline and an AUC of 0.606 for mismatch detection.
 % AUC results need to verify
@@ -145,7 +142,7 @@ junction ambiguities remain the dominant error sources.
 Despite these research, a critical limitation persists across the entire
 HMM map-matching literature: methods cited above assume an
 isotropic Gaussian emission model with a fixed, scalar error standard
-deviation. This simplification discards the per-epoch $2D$ covariance
+deviation. This simplification discards the per-epoch anisotropic covariance
 matrix $\boldsymbol{\Sigma}_t$ that modern GNSS receivers output through
 standard NMEA messages, treating positioning uncertainty as uniform or heuristics model in all
 directions regardless of satellite geometry, multipath conditions, or
@@ -403,25 +400,28 @@ monitoring, where reliability must be quantified, not assumed.
 
 \section{GNSS-Consistent HMM and Trustworthiness Evaluation}
 \label{sec:proposed}
-This section presents an enhanced HMM map matching formulation called 
-\textbf{Covariance-aware Map Matching} that incorporates GNSS positioning 
-uncertainty at three levels: candidate search region definition, candidate point generation, 
-and emission probability modeling. A final subsection introduces a 
-trustworthiness statistic derived from the joint likelihood of the optimal HMM path, 
-enabling consistency evaluation between GNSS observations and the road network. 
-For brevity, the proposed method is referred to as \textbf{CaMM} in the remainder of this paper.
+This section presents proposed GNSS-Consistent HMM map matching that incorporates GNSS positioning 
+uncertainty at three levels: candidate point generation, emission probability calculation, and 
+trustworthiness statistic derivation. For brevity, the proposed method is referred to as \textbf{GcHMM} in the remainder of this paper.
 
 \subsection{GNSS Stochastic Error model and Protection Level}
+\label{subsec:gnss_stochastic}
+Before GcHMM is introduced, the stochastic process of GNSS positioning is described as foundation of proposed method. This section is constructed by two parts: GNSS positioning process which derives the positioning results and corresponding error covariance, and protection level (PL) calculation by RAIM method which gives the positioning error upper bound under a conservative confidence probability such as $10^{-5}$.
 
 \subsubsection{GNSS positioning and state covariance}
 % WLS formulation, state covariance Σ_z, horizontal covariance Σ_i
 
-The per-epoch covariance matrix $\boldsymbol{\Sigma}_i$ that drives our anisotropic emission model originates from the GNSS position estimation process. For single-point positioning (SPP) with $m$ tracked satellites, the linearized pseudorange observation equation is
+The per-epoch covariance matrix $\boldsymbol{\Sigma}_i$ that drives our anisotropic emission model originates from the GNSS position estimation process. The basic GNSS pseudorange observation equation for a single satellite $s$ and receiver $r$ is given by
+\begin{equation}
+\rho_r^{(s)} = d_r^{(s)} + c\left(\delta t_r - \delta t^{(s)}\right) + \varepsilon_r^{(s)},
+\label{eq:pseudo_obs}
+\end{equation}
+where $\rho_r^{(s)}$ is the measured pseudorange, $d_r^{(s)}$ the true geometric range between receiver and satellite, $c$ the speed of light, $\delta t_r$ and $\delta t^{(s)}$ the receiver and satellite clock biases, and $\varepsilon_r^{(s)}$ the observation noise. For single-point positioning (SPP), the receiver coordinates and clock bias are estimated by linearizing Eq.~(\ref{eq:pseudo_obs}) about an a priori state and stacking observations from $m$ tracked satellites. The linearized pseudorange observation equation is
 \begin{equation}
 \mathbf{y} = \mathbf{H} \Delta\mathbf{x} + \boldsymbol{\varepsilon}, \quad \boldsymbol{\varepsilon} \sim \mathcal{N}(\mathbf{0}, \boldsymbol{\Sigma}_{\rho}),
 \label{eq:pseudo_linear}
 \end{equation}
-where $\mathbf{y} \in \mathbb{R}^{m}$ is the observed-minus-computed pseudorange residual vector, $\mathbf{H} \in \mathbb{R}^{m \times 4}$ the geometry matrix relating receiver position to satellite ranges, $\Delta\mathbf{x}$ the state correction (receiver position and clock bias), and $\boldsymbol{\Sigma}_{\rho}$ the pseudorange measurement noise covariance. The weighted least-squares (WLS) solution and its $4\times 4$ state covariance follow as~\cite{Zhang2018}
+where $\mathbf{y} \in \mathbb{R}^{m}$ is the observed-minus-computed pseudorange residual vector, $\mathbf{H} \in \mathbb{R}^{m \times 4}$ the geometry matrix relating receiver position to satellite ranges, $\Delta\mathbf{x}$ the state correction (receiver position and clock bias), and $\boldsymbol{\Sigma}_{\rho}$ the pseudorange measurement noise covariance. The weighted least-squares solution and its $4\times 4$ state covariance follow as~\cite{Zhang2018}
 \begin{equation}
 \widehat{\Delta\mathbf{x}} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{y},
 \qquad
@@ -429,7 +429,7 @@ where $\mathbf{y} \in \mathbb{R}^{m}$ is the observed-minus-computed pseudorange
 \label{eq:wls_cov}
 \end{equation}
 
-where $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$.
+where $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$. 
 \label{eq:wls_cov}.The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$, comprising the East and North components of the $3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$, is extracted for the emission model:
 \begin{equation}
 \boldsymbol{\Sigma}_i = \begin{bmatrix} \sigma_E^2 & \sigma_{EN} \\ \sigma_{EN} & \sigma_N^2 \end{bmatrix}.
@@ -445,14 +445,6 @@ Equation~\eqref{eq:wls_cov} reveals the two factors that shape $\boldsymbol{\Sig
     \label{fig:covariance}
 \end{figure}
 
-In practical GNSS receivers, this covariance matrix is often made available
-through standard output messages such as the NMEA \texttt{GST} sentence, which
-provides axis-aligned or rotated confidence ellipse parameters that can be
-converted into $\boldsymbol{\Sigma}_{pos}$. This covariance encapsulates the
-combined effects of satellite geometry, atmospheric errors, multipath, and
-measurement noise, and therefore serves as the statistical basis for the
-covariance-aware emission probability model introduced in the following
-subsection.
 
 \subsubsection{Integrity monitoring and horizontal protection level}
 
@@ -479,6 +471,13 @@ where $K$ is the integrity coefficient derived from the false-alarm and missed-d
 
 This method is computationally simple and statistically well-founded for single-fault scenarios. Advanced RAIM (ARAIM) with Multiple Hypothesis Solution Separation (MHSS)~\cite{Zhang2019} extends this to multi-fault, multi-constellation scenarios, and is noted as future work for extending the framework to safety-critical automotive applications requiring sub-meter alert limits.
 
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1\linewidth]{figs/PLsearch.png}
+    \caption{The illustration of road segment candidates search by protection level}
+    \label{fig:PLsearch}
+\end{figure}
+
 In this work, the HPL serves as an adaptive, geometry-driven candidate search radius: under good satellite geometry, HPL is small ($\sim$14\,m at $\sigma=1$\,m), tightening the search region; under degraded geometry, HPL grows proportionally, widening the search to maintain coverage. While HPL does not guarantee that the true position lies within the disk (the missed-detection probability is non-zero), it provides a principled, parameter-free mechanism for adapting the search region to real-time GNSS quality.
 
 
@@ -486,64 +485,8 @@ In this work, the HPL serves as an adaptive, geometry-driven candidate search ra
 \label{subsec:gnss_consistent_hmm}
 
 This section reformulates the HMM map-matching framework so that all core
-elements, including states, observations, candidate generation, and emission
-likelihoods, are explicitly consistent with the stochastic GNSS error model.
-Unlike the classical formulation, which assumes fixed isotropic uncertainty,
-the proposed framework incorporates the full covariance information
-$\boldsymbol{\Sigma}_i$ provided by modern GNSS
-receivers. This establishes a unified probabilistic model of uncertainty
-throughout the entire HMM pipeline.
-
-\subsubsection{Posterior Probabilities of Hidden States Conditioned on  Observations with Covariance}
-\label{subsubsec:states_observations}
-
-Let
-\[
-z_i \in \mathbb{R}^2
-\]
-denote the horizontal GNSS position estimate at epoch $i$, and let
-\[
-\boldsymbol{\Sigma}_i \in \mathbb{R}^{2\times 2}
-\]
-be the corresponding GNSS positioning covariance matrix obtained from the
-WLS solution or receiver-reported confidence ellipse from NMEA \texttt{GST}. 
-The pair $(z_i, \boldsymbol{\Sigma}_i)$ therefore
-represents a stochastic observation whose uncertainty is explicitly modeled.
-
-In the following part in this section, the primary ideas of deriving the posterior probability of candidates in each epoch and output the optimal one with its trustworthiness is described in detail. 
-
-Given the uncertainty-aware candidate search region, i.e. the
-HPL-based disk $\Omega_i$, the set of feasible road segments for epoch $i$
-is
-\[
-\mathcal{C}_{\mathrm{seg},i}
-=
-\{\, s \in \mathcal{G} : s \cap \Omega_i \neq \varnothing \,\}.
-\]
-
-Each state in the HMM corresponds to a specific candidate point obtained by
-projecting the GNSS observation onto one of these segments using the
-Mahalanobis projection operator:
-\[
-x_{i,j}
-\in
-\mathcal{C}_{\mathrm{pnt},i}
-=
-\Big\{
-\arg\min_{x \in s_j}
-f(z_i - x)^{\mathrm{T}} \boldsymbol{\Sigma}_i^{-1} (z_i - x)
-\;\Big|\;
-s_j \in \mathcal{C}_{\mathrm{seg},i}
-\Big\}.
-\]
-
-Thus, for each epoch $i$, the HMM state set is the uncertainty-consistent
-candidate collection
-\[
-\mathcal{C}_{pnt,i} = \{ x_{i,1}, x_{i,2}, \ldots \},
-\]
-and the emission probability model and transition model defined in later
-subsections operate entirely on this covariance-aware state representation.
+elements, including candidate generation, emission
+likelihoods, and posterior probabilities as trustworthiness are explicitly consistent with the stochastic GNSS error model.
 
 \subsubsection{HPL-based candidate segment search}
 % Your candidate road segment search using Ω_i and HPL_i
@@ -591,39 +534,19 @@ This HPL-driven candidate selection strategy ensures:
           without ad hoc tuning.
 \end{itemize}
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=1\linewidth]{figs/PLsearch.png}
-    \caption{The illustration of road segment candidates search by protection level}
-    \label{fig:PLsearch}
-\end{figure}
 
+\subsubsection{Covariance-Based Emission Probability}
+\label{subsubsec:states_observations}
 
-\subsubsection{Mahalanobis-based candidate point projection}
-% Your Mahalanobis projection section and figures
-Traditional HMM-based map-matching algorithms compute candidate points by performing a Euclidean orthogonal projection of each GNSS observation onto nearby road polylines. This procedure implicitly assumes an \emph{isotropic} GNSS error model, meaning that the uncertainty is the same in all directions. However, real GNSS positioning errors are highly \emph{anisotropic}, producing elongated covariance ellipses whose principal axes vary with satellite geometry and multipath.
+Let
+\[
+z_i \in \mathbb{R}^2,
+\qquad
+\boldsymbol{\Sigma}_i \in \mathbb{R}^{2\times 2}
+\]
+denote the horizontal GNSS position estimate at epoch $i$ and its associated covariance matrix, obtained from the WLS solution or NMEA \texttt{GST} output (Section~\ref{subsec:gnss_stochastic}). The pair $(z_i, \boldsymbol{\Sigma}_i)$ represents a stochastic observation whose uncertainty is explicitly modeled. The remainder of this section describes how this observation is used to generate candidate states, assign emission probabilities, and ultimately compute per-epoch trustworthiness scores.
 
-To account for this anisotropy, we adopt the \textbf{Mahalanobis projection} operator, which projects GNSS observations onto road segments in a manner consistent with the covariance structure. The Mahalanobis projection admits an equivalent geometric interpretation that further clarifies its advantage over Euclidean projection. Let $\boldsymbol{\Sigma}_i = \mathbf{L}_i \mathbf{L}_i^{\mathrm{T}}$ be the Cholesky factorization of the GNSS covariance matrix. By applying the linear whitening transformation
-
-\begin{equation}
-\tilde{z}_i = \mathbf{L}_i^{-1} z_i, 
-\quad
-\tilde{x} = \mathbf{L}_i^{-1} x
-\end{equation}
-
-the anisotropic covariance ellipse in the original coordinate frame is mapped to an isotropic unit circle in the whitened space. Under this transformation, the Mahalanobis distance satisfies
-
-\begin{equation}
-    \left(z_i - x\right)^{\mathrm{T}} \boldsymbol{\Sigma}_i^{-1} \left(z_i - x\right)
-=
-\|\tilde{z}_i - \tilde{x}\|_2^{\,2}
-\end{equation}
-
-which means that Mahalanobis projection in the original coordinates is exactly equivalent to Euclidean orthogonal projection in the whitened coordinates. Thus, the proposed approach can be interpreted as performing projection after shaping the coordinate frame so that the GNSS uncertainty becomes spherical. 
-
-This perspective highlights that the Mahalanobis projection is the statistically appropriate projection operator when GNSS errors are anisotropic, whereas Euclidean projection implicitly assumes a spherical uncertainty model that is generally violated in practical GNSS environments. Fig.~\ref{fig:measprob} provides a more detailed illustration of the emission probability under the anisotropic covariance model.
-
-The candidates are generated as following steps. For the $i\ th$ GNSS observation $z_i$ and corresponding candidate road segment $s_j$ in the segment candidates set , the projected point is defined as
+Given the HPL-based search disk $\Omega_i$ defined in Eq.~\eqref{eq:candidate_set}, the set of feasible road segments is $\mathcal{C}_{\mathrm{seg},i} = \{ s \in \mathcal{G} : s \cap \Omega_i \neq \varnothing \}$. Each HMM state corresponds to a candidate point obtained by projecting $z_i$ onto one of these segments using the \textbf{Mahalanobis projection} operator:
 \begin{equation}
 x_{i,j}
 =
@@ -631,44 +554,26 @@ x_{i,j}
 \left( z_i - x \right)^{\mathrm{T}}
 \boldsymbol{\Sigma}_i^{-1}
 \left( z_i - x \right),
+\qquad
+s_j \in \mathcal{C}_{\mathrm{seg},i},
 \label{eq:ma_project}
 \end{equation}
-where $\boldsymbol{\Sigma}_i$ is the $2\times 2$ horizontal covariance matrix reported by the GNSS receiver.
+yielding the candidate point set $\mathcal{C}_{\mathrm{pnt},i} = \{ x_{i,1}, x_{i,2}, \ldots \}$ for epoch $i$. Compared with conventional Euclidean (orthogonal) projection, which implicitly assumes isotropic uncertainty, the Mahalanobis operator weights the distance by the inverse covariance, thereby favoring candidates aligned with the principal axes of the GNSS error ellipse.
 
-The resulting set of candidate points is
+The Mahalanobis projection admits a clean geometric interpretation via the Cholesky factorization $\boldsymbol{\Sigma}_i = \mathbf{L}_i \mathbf{L}_i^{\mathrm{T}}$. Applying the linear whitening transformation
 \begin{equation}
-\mathcal{C}_{pnt,i}
-=
-\left\{
-x_{i,j}
-\;\middle|\;
-j:r_j \in \mathcal{C}_{seg,i}
-\right\},
+\tilde{z}_i = \mathbf{L}_i^{-1} z_i,
+\quad
+\tilde{x} = \mathbf{L}_i^{-1} x,
 \end{equation}
-where $\mathcal{C}_{seg,i}$ denotes the set of candidate segments obtained from the HPL-based search region. This covariance-consistent projection provides several advantages:
-\begin{itemize}
-    \item it aligns the projection direction with the principal axes of the GNSS error ellipse;
-    \item it avoids selecting candidates that lie along high-uncertainty axes, even if they are geometrically closer;
-    \item it naturally adapts to time-varying and environment-dependent GNSS uncertainty statistics.
-\end{itemize}
+the anisotropic covariance ellipse in the original frame becomes an isotropic unit circle, and
+\begin{equation}
+\left(z_i - x\right)^{\mathrm{T}} \boldsymbol{\Sigma}_i^{-1} \left(z_i - x\right)
+= \|\tilde{z}_i - \tilde{x}\|_2^{\,2}.
+\end{equation}
+Thus Mahalanobis projection in the original space is exactly Euclidean projection in the whitened space---the coordinate frame is reshaped so that GNSS uncertainty becomes spherical, and the geometrically closest point in that frame is the statistically most plausible candidate.
 
-\begin{figure}[htbp]
-    \centering
-    \includegraphics[width=1\linewidth]{figs/measprob.png}
-    \caption{Illustration of Euclidean projection versus Mahalanobis projection under an anisotropic GNSS covariance ellipse. 
-    The red point denotes the GNSS observation $z_i$; 
-    the yellow point is the Euclidean (orthogonal) projection onto the road segment; 
-    the green point is the Mahalanobis projection that minimizes the covariance-weighted distance. 
-    Because the GNSS error ellipse is elongated, the Mahalanobis projection correctly selects the candidate aligned with the principal axis of uncertainty, whereas the Euclidean projection incorrectly favors the geometrically closest point.}
-    \label{fig:measprob}
-\end{figure}
-
-
-\subsubsection{Covariance-based Gaussian emission probability}
-% Your emission probability with Σ_i and discussion (shorter; refer back to 3.1 for Σ_i)
-Given an observation $z_i$ and a candidate state $x_{i,j}$, the emission
-probability is modeled using a bivariate Gaussian distribution governed by the
-GNSS covariance matrix:
+Given a candidate state $x_{i,j}$, the emission probability is modeled as a bivariate Gaussian governed by the GNSS covariance:
 \begin{equation}
 p(z_i \mid x_{i,j})
 =
@@ -679,23 +584,18 @@ p(z_i \mid x_{i,j})
 \boldsymbol{\Sigma}_i^{-1}
 \mathbf{d}_{i,j}
 \right],
+\qquad
+\mathbf{d}_{i,j} = z_i - x_{i,j},
 \label{eq:cov_emission}
 \end{equation}
-where the positioning residual is
-\[
-\mathbf{d}_{i,j} = z_i - x_{i,j}.
-\]
+which is precisely the multivariate Gaussian density evaluated at the residual $\mathbf{d}_{i,j}$. Compared with the classical fixed-variance isotropic model $\mathcal{N}(0,\sigma^2 I)$, the covariance-based emission~\eqref{eq:cov_emission} incorporates the full GNSS error geometry: it tightens the likelihood under good satellite geometry, avoids overconfidence in degraded environments, and remains statistically consistent with the underlying GNSS stochastic model.
 
-Compared with the classical fixed-variance isotropic likelihood
-$\mathcal{N}(0,\sigma^2I)$, the covariance-based model incorporates the
-full GNSS error geometry and therefore
-
-\begin{itemize}
-    \item adapts automatically to real-time GNSS quality,
-    \item tightens the likelihood when satellite geometry is good, 
-    \item avoids overconfidence in degraded environments,
-    \item remains statistically consistent with the underlying GNSS stochastic model.
-\end{itemize}
+\begin{figure}[htbp]
+    \centering
+    \includegraphics[width=1\linewidth]{figs/measprob.png}
+    \caption{Mahalanobis projection and emission probability under the anisotropic covariance model. The road edge is colored by the emission density $p(z_i\mid x)$, illustrating how the Mahalanobis metric selects the statistically most plausible candidate rather than the geometrically closest point. The right panel shows the whitened space where the covariance ellipse becomes a unit circle and Mahalanobis distance reduces to Euclidean distance.}
+    \label{fig:measprob}
+\end{figure}
 
 \subsubsection{Probabilistic Normalization of the HMM}
 \label{subsec:prob_normalization}
@@ -879,7 +779,7 @@ network constraints.
 \begin{figure}
     \centering
     \includegraphics[width=1.0\linewidth]{figs/trustworthiness.png}
-    \caption{Trustworthiness visualized on real road networks (Hainan-06 dataset). Matched paths are colored by per-epoch TW on a red--yellow--green scale; gray lines show the underlying road network; blue dots are GNSS SPP observations. (a) Highway segment (Traj~11, seq~498--604): unambiguous geometry yields consistently high TW ($\langle\mathrm{tw}\rangle = 0.999$, 100\% correct). (b) Urban arterial segment (Traj~22, seq~300--499, 200 epochs): road geometry transitions from open highway through dense junctions cause TW to vary between 0.30 and 0.95 ($\langle\mathrm{tw}\rangle = 0.595$, 98\% correct), demonstrating that the metric responds to local topological complexity. (c) Wrong-match event with recovery (Traj~21, seq~2315--2350): at epochs 2324--2337 the matched edge diverges from GT (edges~10482/33965 instead of~33990) and TW drops to 0.05--0.79; after the path recovers to the correct edge at epoch~2338, TW immediately returns to~1.0. The drop in TW during the mismatch interval demonstrates that the filtering posterior correctly signals reduced confidence when the map-matched output is unreliable.}
+    \caption{Trustworthiness in different road segments}
     \label{fig:trustworthiness}
 \end{figure}
 
