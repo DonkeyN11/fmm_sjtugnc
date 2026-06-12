@@ -22,6 +22,17 @@ experiments/data/
 .vscode/
 
 
+# LaTeX auxiliary files
+*.aux
+*.synctex.gz
+*.fls
+*.blg
+*.out
+*.toc
+*.fdb_latexmk
+*.bcf
+*.run.xml
+
 # Doc files
 
 docs/html
