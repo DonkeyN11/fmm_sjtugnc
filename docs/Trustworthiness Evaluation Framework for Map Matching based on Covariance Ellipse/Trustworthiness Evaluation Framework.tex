@@ -27,8 +27,7 @@
 \title{Trustworthiness Evaluation of Map Matching Consistent with GNSS stochastic model}
 % framework；elliptical; EMM
 
-\author{Chenzhang Ning, Rong Yang, Xingqun Zhan, Yawei Zhai，Yulong Sun~\IEEEmembership{Shanghai Jiao Tong University,~Shanghai,~China,}
-        % <-this % stops a space
+\author{Chenzhang Ning, Rong Yang, Xingqun Zhan, Yawei Zhai, Yulong Sun, \\~\IEEEmembership{Shanghai Jiao Tong University,~Shanghai,~China,}% <-this % stops a space
 \thanks{Manuscript received XX XX, 2025; revised XX XX, 2025.}}
 
 % The paper headers
@@ -429,8 +428,7 @@ where $\mathbf{y} \in \mathbb{R}^{m}$ is the observed-minus-computed pseudorange
 \label{eq:wls_cov}
 \end{equation}
 
-where $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$. 
-\label{eq:wls_cov}.The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$, comprising the East and North components of the $3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$, is extracted for the emission model:
+where $\mathbf{W} = \boldsymbol{\Sigma}_{\rho}^{-1}$.The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i$, comprising the East and North components of the $3\times 3$ position sub-matrix $\boldsymbol{\Sigma}_{\text{pos}}$, is extracted for the emission model:
 \begin{equation}
 \boldsymbol{\Sigma}_i = \begin{bmatrix} \sigma_E^2 & \sigma_{EN} \\ \sigma_{EN} & \sigma_N^2 \end{bmatrix}.
 \label{eq:sigma_i}
@@ -554,7 +552,7 @@ x_{i,j}
 \left( z_i - x \right)^{\mathrm{T}}
 \boldsymbol{\Sigma}_i^{-1}
 \left( z_i - x \right),
-\qquad
+\quad
 x_j \in \mathcal{C}_{\mathrm{seg},i},
 \label{eq:ma_project}
 \end{equation}
@@ -844,7 +842,6 @@ Exp.~4 (mismatch) & $\sigma_{\rho}^{\text{true}} \in \{10,15,20,25,30\}$\,m,\;
 \multicolumn{2}{l}{\textbf{RAIM Configuration}} \\
 $P_{\text{FA}}$ (false alarm) & $10^{-5}$ \\
 $P_{\text{MD}}$ (missed detection) & $10^{-3}$ \\
-Max FDE exclusions & 3 (minimum 5 satellites) \\
 \midrule
 \multicolumn{2}{l}{\textbf{CMM Configuration}} \\
 $k$ (candidates) & 16 \\
