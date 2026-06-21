@@ -142,7 +142,11 @@ struct CovarianceMapMatchConfig {
                            int lag_steps_arg = 0,
                            double phmi_pl_multiplier_arg = 5.0,
                            double h0_prior_log_odds_arg = 0.0,
-                           double cumulative_reverse_pct_arg = 0.03);
+                           double cumulative_reverse_pct_arg = 0.03,
+                           double speed_weight_arg = 0.3,
+                           double heading_weight_arg = 0.2,
+                           double heading_sigma_rad_arg = M_PI / 6.0,
+                           double speed_tolerance_ratio_arg = 0.3);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -169,6 +173,12 @@ struct CovarianceMapMatchConfig {
     int lag_steps;                      /**< Fixed-lag smoothing steps: 0=realtime filtering, N=delay N steps for backward evidence */
     double h0_prior_log_odds;           /**< Log-odds of null hypothesis prior: log(P(H0)/P(¬H0)). Default 0 (λ₀=1). */
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
+
+    // --- Speed & Heading Constraint Weights for Emission Probability ---
+    double speed_weight;                /**< Weight for GPS speed plausibility factor in emission log-prob (default 0.3) */
+    double heading_weight;              /**< Weight for heading consistency factor in emission log-prob (default 0.2) */
+    double heading_sigma_rad;           /**< Heading angular tolerance in radians (default π/6 ≈ 30°) */
+    double speed_tolerance_ratio;       /**< Speed tolerance as fraction of expected speed (default 0.3 = 30%) */
 
     /**
      * Check if the configuration is valid or not
@@ -234,6 +244,8 @@ struct CMMTrajectory {
     std::vector<double> timestamps;                 /**< Timestamps of the trajectory */
     std::vector<CovarianceMatrix> covariances;      /**< Covariance matrices for each point */
     std::vector<double> protection_levels;          /**< Protection levels for each point */
+    std::vector<double> v_gps_vec;                  /**< GPS speed [m/s] between consecutive points; first = NaN */
+    std::vector<double> theta_gps_vec;              /**< GPS heading [rad from North]; first = NaN */
 
     CMMTrajectory() : id(0) {}
 
@@ -316,16 +328,92 @@ protected:
     /**
      * Calculate emission probability using covariance matrix (LOG-SPACE)
      * Returns the log of emission probability to prevent numerical underflow.
+     *
+     * Optionally incorporates GPS speed plausibility and heading consistency
+     * factors to constrain the emission model.  Pass NaN for v_gps or theta_gps
+     * to skip the corresponding constraint (backward compatible default).
+     *
      * @param point_observed observed GPS point
      * @param point_candidate candidate point on road network
      * @param covariance covariance matrix of GPS observation
-     * @param config CMM configuration containing min_gps_error_degrees
+     * @param config CMM configuration containing all weights and tolerances
+     * @param v_gps GPS speed computed from consecutive observations (m/s).
+     *        NaN skips the speed plausibility factor.
+     * @param theta_gps GPS heading computed from consecutive observations (rad).
+     *        NaN skips the heading consistency factor.
+     * @param theta_road road direction at the candidate position (rad).
+     *        NaN skips heading consistency (must be valid together with theta_gps).
+     * @param road_class road classification string (e.g. "motorway", "primary").
+     *        Empty string defaults to "unclassified" (11 m/s) when v_gps is valid.
      * @return log emission probability
      */
     double calculate_emission_log_prob(const CORE::Point &point_observed,
                                        const CORE::Point &point_candidate,
                                        const CovarianceMatrix &covariance,
-                                       const CovarianceMapMatchConfig &config) const;
+                                       const CovarianceMapMatchConfig &config,
+                                       double v_gps = std::numeric_limits<double>::quiet_NaN(),
+                                       double theta_gps = std::numeric_limits<double>::quiet_NaN(),
+                                       double theta_road = std::numeric_limits<double>::quiet_NaN(),
+                                       const std::string &road_class = "") const;
+
+    /**
+     * Compute GPS speed between two consecutive points.
+     * @param p1 first point
+     * @param p2 second point
+     * @param dt time interval in seconds
+     * @return speed in m/s (or infinity if dt <= 0)
+     */
+    static double compute_gps_speed(const CORE::Point &p1,
+                                     const CORE::Point &p2,
+                                     double dt);
+
+    /**
+     * Compute GPS heading (bearing) from p1 to p2.
+     * Result in radians, measured clockwise from North.
+     * @param p1 first point
+     * @param p2 second point
+     * @return heading in [0, 2π), or NaN if points are coincident
+     */
+    static double compute_gps_heading(const CORE::Point &p1,
+                                       const CORE::Point &p2);
+
+    /**
+     * Compute road direction (bearing) from the segment defined by two points.
+     * Result in radians, measured clockwise from North.
+     * @param p1 start point of a road segment
+     * @param p2 end point of a road segment
+     * @return direction in [0, 2π), or NaN if points are coincident
+     */
+    static double compute_road_direction(const CORE::Point &p1,
+                                          const CORE::Point &p2);
+
+    /**
+     * Compute the road direction (bearing) at a given offset along an edge.
+     * Walks the edge polyline to find the segment containing the offset,
+     * then returns the bearing of that segment.
+     * @param edge pointer to the road edge
+     * @param offset distance from start of edge polyline (meters)
+     * @return direction in radians [0, 2π), or NaN if edge is degenerate
+     */
+    static double get_road_direction_at_offset(const NETWORK::Edge *edge,
+                                                double offset);
+
+    /**
+     * Look up the expected vehicle speed (m/s) for a given road class string.
+     * Map matching against standard highway tag values from OpenStreetMap.
+     *
+     * Default table:
+     *   motorway/trunk:  33 m/s (120 km/h)
+     *   primary:         22 m/s (80 km/h)
+     *   secondary:       17 m/s (60 km/h)
+     *   tertiary:        13 m/s (45 km/h)
+     *   residential/service/living_street: 8 m/s (30 km/h)
+     *   unclassified/road/default: 11 m/s (40 km/h)
+     *
+     * @param road_class OSM highway tag value (case-insensitive)
+     * @return expected speed in m/s
+     */
+    static double get_expected_speed_for_class(const std::string &road_class);
 
     /**
      * Search candidates based on protection level
@@ -333,13 +421,17 @@ protected:
      * @param covariances covariance matrices for each point
      * @param protection_levels protection levels for each point
      * @param config CMM configuration
+     * @param v_gps_vec optional pre-computed GPS speeds per point (empty = skip)
+     * @param theta_gps_vec optional pre-computed GPS headings per point (empty = skip)
      * @return trajectory candidates with log-space emission probabilities
      */
     CandidateSearchResult search_candidates_with_protection_level(
         const CORE::LineString &geom,
         const std::vector<CovarianceMatrix> &covariances,
         const std::vector<double> &protection_levels,
-        const CovarianceMapMatchConfig &config) const;
+        const CovarianceMapMatchConfig &config,
+        const std::vector<double> &v_gps_vec = {},
+        const std::vector<double> &theta_gps_vec = {}) const;
 
     /**
      * Get shortest path distance between two candidates

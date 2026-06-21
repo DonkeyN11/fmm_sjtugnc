@@ -584,7 +584,11 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    int lag_steps_arg,
                                                    double phmi_pl_multiplier_arg,
                                                    double h0_prior_log_odds_arg,
-                                                   double cumulative_reverse_pct_arg)
+                                                   double cumulative_reverse_pct_arg,
+                                                   double speed_weight_arg,
+                                                   double heading_weight_arg,
+                                                   double heading_sigma_rad_arg,
+                                                   double speed_tolerance_ratio_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -602,7 +606,11 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       lag_steps(lag_steps_arg),
       phmi_pl_multiplier(phmi_pl_multiplier_arg),
       h0_prior_log_odds(h0_prior_log_odds_arg),
-      cumulative_reverse_pct(cumulative_reverse_pct_arg) {
+      cumulative_reverse_pct(cumulative_reverse_pct_arg),
+      speed_weight(speed_weight_arg),
+      heading_weight(heading_weight_arg),
+      heading_sigma_rad(heading_sigma_rad_arg),
+      speed_tolerance_ratio(speed_tolerance_ratio_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -617,6 +625,8 @@ void CovarianceMapMatchConfig::print() const {
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
     SPDLOG_INFO("map_error_std {} background_prob {} phmi {} lag_steps {}", map_error_std, background_prob, phmi, lag_steps);
     SPDLOG_INFO("h0_prior_log_odds {} cumulative_reverse_pct {}", h0_prior_log_odds, cumulative_reverse_pct);
+    SPDLOG_INFO("speed_weight {} heading_weight {} heading_sigma_rad {} speed_tolerance_ratio {}",
+                speed_weight, heading_weight, heading_sigma_rad, speed_tolerance_ratio);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -653,6 +663,12 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double h0_prior_log_odds = xml_data.get("config.parameters.h0_prior_log_odds", 0.0);
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
 
+    // Speed and heading constraint parameters
+    double speed_weight = xml_data.get("config.parameters.speed_weight", 0.3);
+    double heading_weight = xml_data.get("config.parameters.heading_weight", 0.2);
+    double heading_sigma_rad = xml_data.get("config.parameters.heading_sigma_rad", M_PI / 6.0);
+    double speed_tolerance_ratio = xml_data.get("config.parameters.speed_tolerance_ratio", 0.3);
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
                                     filtered,
@@ -660,7 +676,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct};
+                                    cumulative_reverse_pct,
+                                    speed_weight, heading_weight,
+                                    heading_sigma_rad, speed_tolerance_ratio};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -693,6 +711,12 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
 
+    // Speed and heading constraint parameters
+    double speed_weight = arg_data.count("speed_weight") ? arg_data["speed_weight"].as<double>() : 0.3;
+    double heading_weight = arg_data.count("heading_weight") ? arg_data["heading_weight"].as<double>() : 0.2;
+    double heading_sigma_rad = arg_data.count("heading_sigma_rad") ? arg_data["heading_sigma_rad"].as<double>() : M_PI / 6.0;
+    double speed_tolerance_ratio = arg_data.count("speed_tolerance_ratio") ? arg_data["speed_tolerance_ratio"].as<double>() : 0.3;
+
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
                                     filtered,
@@ -700,7 +724,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct};
+                                    cumulative_reverse_pct,
+                                    speed_weight, heading_weight,
+                                    heading_sigma_rad, speed_tolerance_ratio};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -743,7 +769,15 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("h0_prior_log_odds", "Log-odds of H0 prior: log(P(H0)/P(¬H0))",
          cxxopts::value<double>()->default_value("0.0"))
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
-         cxxopts::value<double>()->default_value("0.03"));
+         cxxopts::value<double>()->default_value("0.03"))
+        ("speed_weight", "Weight for GPS speed plausibility factor in emission log-prob (0.3)",
+         cxxopts::value<double>()->default_value("0.3"))
+        ("heading_weight", "Weight for heading consistency factor in emission log-prob (0.2)",
+         cxxopts::value<double>()->default_value("0.2"))
+        ("heading_sigma_rad", "Heading angular tolerance in radians (default pi/6 ~ 30 deg)",
+         cxxopts::value<double>()->default_value("0.5236"))
+        ("speed_tolerance_ratio", "Speed tolerance as fraction of expected speed (0.3 = 30%)",
+         cxxopts::value<double>()->default_value("0.3"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -767,6 +801,10 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--phmi_pl_multiplier (optional) <double>: PHMI protection level multiplier (5.0)\n";
     oss << "--h0_prior_log_odds (optional) <double>: Log-odds of H0 prior (0.0)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
+    oss << "--speed_weight (optional) <double>: Weight for GPS speed plausibility in emission log-prob (0.3)\n";
+    oss << "--heading_weight (optional) <double>: Weight for heading consistency in emission log-prob (0.2)\n";
+    oss << "--heading_sigma_rad (optional) <double>: Heading angular tolerance in radians (pi/6 ~ 30 deg)\n";
+    oss << "--speed_tolerance_ratio (optional) <double>: Speed tolerance as fraction of expected speed (0.3 = 30%)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -783,17 +821,142 @@ bool CovarianceMapMatchConfig::validate() const {
         return false;
     }
     if (max_interval < 0) return false;
+    if (speed_weight < 0 || heading_weight < 0 ||
+        heading_sigma_rad <= 0 || speed_tolerance_ratio <= 0) {
+        SPDLOG_CRITICAL("Invalid speed/heading parameter speed_weight {} heading_weight {} "
+                       "heading_sigma_rad {} speed_tolerance_ratio {}",
+                       speed_weight, heading_weight, heading_sigma_rad, speed_tolerance_ratio);
+        return false;
+    }
     return true;
 }
 
+// ============================================================================
+// Helper functions for speed and heading constraints in the emission model
+// ============================================================================
+
+double CovarianceMapMatch::compute_gps_speed(const CORE::Point &p1,
+                                              const CORE::Point &p2,
+                                              double dt) {
+    if (dt <= 0.0) {
+        return std::numeric_limits<double>::infinity();
+    }
+    double dx = boost::geometry::get<0>(p2) - boost::geometry::get<0>(p1);
+    double dy = boost::geometry::get<1>(p2) - boost::geometry::get<1>(p1);
+    double dist = std::sqrt(dx * dx + dy * dy);
+    return dist / dt;
+}
+
+double CovarianceMapMatch::compute_gps_heading(const CORE::Point &p1,
+                                                const CORE::Point &p2) {
+    double dx = boost::geometry::get<0>(p2) - boost::geometry::get<0>(p1);
+    double dy = boost::geometry::get<1>(p2) - boost::geometry::get<1>(p1);
+    double dist_sq = dx * dx + dy * dy;
+    if (dist_sq < 1e-30) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    // atan2(dx, dy) gives bearing clockwise from North in [0, 2π)
+    double heading = std::atan2(dx, dy);
+    if (heading < 0.0) {
+        heading += 2.0 * M_PI;
+    }
+    return heading;
+}
+
+double CovarianceMapMatch::compute_road_direction(const CORE::Point &p1,
+                                                   const CORE::Point &p2) {
+    // Same bearing computation as compute_gps_heading
+    double dx = boost::geometry::get<0>(p2) - boost::geometry::get<0>(p1);
+    double dy = boost::geometry::get<1>(p2) - boost::geometry::get<1>(p1);
+    double dist_sq = dx * dx + dy * dy;
+    if (dist_sq < 1e-30) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    double direction = std::atan2(dx, dy);
+    if (direction < 0.0) {
+        direction += 2.0 * M_PI;
+    }
+    return direction;
+}
+
+double CovarianceMapMatch::get_road_direction_at_offset(
+    const NETWORK::Edge *edge, double offset) {
+    if (edge == nullptr) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+    const CORE::LineString &geom = edge->geom;
+    int num_pts = geom.get_num_points();
+    if (num_pts < 2) {
+        return std::numeric_limits<double>::quiet_NaN();
+    }
+
+    // Walk the edge polyline segments accumulating length to find
+    // the segment that contains the given offset.
+    double accumulated = 0.0;
+    for (int i = 0; i < num_pts - 1; ++i) {
+        CORE::Point p1 = geom.get_point(i);
+        CORE::Point p2 = geom.get_point(i + 1);
+        double seg_len = boost::geometry::distance(p1, p2);
+        if (offset >= accumulated && offset <= accumulated + seg_len + 1e-8) {
+            return CovarianceMapMatch::compute_road_direction(p1, p2);
+        }
+        accumulated += seg_len;
+    }
+
+    // If offset is beyond the polyline length (clamped at the end),
+    // return direction of the last segment
+    if (num_pts >= 2) {
+        return CovarianceMapMatch::compute_road_direction(
+            geom.get_point(num_pts - 2), geom.get_point(num_pts - 1));
+    }
+
+    return std::numeric_limits<double>::quiet_NaN();
+}
+
+double CovarianceMapMatch::get_expected_speed_for_class(
+    const std::string &road_class) {
+    // Convert road class to lowercase for case-insensitive matching
+    std::string rc = road_class;
+    std::transform(rc.begin(), rc.end(), rc.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    // Speed lookup table based on OSM highway tag values
+    if (rc == "motorway" || rc == "motorway_link" ||
+        rc == "trunk" || rc == "trunk_link") {
+        return 33.0;   // 120 km/h
+    }
+    if (rc == "primary" || rc == "primary_link") {
+        return 22.0;   // 80 km/h
+    }
+    if (rc == "secondary" || rc == "secondary_link") {
+        return 17.0;   // 60 km/h
+    }
+    if (rc == "tertiary" || rc == "tertiary_link") {
+        return 13.0;   // 45 km/h
+    }
+    if (rc == "residential" || rc == "service" ||
+        rc == "living_street") {
+        return 8.0;    // 30 km/h
+    }
+    // Default: unclassified, road, or unknown
+    return 11.0;        // 40 km/h
+}
+
+// ============================================================================
 // Implementation of CovarianceMapMatch
+// ============================================================================
+
 // Evaluate log emission probabilities by respecting each observation's covariance model.
 // Returns log(P) to prevent numerical underflow.
 double CovarianceMapMatch::calculate_emission_log_prob(
     const CORE::Point &point_observed,
     const CORE::Point &point_candidate,
     const CovarianceMatrix &covariance,
-    const CovarianceMapMatchConfig &config) const {
+    const CovarianceMapMatchConfig &config,
+    double v_gps,
+    double theta_gps,
+    double theta_road,
+    const std::string &road_class) const {
 
     double obs_x = boost::geometry::get<0>(point_observed);
     double obs_y = boost::geometry::get<1>(point_observed);
@@ -825,9 +988,43 @@ double CovarianceMapMatch::calculate_emission_log_prob(
                                  2 * cov_inv.m[0][1] * dx * dy +
                                  cov_inv.m[1][1] * dy * dy;
 
-    // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + dist^2)
+    // ── Base log Gaussian from Mahalanobis distance ──
     static const double log_2pi = std::log(2.0 * M_PI);
-    return -0.5 * (log_2pi + std::log(det + 1e-12) + mahalanobis_dist_sq);
+    double log_emission = -0.5 * (log_2pi + std::log(det + 1e-12) + mahalanobis_dist_sq);
+
+    // ── Speed plausibility factor ──
+    // Penalizes the mismatch between GPS-derived speed and the expected speed
+    // for the candidate's road class. NaN v_gps skips this constraint.
+    if (!std::isnan(v_gps) && v_gps > 0.0 && v_gps < 1e6) {
+        double v_expected = get_expected_speed_for_class(road_class);
+        double v_tolerance = config.speed_tolerance_ratio * v_expected;
+        double delta_v = std::fabs(v_gps - v_expected);
+        // Log speed score: -0.5 * (Δv / v_tolerance)^2
+        double log_s_speed = -0.5 * (delta_v / v_tolerance) * (delta_v / v_tolerance);
+        // If speed deviation exceeds 2× tolerance, apply a fixed heavy penalty
+        // to strongly down-weight implausible candidates without rejecting them outright.
+        if (delta_v > 2.0 * v_tolerance) {
+            log_s_speed = -0.5 * 4.0;  // exp(-2) ≈ 0.135
+        }
+        log_emission += config.speed_weight * log_s_speed;
+    }
+
+    // ── Heading consistency factor ──
+    // Penalizes angular mismatch between GPS heading and road direction.
+    // If either theta_gps or theta_road is NaN, this constraint is skipped.
+    if (!std::isnan(theta_gps) && !std::isnan(theta_road)) {
+        double delta_theta = std::fabs(theta_gps - theta_road);
+        // Normalize angular difference to [0, π]
+        if (delta_theta > M_PI) {
+            delta_theta = 2.0 * M_PI - delta_theta;
+        }
+        // Log heading score: -0.5 * (Δθ / σ_θ)^2
+        double log_s_head = -0.5 * (delta_theta / config.heading_sigma_rad) *
+                                     (delta_theta / config.heading_sigma_rad);
+        log_emission += config.heading_weight * log_s_head;
+    }
+
+    return log_emission;
 }
 
 // Enumerate candidate projections per point by respecting both covariance ellipses
@@ -836,7 +1033,9 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
     const CORE::LineString &geom,
     const std::vector<CovarianceMatrix> &covariances,
     const std::vector<double> &protection_levels,
-    const CovarianceMapMatchConfig &config) const {
+    const CovarianceMapMatchConfig &config,
+    const std::vector<double> &v_gps_vec,
+    const std::vector<double> &theta_gps_vec) const {
 
     SPDLOG_DEBUG("Search candidates with protection level for {} points", geom.get_num_points());
 
@@ -848,6 +1047,12 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
     for (int i = 0; i < num_points; ++i) {
         CORE::Point point = geom.get_point(i);
+        // Extract pre-computed GPS speed and heading for this point (if available)
+        double v_gps_i = (!v_gps_vec.empty() && i < static_cast<int>(v_gps_vec.size()))
+                         ? v_gps_vec[i] : std::numeric_limits<double>::quiet_NaN();
+        double theta_gps_i = (!theta_gps_vec.empty() && i < static_cast<int>(theta_gps_vec.size()))
+                             ? theta_gps_vec[i] : std::numeric_limits<double>::quiet_NaN();
+
         // Create a copy to allow modification (scaling)
         CovarianceMatrix cov = covariances[i];
         
@@ -1039,6 +1244,36 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                             log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahal_sq);
                         }
                     }
+
+                    // ── Speed plausibility penalty (per-candidate) ──
+                    if (!std::isnan(v_gps_i) && v_gps_i > 0.0 && v_gps_i < 1e6) {
+                        double v_expected = get_expected_speed_for_class("");
+                        double v_tolerance = config.speed_tolerance_ratio * v_expected;
+                        double delta_v = std::fabs(v_gps_i - v_expected);
+                        double log_s_speed = -0.5 * (delta_v / v_tolerance) *
+                                                    (delta_v / v_tolerance);
+                        if (delta_v > 2.0 * v_tolerance) {
+                            log_s_speed = -0.5 * 4.0;
+                        }
+                        log_probability += config.speed_weight * log_s_speed;
+                    }
+
+                    // ── Heading consistency penalty (per-candidate) ──
+                    if (!std::isnan(theta_gps_i)) {
+                        double theta_road = get_road_direction_at_offset(
+                            entry.candidate.edge, entry.candidate.offset);
+                        if (!std::isnan(theta_road)) {
+                            double delta_theta = std::fabs(theta_gps_i - theta_road);
+                            if (delta_theta > M_PI) {
+                                delta_theta = 2.0 * M_PI - delta_theta;
+                            }
+                            double log_s_head = -0.5 *
+                                (delta_theta / config.heading_sigma_rad) *
+                                (delta_theta / config.heading_sigma_rad);
+                            log_probability += config.heading_weight * log_s_head;
+                        }
+                    }
+
                     raw_probabilities.push_back(log_probability);
                 }
 
@@ -1093,6 +1328,34 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                                                       cov_inv_eff.m[1][1] * dy * dy;
                         // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + mahalanobis_dist_sq)
                         log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahalanobis_dist_sq);
+                    }
+                }
+
+                // ── Speed plausibility penalty (per-candidate) ──
+                if (!std::isnan(v_gps_i) && v_gps_i > 0.0 && v_gps_i < 1e6) {
+                    double v_expected = get_expected_speed_for_class("");
+                    double v_tolerance = config.speed_tolerance_ratio * v_expected;
+                    double delta_v = std::fabs(v_gps_i - v_expected);
+                    double log_s_speed = -0.5 * (delta_v / v_tolerance) *
+                                                (delta_v / v_tolerance);
+                    if (delta_v > 2.0 * v_tolerance) {
+                        log_s_speed = -0.5 * 4.0;
+                    }
+                    log_probability += config.speed_weight * log_s_speed;
+                }
+
+                // ── Heading consistency penalty (per-candidate) ──
+                if (!std::isnan(theta_gps_i)) {
+                    double theta_road = get_road_direction_at_offset(cand.edge, cand.offset);
+                    if (!std::isnan(theta_road)) {
+                        double delta_theta = std::fabs(theta_gps_i - theta_road);
+                        if (delta_theta > M_PI) {
+                            delta_theta = 2.0 * M_PI - delta_theta;
+                        }
+                        double log_s_head = -0.5 *
+                            (delta_theta / config.heading_sigma_rad) *
+                            (delta_theta / config.heading_sigma_rad);
+                        log_probability += config.heading_weight * log_s_head;
                     }
                 }
 
@@ -1286,7 +1549,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     #pragma omp critical(search_candidates_section)
     {
         candidate_result = search_candidates_with_protection_level(
-            traj.geom, traj.covariances, traj.protection_levels, config);
+            traj.geom, traj.covariances, traj.protection_levels, config,
+            traj.v_gps_vec, traj.theta_gps_vec);
     }
 
     const Traj_Candidates &tc_raw = candidate_result.candidates;
