@@ -40,8 +40,8 @@ import matplotlib.pyplot as plt
 
 DPI = 300
 plt.rcParams.update({
-    "font.size": 7, "axes.labelsize": 8, "axes.titlesize": 9,
-    "legend.fontsize": 6, "xtick.labelsize": 6, "ytick.labelsize": 6,
+    "font.size": 9, "axes.labelsize": 10, "axes.titlesize": 11,
+    "legend.fontsize": 8, "xtick.labelsize": 8, "ytick.labelsize": 8,
     "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight",
 })
 
@@ -412,12 +412,12 @@ def plot_degraded_comparison(cmm_all, fmm_all, output_dir):
             if m["label"] == cond: return m.get(key, default) or default
         return default
 
-    fig, axes = plt.subplots(2, 3, figsize=(13, 8))
+    fig, axes = plt.subplots(3, 2, figsize=(7.5, 10.5))
     ax1, ax2, ax3, ax4, ax5, ax6 = axes.flat
 
     # (a) Point error
     ax1.bar(x - bar_w/2, [_get(cmm_all, c, "point_error_mean") for c in cond_order],
-            bar_w, color="#2166ac", label="CMM", edgecolor="white", lw=0.5)
+            bar_w, color="#2166ac", label="TMM", edgecolor="white", lw=0.5)
     ax1.bar(x + bar_w/2, [_get(fmm_all, c, "point_error_mean") for c in cond_order],
             bar_w, color="#b2182b", label="FMM", edgecolor="white", lw=0.5)
     ax1.set_xticks(x); ax1.set_xticklabels(x_labels, rotation=15, ha="right")
@@ -466,7 +466,7 @@ def plot_degraded_comparison(cmm_all, fmm_all, output_dir):
         ax5.plot(confs, accs, "o-", color=CONDITION_COLORS.get(cond, "gray"),
                  lw=1.0, ms=5, label=f"{CONDITION_LABELS[cond]} (ECE={ece:.3f})")
     ax5.set_xlabel("Confidence"); ax5.set_ylabel("Accuracy")
-    ax5.set_title("(e) Reliability Diagram — CMM"); ax5.legend(fontsize=5)
+    ax5.set_title("(e) Reliability Diagram — CMM"); ax5.legend(fontsize=8)
     ax5.grid(alpha=0.3)
 
     # (f) ROC curves — CMM only
@@ -479,10 +479,10 @@ def plot_degraded_comparison(cmm_all, fmm_all, output_dir):
             ax6.plot(fpr, tpr, lw=1.2, color=CONDITION_COLORS.get(cond, "gray"),
                      label=f"{CONDITION_LABELS[cond]} (AUC={auc:.3f})")
     ax6.set_xlabel("FPR"); ax6.set_ylabel("TPR")
-    ax6.set_title("(f) ROC Curves — CMM"); ax6.legend(fontsize=5)
+    ax6.set_title("(f) ROC Curves — CMM"); ax6.legend(fontsize=8)
     ax6.grid(alpha=0.3)
 
-    fig.suptitle("CMM vs FMM Under Degraded Conditions (σ=30m)", fontsize=11, fontweight="bold")
+    fig.suptitle("TMM vs FMM Under Degraded Conditions (σ=30m)", fontsize=13, fontweight="bold")
     fig.tight_layout()
     fig.savefig(output_dir / "degraded_comparison.png", dpi=DPI)
     plt.close(fig)
@@ -577,6 +577,21 @@ def write_summary(cmm_all, fmm_all, output_dir):
         w = csv.DictWriter(f, fieldnames=fields, extrasaction="ignore")
         w.writeheader(); w.writerows(rows)
     print(f"  Summary: {out}")
+
+    # Save FULL metrics as JSON (including bins, ROC data for figure regeneration)
+    json_out = output_dir / "degraded_full.json"
+    def _serialize(m_list):
+        out_list = []
+        for m in m_list:
+            d = dict(m)
+            for k in ("fpr", "tpr"):
+                if k in d and d[k] is not None:
+                    d[k] = d[k].tolist() if hasattr(d[k], "tolist") else list(d[k])
+            out_list.append(d)
+        return out_list
+    with open(json_out, "w") as jf:
+        json.dump({"cmm": _serialize(cmm_all), "fmm": _serialize(fmm_all)}, jf, indent=2)
+    print(f"  Full metrics JSON: {json_out}")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

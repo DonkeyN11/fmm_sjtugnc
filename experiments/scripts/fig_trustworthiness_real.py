@@ -21,8 +21,8 @@ OUT.mkdir(parents=True, exist_ok=True)
 DPI = 300
 C = {"road":"#D5D8DC","tw_high":"#27AE60","tw_med":"#F39C12","tw_low":"#C0392B",
      "obs":"#2471A3","obs_a":"#2471A320","match":"#1A5276","gt":"#1E8449"}
-plt.rcParams.update({"font.family":"DejaVu Sans","font.size":7.5,"axes.titlesize":9.5,
-    "axes.labelsize":8,"legend.fontsize":7,"figure.dpi":DPI,"savefig.dpi":DPI,
+plt.rcParams.update({"font.family":"DejaVu Sans","font.size":9,"axes.titlesize":10.5,
+    "axes.labelsize":9,"legend.fontsize":8,"figure.dpi":DPI,"savefig.dpi":DPI,
     "savefig.bbox":"tight","text.usetex":False})
 
 # ── Load road network ──
@@ -63,8 +63,9 @@ seg_a = get_range(rows, "11", 498, 604)
 # (b) Traj 22 varied geometry: seq 300-499, 200 epochs, TW 0.30-0.95
 seg_b = get_range(rows, "22", 300, 499)
 # (c) Traj 21 wrong-match with TW drop then recovery: seq 2315-2350
-# Wrong at 2324-2337 (TW~0.05-0.79), recovers at 2338 (TW→1.0)
 seg_c = get_range(rows, "21", 2315, 2350)
+# (d) Traj 23 urban intersection: seq 1200-1350, moderate TW variation with road topology change
+seg_d = get_range(rows, "23", 1200, 1350)
 
 def plot_panel(ax, seg, roads, bbox_pad=0.005, title=""):
     """Plot road network + trajectory colored by TW."""
@@ -83,14 +84,16 @@ def plot_panel(ax, seg, roads, bbox_pad=0.005, title=""):
 
     ax.set_xlim(lo, hi); ax.set_ylim(bo, to_); ax.set_aspect("equal")
 
-    # GNSS observations as faint dots
-    ax.scatter(oxs, oys, s=3, c=C["obs"], alpha=0.15, zorder=2)
+    # GNSS observations — visible raw fixes with connecting trajectory
+    ax.scatter(oxs, oys, s=22, c=C["obs"], alpha=0.6, zorder=3, ec="white", lw=0.5)
+    # Faint line connecting raw GNSS observations to show trajectory shape
+    ax.plot(oxs, oys, color=C["obs"], alpha=0.35, lw=1.2, zorder=2, ls="--")
 
     # Matched path colored by TW
     norm = plt.Normalize(0, 1)
     points = np.array([xs, ys]).T.reshape(-1,1,2)
     segments_lc = np.concatenate([points[:-1], points[1:]], axis=1)
-    lc = LineCollection(segments_lc, cmap="RdYlGn", norm=norm, linewidth=2.5, zorder=4)
+    lc = LineCollection(segments_lc, cmap="RdYlGn", norm=norm, linewidth=3.5, zorder=4)
     lc.set_array(tws[1:])
     ax.add_collection(lc)
 
@@ -99,31 +102,32 @@ def plot_panel(ax, seg, roads, bbox_pad=0.005, title=""):
     cbar = plt.colorbar(sm, ax=ax, shrink=0.6, aspect=20, pad=0.02)
     cbar.set_label("tw$_t$", fontsize=7); cbar.ax.tick_params(labelsize=6)
 
-    # Start marker
-    ax.scatter(xs[0], ys[0], s=40, c=C["match"], marker="o", zorder=5, ec="white", lw=0.8)
-    ax.scatter(xs[-1], ys[-1], s=30, c=C["match"], marker="s", zorder=5, ec="white", lw=0.8)
+    # Start/end markers
+    ax.scatter(xs[0], ys[0], s=80, c=C["match"], marker="o", zorder=5, ec="white", lw=1.2)
+    ax.scatter(xs[-1], ys[-1], s=60, c=C["match"], marker="s", zorder=5, ec="white", lw=1.0)
 
     # Info box
     mean_tw = np.mean(tws)
     corr_pct = np.mean([s["correct"] for s in seg])*100
     color_tag = C["tw_high"] if mean_tw>0.9 else (C["tw_med"] if mean_tw>0.5 else C["tw_low"])
     tag = "HIGH" if mean_tw>0.9 else ("MEDIUM" if mean_tw>0.5 else "LOW")
-    ax.text(0.03, 0.97, f"TW: {tag}\n$\\langle\\mathrm{{tw}}\\rangle$={mean_tw:.3f}\n{corr_pct:.0f}% correct",
-            transform=ax.transAxes, ha="left", va="top", fontsize=7.5, fontweight="bold", color=color_tag,
+    ax.text(0.03, 0.97, f"TW: {tag} | $\\langle\\mathrm{{tw}}\\rangle$={mean_tw:.3f} | {corr_pct:.0f}% correct | {len(seg)} epochs",
+            transform=ax.transAxes, ha="left", va="top", fontsize=9, fontweight="bold", color=color_tag,
             bbox=dict(boxstyle="round,pad=0.3", fc="white", ec=color_tag, alpha=0.9))
 
     ax.set_xticks([]); ax.set_yticks([]); ax.set_title(title, pad=6, fontweight="bold")
 
 # ── Plot ──
-fig, axes = plt.subplots(1, 3, figsize=(7.5, 2.8))
+fig, axes = plt.subplots(2, 2, figsize=(14, 12))
 
-plot_panel(axes[0], seg_a, all_roads, 0.004, "(a) Highway — High TW, Unambiguous")
-plot_panel(axes[1], seg_b, all_roads, 0.008, "(b) Urban Arterial — TW Varies with Road Geometry")
-plot_panel(axes[2], seg_c, all_roads, 0.004, "(c) Dual Carriageway — Low TW, False Lock")
+plot_panel(axes[0, 0], seg_a, all_roads, 0.004, "(a) Highway — High TW, Unambiguous")
+plot_panel(axes[0, 1], seg_b, all_roads, 0.008, "(b) Urban Arterial — TW Varies with Road Geometry")
+plot_panel(axes[1, 0], seg_c, all_roads, 0.004, "(c) Dual Carriageway — Low TW, False Lock")
+plot_panel(axes[1, 1], seg_d, all_roads, 0.004, "(d) Urban Intersection — TW Drops at Topology Change")
 
 fig.suptitle("Trustworthiness on Real Road Networks: Hainan-06 Dataset (SPP, 7 Trajectories)",
-             fontsize=10, fontweight="bold", y=1.01)
-fig.tight_layout(rect=(0,0,1,0.94))
+             fontsize=14, fontweight="bold", y=1.01)
+fig.tight_layout(rect=(0,0,1,0.96))
 
 for fmt in ["svg","png"]: fig.savefig(OUT/f"trustworthiness.{fmt}", dpi=DPI, format=fmt)
 plt.close(fig); print("Saved trustworthiness.svg/.png")
