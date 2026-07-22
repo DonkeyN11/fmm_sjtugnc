@@ -899,9 +899,9 @@ def render_html(
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--cmm", default="dataset-hainan-06/mr/cmm_PL=10.csv")
-    parser.add_argument("--fmm", default="dataset-hainan-06/mr/fmm_results_filtered.csv")
-    parser.add_argument("--input", default="dataset-hainan-06/cmm_input_points.csv")
+    parser.add_argument("--cmm", default="data/real_vehicle/mr/cmm_PL=10.csv")
+    parser.add_argument("--fmm", default="data/real_vehicle/mr/fmm_results_filtered.csv")
+    parser.add_argument("--input", default="data/real_vehicle/cmm_input_points.csv")
     parser.add_argument("--edges", default="input/map/hainan/edges.shp")
     parser.add_argument("--ground-truth", default=None, help="Ground truth points CSV")
     parser.add_argument("--ids", help="Comma separated trajectory IDs")

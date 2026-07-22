@@ -2,14 +2,14 @@
 """
 Align all real-data sources by (trajectory, timestamp) into a unified CSV.
 
-Inputs (in experiments/data/real_data/):
+Inputs (in data/real_vehicle/processed/):
   cmm_input_points.csv   — SPP observations (id, timestamp, x, y, sde, sdn, ...)
   cmm_result.csv         — CMM match result (id, timestamp, pgeom, cpath, trustworthiness, ...)
   fmm_result.csv         — FMM match result (id, timestamp, pgeom, cpath, trustworthiness, ...)
   ground_truth_points.csv — RTK ground truth (id, timestamp, x, y)
 
 Output:
-  experiments/data/real_data/aligned.csv
+  data/real_vehicle/processed/aligned.csv
     id, uni_seq, timestamp,
     obs_x, obs_y, obs_sde, obs_sdn, obs_sdne,
     cmm_x, cmm_y, cmm_tw, cmm_trustworthiness, cmm_cpath,

@@ -210,7 +210,7 @@ def process_spp_file(file_path, transformer):
 def main():
     transformer = Transformer.from_crs("EPSG:4326", "EPSG:32649", always_xy=True)
     all_results = []
-    files = glob.glob("dataset-hainan-06/*/实时定位结果/spp_solution.txt")
+    files = glob.glob("data/real_vehicle/*/实时定位结果/spp_solution.txt")
     files.sort()
     
     if not files:
@@ -225,7 +225,7 @@ def main():
         
     if all_results:
         df = pd.DataFrame(all_results)
-        output_file = "dataset-hainan-06/cmm_input_points.csv"
+        output_file = "data/real_vehicle/cmm_input_points.csv"
         # Use semicolon as delimiter as expected by the C++ code
         df.to_csv(output_file, index=False, sep=';')
         print(f"Success! Saved total {len(df)} points to {output_file}")

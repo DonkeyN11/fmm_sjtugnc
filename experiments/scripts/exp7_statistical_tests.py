@@ -19,7 +19,7 @@ plt.rcParams.update({"font.size": 9, "axes.labelsize": 10, "axes.titlesize": 11,
     "legend.fontsize": 8, "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight"})
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "experiments/data/real_data"
+DATA = ROOT / "data/real_vehicle/processed"
 OUT = ROOT / "experiments/output/exp7_statistical"
 OUT.mkdir(parents=True, exist_ok=True)
 

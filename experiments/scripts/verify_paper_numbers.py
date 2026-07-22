@@ -66,7 +66,7 @@ def auc(labels,scores):
 def main():
     # Load GT by timestamp
     gt_by_ts = {}
-    with open(BASE/'experiments/data/real_data/aligned.csv',newline='') as f:
+    with open(BASE/'data/real_vehicle/processed/aligned.csv',newline='') as f:
         for r in csv.DictReader(f,delimiter=';'):
             gt_e = r['gt_edge'].strip()
             if gt_e in ('0','-1',''): continue
@@ -85,8 +85,8 @@ def main():
                 )
         return d
 
-    cmm = load_mr(BASE/'experiments/data/real_data/cmm_result.csv')
-    fmm = load_mr(BASE/'experiments/data/real_data/fmm_result.csv')
+    cmm = load_mr(BASE/'data/real_vehicle/processed/cmm_result.csv')
+    fmm = load_mr(BASE/'data/real_vehicle/processed/fmm_result.csv')
 
     # Evaluate
     cmm_pt = defaultdict(lambda:{'c':0,'t':0,'perr':[]})

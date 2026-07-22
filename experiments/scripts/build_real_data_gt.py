@@ -5,7 +5,7 @@ Build ground truth points CSV for real_data from RTK NMEA solutions.
 Aligns by first-matching-timestamp offset, then pairs SPP and RTK by seq position.
 Both are 1 Hz on the same vehicle — only the start times differ.
 
-Output: experiments/data/real_data/ground_truth_points.csv
+Output: data/real_vehicle/processed/ground_truth_points.csv
 Format: id; seq; timestamp; x; y
 
 Usage:
@@ -18,7 +18,7 @@ from datetime import date, datetime, timezone
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = PROJECT_ROOT / "data/real_data"
-RTK_BASE = PROJECT_ROOT.parent / "dataset-hainan-06"
+RTK_BASE = PROJECT_ROOT.parent / "data/real_vehicle"
 
 TRAJ_MAP = {11: "1.1", 12: "1.2", 13: "1.3", 14: "1.4",
              21: "2.1", 22: "2.2", 23: "2.3"}

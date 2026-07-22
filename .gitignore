@@ -1,28 +1,51 @@
-# folders
-bin/
-test/bin/
-test/log/
-tmp/
-build_debug/
+# ============================================================
+# .gitignore — FMM / TMM Map Matching Framework
+# ============================================================
+
+# ── Build artifacts ──
+build/
+cmake-build-debug/
+CMakeLists.txt.user
+CMakeCache.txt
+CMakeFiles/
+CMakeScripts/
+Testing/
+cmake_install.cmake
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# ── Data files (too large for GitHub) ──
+data/
 dataset-hainan/
 dataset-hainan-06/
 input/map/
 input/trajectory/
-.claude/
-.playwright-cli/
-docs/literatures/
-docs/figs0609.bak
+*.csv
+!experiments/config/*.json
+!experiments/config/reverse_edge_map.json
+
+# ── Experiment outputs ──
 experiments/output/
-experiments/data/
+
+# ── Archived / review ──
+_archive_review/
+
+# ── IDE / Editor ──
 .claude/
 .gemini/
-.github/
-.playwight-cli/
-.playwright/
 .vscode/
+.idea/
+.playwright/
+.playwright-cli/
+.kdev4/
 
+# ── OS files ──
+**/.DS_Store
+Thumbs.db
 
-# LaTeX auxiliary files
+# ── LaTeX auxiliary ──
 *.aux
 *.synctex.gz
 *.fls
@@ -32,121 +55,52 @@ experiments/data/
 *.fdb_latexmk
 *.bcf
 *.run.xml
-
-# Doc files
-
-docs/html
-
-# Mac
-
-**/.DS_Store
-
-# Mac
-
-**/.DS_Store
-
-# Cmake
-
-build/
-cmake-build-debug/
-CMakeLists.txt.user
-CMakeCache.txt
-CMakeFiles
-CMakeScripts
-Testing
-cmake_install.cmake
-install_manifest.txt
-compile_commands.json
-CTestTestfile.cmake
-_deps
-
-# Projects
-*.cbp
-*.depend
-*.layout
-.kdev4/
-*.kdev4
-.idea/
-*.bin
-*.png
-
-# log file
+*.bbl
 *.log
 
-
-# Prerequisites
-*.d
-
-# Object files
+# ── Build outputs ──
 *.o
 *.ko
 *.obj
 *.elf
-
-# Precompiled Headers
 *.gch
 *.pch
-
-# Libraries
 *.lib
 *.a
 *.la
 *.lo
-
-# Shared objects (inc. Windows DLLs)
 *.dll
 *.so
 *.so.*
 *.dylib
-
-# Executables
 *.exe
-*.out
 *.app
 *.i*86
 *.x86_64
 *.hex
-
-# Debug files
 *.dSYM/
 *.su
+*.d
 
-# Binary files
-
-*.bin
-*.binary
-
-# bash file to sync file
-sync.sh
-
-
-# Jupyternotebook
-.ipynb_checkpoints
-*/.ipynb_checkpoints/*
+# ── Python cache ──
+__pycache__/
 *.pyc
+*.pyo
+.ipynb_checkpoints/
 
-# cache files
-*/__pycache__/*
-/cache
+# ── IDE project files ──
+*.cbp
+*.depend
+*.layout
+*.kdev4
 
-# csv results
-*.csv
-*.txt
-*.json
-!experiments/config/*.json
-*.html
+# ── Documentation and results (not needed for build) ──
+docs/
+data/
+experiments/output/
+experiments/math_theory.md
 
-# Generated figures
-*.svg
-*.png
-
-AGENTS.md
-docs/Journal of Field Robotics - 2016 - Phillips - Is It What I Think It Is  Is It Where I Think It Is  Using Point‐Clouds for.pdf
-docs/literature/AMM_An_Adaptive_Online_Map_Matching_Algorithm.pdf
-experiments/Records.md
-CLAUDE.md
-scripts/latex-env.sh
-test_article.pdf
-
-# LaTeX paper source (private — not for public distribution)
-docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/
+# ── Misc ──
+sync.sh
+*.tmp
+tmp/

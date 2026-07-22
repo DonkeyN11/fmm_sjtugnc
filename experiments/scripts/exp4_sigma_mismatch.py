@@ -19,7 +19,7 @@ Hypothesis:
 
 Usage:
   python experiments/scripts/exp4_sigma_mismatch.py \\
-    --data-root experiments/data/sigma_mismatch \\
+    --data-root data/simulation/sigma_mismatch \\
     --cmm-bin build/cmm --fmm-bin build/fmm \\
     --output-dir experiments/output/4_sigma_mismatch \\
     --jobs 8
@@ -551,7 +551,7 @@ def plot_mismatch_analysis(cmm_all: List[Dict], fmm_all: List[Dict], output_dir:
             ("FMM", "fmm_result.csv", "#b2182b", "//"),
         ]:
             # Find the data dir for this mismatch level
-            data_dir = next(Path("experiments/data/sigma_mismatch").glob(f"{lbl_key}*"))
+            data_dir = next(Path("data/simulation/sigma_mismatch").glob(f"{lbl_key}*"))
             mr_csv = data_dir / mr_name
             if not mr_csv.exists():
                 continue
@@ -649,7 +649,7 @@ def write_summary(cmm_all, fmm_all, output_dir):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-root", type=Path, default=Path("experiments/data/sigma_mismatch"))
+    parser.add_argument("--data-root", type=Path, default=Path("data/simulation/sigma_mismatch"))
     parser.add_argument("--cmm-bin", type=Path, default=Path("build/cmm"))
     parser.add_argument("--fmm-bin", type=Path, default=Path("build/fmm"))
     parser.add_argument("--output-dir", type=Path, default=Path("experiments/output/4_sigma_mismatch"))

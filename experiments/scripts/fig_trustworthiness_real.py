@@ -13,7 +13,7 @@ import matplotlib.pyplot as plt; import matplotlib.patches as mpatches
 from matplotlib.collections import LineCollection
 
 PROJECT = Path(__file__).resolve().parents[2]
-DATA = PROJECT / "experiments/data/real_data"
+DATA = PROJECT / "data/real_vehicle/processed"
 MAP = PROJECT / "input/map/hainan/edges.shp"
 OUT = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
 OUT.mkdir(parents=True, exist_ok=True)

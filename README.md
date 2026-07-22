@@ -1,222 +1,180 @@
-<div align="center">
-  <img src="img/fmm_social.jpg">
-</div>
+# TMM: Trustworthy Map Matching
 
-| Linux / macOS | Windows | Wiki          | Docs        |
-| ------------- | ------- | ------------- | ----------- |
-| [![Build Status](https://travis-ci.org/cyang-kth/fmm.svg?branch=master)](https://travis-ci.org/github/cyang-kth/fmm) | [![Build status](https://ci.appveyor.com/api/projects/status/8qee5c8iay75j1am?svg=true)](https://ci.appveyor.com/project/cyang-kth/fmm) | [![Wiki](https://img.shields.io/badge/wiki-website-blue.svg)](https://fmm-wiki.github.io/) | [![Documentation](https://img.shields.io/badge/docs-doxygen-blue.svg)](https://cyang-kth.github.io/fmm/) |
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.TXT)
+[![C++17](https://img.shields.io/badge/C%2B%2B-17-blue.svg)](CMakeLists.txt)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10%2B-green.svg)]()
 
-FMM is an open source map matching framework integrating hidden Markov models and precomputation. It solves the problem of matching noisy GPS data to a road network. By maximizing performance and functionality, FMM allows for map matching algorithms that are both efrficient and scalable to large volumes of data.
+**Covariance-consistent HMM map matching with calibrated trustworthiness evaluation.**
 
-FMM provides Python and C++ APIs and can be used in the command line, in Jupyter notebooks, or in web app.
+TMM extends the [Fast Map Matching (FMM)](https://github.com/cyang-kth/fmm) framework by integrating GNSS positioning covariance matrices and Receiver Autonomous Integrity Monitoring (RAIM) protection levels into a probabilistically normalized Hidden Markov Model. The result is a **calibrated per-epoch trustworthiness score** — a filtering posterior probability that the matched road segment is correct — enabling safety-critical integrity monitoring in autonomous driving, road pricing, and high-precision navigation.
 
-### Table of Contents
-- [Pipeline](#pipeline)
-- [Features](#features)
-- [Screenshots of notebook](#screenshots-of-notebook)
-- [Requirements](#requirements)
-- [Getting Started](#getting-started)
-- [Documentation](#documentation)
-- [Code docs for developer](#code-docs-for-developer)
-- [Contact and citation](#contact-and-citation)
+> **Paper**: Ning, C., Yang, R., Zhan, X., Zhai, Y., Sun, Y. "Trustworthy Map Matching: Calibrated Posterior Confidence via GNSS-consistent Probabilistic Model." *IEEE Transactions on Intelligent Transportation Systems* (submitted, 2026).
 
-### Pipeline
-- **input**: input/trajectory/all_2hour_data/all_2hour_data_Jan.txt
-- **preprocess**: python clean_trajectory_data_optimized.py -> clean_bound_dist.csv
-- **matching**: fmm input/config/fmm_config_omp.xml -> output/mr_cumu_ts.txt
-- **rearrange**: python python/rearrange_mr.py -> output/mr_cumu_ts_rearranged.csv
-- **plot_density**: python python/plot_simple_fast.py output/mr_cumu_ts_rearranged.csv --workers 128 --shapefile input/map/haikou/edges.shp
+## Key Features
 
+- **GNSS-consistent emission model** — anisotropic Mahalanobis distance replaces isotropic Euclidean projection
+- **HPL-adaptive candidate search** — protection level dynamically scales the search radius, reducing candidate count by up to 7.6×
+- **Calibrated trustworthiness (TW)** — filtering posterior with proper probabilistic normalization (background state, row-normalized transitions, uniform prior)
+- **96.9% segment accuracy** on real-vehicle data (16,155 epochs, Haikou, Hainan) vs. 88.1% for classical HMM
+- **ECE = 0.069** (36% reduction over HMM baseline ECE 0.107)
+- C++17 core with Python bindings via SWIG; Monte Carlo simulation framework included
 
-### Features
-- **High performance**: C++ implementation using Rtree, optimized routing, parallel computing (OpenMP).
-- **Python API**: [jupyter-notebook](example/notebook) and [web app](example/web_demo)
-- **Scalability**: millions of GPS points and millions of road edges.  
-- **Multiple data formats**:
-  - Road network in OpenStreetMap or ESRI shapefile.
-  - GPS data in Point CSV, Trajectory CSV and Trajectory Shapefile ([more details](https://fmm-wiki.github.io/docs/documentation/input/#gps-data)).
-- **Detailed matching information**: traversed path, geometry, individual matched edges, GPS error, etc. More information at [here](https://fmm-wiki.github.io/docs/documentation/output/).
-- **Multiple algorithms**: [FMM](http://www.tandfonline.com/doi/full/10.1080/13658816.2017.1400548) (for small and middle scale networks) and [STMatch](https://dl.acm.org/doi/abs/10.1145/1653771.1653820) (for large scale road networks)
-- **Platform support**: Unix (ubuntu) , Mac and Windows(cygwin environment).
-- **Hexagon match**: :tada: Match to the uber's [h3](https://github.com/uber/h3) Hexagonal Hierarchical Geospatial Indexing System. Check the [demo](example/h3).
+## Quick Start
 
-We encourage contribution with feature request, bug report or developping new map matching algorithms using the framework.
+### Prerequisites
 
-### Screenshots of notebook
+- C++17 compiler (GCC ≥ 9, Clang ≥ 10)
+- CMake ≥ 3.5
+- GDAL ≥ 2.2, Boost ≥ 1.56 (graph, geometry, serialization)
+- OpenMP (optional, for parallel batch matching)
+- SWIG (for Python bindings)
+- Conda environment recommended
 
-Map match to OSM road network by drawing
+### Build
 
-![fmm_draw](https://github.com/cyang-kth/fmm-examples/blob/master/img/fmm_draw.gif?raw=true)
+```bash
+conda activate fmm_env   # or your conda environment with GDAL/Boost/SWIG
 
-Explore the factor of candidate size k, search radius and GPS error
+mkdir -p build && cd build
+cmake .. -DCMAKE_BUILD_TYPE=Release
+make -j$(nproc)
+```
 
-![fmm_explore](https://github.com/cyang-kth/fmm-examples/blob/master/img/fmm_explore.gif?raw=true)
+Binaries are placed in `build/`:
+| Binary | Purpose |
+|--------|---------|
+| `cmm` | TMM (Covariance Map Matching) CLI |
+| `fmm` | FMM (Fast Map Matching) CLI |
+| `ubodt_gen` | UBODT precomputation |
+| `stmatch` | Spatio-temporal matching |
 
-Explore detailed map matching information
+### Python API
 
-![fmm_detail](https://github.com/cyang-kth/fmm-examples/blob/master/img/fmm_detail.gif?raw=true)
+```python
+import sys; sys.path.insert(0, 'build/python')
+from fmm import Network, NetworkGraph, UBODT
+from fmm import CovarianceMapMatch, CovarianceMapMatchConfig
 
-Explore with dual map
+network = Network("input/map/hainan/edges.shp", "key", "u", "v")
+graph = NetworkGraph(network)
+ubodt = UBODT.read_ubodt_file("input/map/hainan_ubodt_indexed.bin")
+config = CovarianceMapMatchConfig(k=16, protection_level_multiplier=10.0)
+cmm = CovarianceMapMatch(network, graph, ubodt)
+result = cmm.match_traj(trajectory, config)
+```
 
-![dual_map](https://github.com/cyang-kth/fmm-examples/blob/master/img/dual_map.gif?raw=true)
+## Project Structure
 
-Map match to hexagon by drawing
+```
+├── src/                    # C++17 source (core, network, mm/cmm, mm/fmm, io, app)
+├── python/                 # SWIG bindings + paper experiment scripts
+│   ├── fmm.i               # SWIG interface
+│   └── experiments/        # Paper experiment pipeline (exp1–exp4, figures)
+├── experiments/
+│   ├── scripts/            # Experiment orchestration + figure generation
+│   ├── config/             # Experiment configuration (JSON)
+│   └── output/             # Experiment results (CSV, JSON)
+├── input/
+│   ├── config/             # CMM/FMM XML configuration templates
+│   └── map/                # Road network shapefile + UBODT (Haikou, Hainan)
+├── data/                   # Datasets (excluded from git — see below)
+│   ├── real_vehicle/       # Haikou SPP GNSS trajectories (16,155 epochs, RTK GT)
+│   └── simulation/         # Monte Carlo simulation data (σ = 1–30 m)
+├── docs/                   # Manuscript + figures (excluded from git)
+├── third_party/            # Vendored dependencies (h3, spdlog, cxxopts)
+├── cmake/                  # CMake modules
+├── example/                # Usage examples
+├── docker/                 # Docker support
+└── _archive_review/        # Archived legacy scripts & data (excluded from git)
+```
 
-![hex_draw](https://github.com/cyang-kth/fmm-examples/blob/master/img/hex_draw.gif?raw=true)
+## Reproducing Paper Experiments
 
-Explore the factor of hexagon level and interpolate
+### 1. Data Preparation
 
-![hex_explore](https://github.com/cyang-kth/fmm-examples/blob/master/img/hex_explore.gif?raw=true)
+Real-vehicle and simulation datasets are in `data/` (**excluded from git** — contact authors for access).
+- Real data: `data/real_vehicle/` — 7 SPP trajectories with RTK ground truth
+- Simulation data: `data/simulation/sigma_*/` — Monte Carlo datasets per noise level
 
-Source code of these screenshots are available at https://github.com/cyang-kth/fmm-examples.
+### 2. Run CMM/FMM Matching
 
-### Requirements
-- C++ Compiler supporting c++11 and OpenMP
-- CMake >=3.5: provides cross platform building tools
-- GDAL >= 2.2: IO with ESRI shapefile, Geometry data type
-- Boost Graph >= 1.54.0: routing algorithms used in UBODT Generator
-- Boost Geometry >= 1.54.0: Rtree, Geometry computation
-- Boost Serialization >= 1.54.0: Serialization of UBODT in binary format
-- ~~Libosmium: a library for reading OpenStreetMap data. Requires expat and bz2.~~ (The direct input with OSM file is removed since the raw dataset may contain
-topology errors. It is suggested to use shapefile input downloaded from osmnx.)
-- swig: used for building Python bindings
+```bash
+# Real-vehicle CMM matching (example)
+./build/cmm --config input/config/cmm_config.xml
 
-### Getting Started
-These instructions are for the Ubuntu platform. For installation on Windows and Mac, refer to the [installation instructions](https://fmm-wiki.github.io/docs/installation/) here.
+# Simulation sweep (Exp 2–3)
+python experiments/scripts/exp3_full_matching.py --skip-match --jobs 8
+python experiments/scripts/exp5_degraded_conditions.py --skip-match --jobs 8
+```
 
-1. **Install Requirements**
-    - Update the ppa to install the required version (>=2.2) of GDAL.
-    
-      ```shell
-      sudo add-apt-repository ppa:ubuntugis/ppa
-      sudo apt-get -q update
-      ```
-    - Then, install all the requirements with
+### 3. Compute Metrics & Generate Figures
 
-      ```shell
-      sudo apt-get install libboost-dev libboost-serialization-dev \
-      gdal-bin libgdal-dev make cmake libbz2-dev libexpat1-dev swig python-dev
-      ```
+```bash
+# Reliability diagram
+python python/experiments/exp1_reliability_diagram.py
+python python/experiments/gen_figures.py
 
-2. **Install C++ program and Python bindings**
-    - Build and install the program with cmake.
+# Sigma sensitivity & degraded conditions
+python experiments/scripts/regenerate_sigma_sweep.py
+python experiments/scripts/regenerate_degraded.py
 
-      ```shell
-      # Under the project folder
-      mkdir build
-      cd build
-      cmake ..
-      make -j4
-      sudo make install
-      ```
-      This will build executable files under the `build` folder, which are installed to `/usr/local/bin`:
-      - `ubodt_gen`: the Upper bounded origin destination table (UBODT) generator (precomputation) program
-      - `fmm`: the program implementing the fast map matching algorithm
-      - `stmatch`: the program implementing the STMATCH algorithm, no precomputation needed
-      
-      It will also create a folder `python` under the build path, which contains fmm bindings(`fmm.py` and `_fmm.so`) that are installed into the Python site-packages location (e.g., `/usr/lib/python2.7/dist-packages`).
-      
-3. **Verification of Installation**
-    - Run command line map matching
-      Open a new terminal and type `fmm`. You should see the following output:
-      
-      ```shell
-      ------------ Fast map matching (FMM) ------------
-      ------------     Author: Can Yang    ------------
-      ------------   Version: 2020.01.31   ------------
-      ------------     Applicaton: fmm     ------------
-      A configuration file is given in the example folder
-      Run `fmm config.xml` or with arguments
-      fmm argument lists:
-      --ubodt (required) <string>: Ubodt file name
-      --network (required) <string>: Network file name
-      --gps (required) <string>: GPS file name
-      --output (required) <string>: Output file name
-      --network_id (optional) <string>: Network id name (id)
-      --source (optional) <string>: Network source name (source)
-      --target (optional) <string>: Network target name (target)
-      --gps_id (optional) <string>: GPS id name (id)
-      --gps_geom (optional) <string>: GPS geometry name (geom)
-      --candidates (optional) <int>: number of candidates (8)
-      --radius (optional) <double>: search radius (300)
-      --error (optional) <double>: GPS error (50)
-      --pf (optional) <double>: penalty factor (0)
-      --log_level (optional) <int>: log level (2)
-      --output_fields (optional) <string>: Output fields
-        opath,cpath,tpath,ogeom,mgeom,pgeom,
-        offset,error,spdist,tp,ep,all
-      For xml configuration, check example folder
-      ------------    Program finished     ------------
-      ```
-  
-    - Run python script
-      To verify that the Python bindings are working:
-  
-      ```shell
-      # Change to the parent folder which contains fmm_test.py
-      cd ../example/python
-      python fmm_test.py
-      ```
+# Candidate count comparison
+python experiments/scripts/fig_candidate_counts.py
 
-    Refer to the [Q&A](https://fmm-wiki.github.io/docs/installation/qa) for any installation errors.
+# Per-trajectory TW visualization
+python experiments/scripts/fig_traj_tw_individual.py
+```
 
-### Documentation
+## Theoretical Framework
 
-- Check [https://fmm-wiki.github.io/](https://fmm-wiki.github.io/) for installation, documentation.
-- Check [example](example) for simple examples of fmm.
-- :tada: Check [https://github.com/cyang-kth/fmm-examples](https://github.com/cyang-kth/fmm-examples)
-for interactive map matching in notebook.
+TMM integrates GNSS stochastic information at three levels:
 
-### Code docs for developer
+1. **HPL-based candidate search** — adaptive radius $r_i = \mathrm{HPL}_i$ replaces fixed-radius search
+2. **Covariance-based emission** — anisotropic multivariate Gaussian $p(z_i|x) \propto \exp(-\frac{1}{2}\mathbf{d}^\top\mathbf{\Sigma}_i^{-1}\mathbf{d})$ via Mahalanobis projection
+3. **Trustworthiness as calibrated posterior** — filtering posterior $\mathrm{tw}_t = P(x_t=i^*\mid z_{1:t}) = \alpha_t(i^*)/\sum_j\alpha_t(j)$ with proper normalization
 
-Check [https://cyang-kth.github.io/fmm/](https://cyang-kth.github.io/fmm/)
+See [CLAUDE.md](CLAUDE.md) for detailed algorithmic documentation and [CMM_README.md](CMM_README.md) for the CMM C++ API.
 
-为了最大化FMM的性能，建议：
+## FMM vs TMM
 
-  # 设置使用所有核心
-  export OMP_NUM_THREADS=128
+| Aspect | FMM (Classical HMM) | TMM (This Work) |
+|--------|---------------------|-----------------|
+| Emission model | Isotropic $\mathcal{N}(0,\sigma^2 I)$ | Anisotropic Mahalanobis (covariance) |
+| Candidate search | Fixed radius $r$ | HPL-adaptive $r_i = \mathrm{HPL}_i$ |
+| Candidate projection | Orthogonal (Euclidean) | Mahalanobis (statistically optimal) |
+| Trustworthiness | Raw Viterbi score | Filtering posterior (calibrated) |
+| ECE | 0.107 | **0.069** (36% ↓) |
+| Real accuracy | 88.1% | **96.9%** |
 
-  # 或者设置使用特定数量（如64个核心）
-  export OMP_NUM_THREADS=64
+## Citation
 
-  然后运行FMM：
-  ./build/fmm --config input/config/fmm_config_omp.xml
+```bibtex
+@article{ning2026tmm,
+  title={Trustworthy Map Matching: Calibrated Posterior Confidence via GNSS-consistent Probabilistic Model},
+  author={Ning, Chenzhang and Yang, Rong and Zhan, Xingqun and Zhai, Yawei and Sun, Yulong},
+  journal={IEEE Transactions on Intelligent Transportation Systems},
+  year={2026},
+  note={submitted}
+}
+```
 
-### Contact and citation
-
-Can Yang, Ph.D. student at KTH, Royal Institute of Technology in Sweden
-
-Email: cyang(at)kth.se
-
-Homepage: https://people.kth.se/~cyang/
-
-FMM originates from an implementation of this paper [Fast map matching, an algorithm integrating hidden Markov model with precomputation](http://www.tandfonline.com/doi/full/10.1080/13658816.2017.1400548). A post-print version of the paper can be downloaded at [link](https://people.kth.se/~cyang/bib/fmm.pdf). Substaintial new features have been added compared with the original paper.  
-
-Please cite fmm in your publications if it helps your research:
-
-    Can Yang & Gyozo Gidofalvi (2018) Fast map matching, an algorithm
-    integrating hidden Markov model with precomputation, International Journal of Geographical Information Science, 32:3, 547-570, DOI: 10.1080/13658816.2017.1400548
-
-Bibtex file
+The original FMM algorithm is described in:
 
 ```bibtex
 @article{Yang2018FastMM,
   title={Fast map matching, an algorithm integrating hidden Markov model with precomputation},
-  author={Can Yang and Gyozo Gidofalvi},
+  author={Yang, Can and Gidofalvi, Gyozo},
   journal={International Journal of Geographical Information Science},
-  year={2018},
-  volume={32},
-  number={3},
-  pages={547 - 570}
+  volume={32}, number={3}, pages={547--570}, year={2018}
 }
 ```
-### Trustworthiness Evaluation
- 不过需要注意：$\Delta H$                                                                  
-  度量的是信息增益，不是直接的"匹配可信度"。两者有相关但不是等价的：                        
-  - $\Delta H$ 很小 + 绝对后验熵也小 → GNSS 信噪比高且与预测一致 → 高可信                   
-  - $\Delta H$ 很小 + 绝对后验熵大 → GNSS 过于噪声/劣质 → 低可信（这点 $\Delta H$           
-  无法单独区分）                                                                            
-  - $\Delta H$ 很大 + 绝对后验熵大 → GNSS 提供了信息但仍有显著剩余不确定性                  
-                                                                                            
-  因此建议同时保留 $\Delta H$（信息增益）和后验熵                                           
-  $H_{\text{posterior}}$（剩余不确定性），两者结合才能完整评估每个历元的匹配置信度。
+
+## License
+
+MIT License. See [LICENSE.TXT](LICENSE.TXT).
+
+## Contact
+
+- **Chenzhang Ning** (Donkey.Ning) — Ph.D. student, School of Aeronautics and Astronautics, Shanghai Jiao Tong University
+- Advisor: Prof. Xingqun Zhan
+- Repository: [https://github.com/DonkeyN11/fmm_sjtugnc](https://github.com/DonkeyN11/fmm_sjtugnc)

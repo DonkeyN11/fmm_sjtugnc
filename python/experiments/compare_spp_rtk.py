@@ -6,7 +6,7 @@ from pathlib import Path
 from collections import defaultdict
 from datetime import date, datetime, timezone
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA = PROJECT_ROOT / "data/real_vehicle"
 
 def dm_to_dd(dm_str):

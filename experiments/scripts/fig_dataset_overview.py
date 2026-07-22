@@ -27,7 +27,7 @@ print(f"Loaded {len(roads)} road segments")
 
 # ── 2. Load 7 trajectories ────────────────────────────────────────
 import csv
-DATA = Path("/home/ncz/fmm_sjtugnc/experiments/data/real_data")
+DATA = Path("/home/ncz/fmm_sjtugnc/data/real_vehicle/processed")
 TRAJ_IDS = [11, 12, 13, 14, 21, 22, 23]
 COLORS = plt.cm.tab10(np.linspace(0, 1, 7))
 

@@ -65,7 +65,7 @@ CONDITION_COLORS = {
     "both":      "#b2182b",
 }
 
-DATA_ROOT = Path("experiments/data/sigma_30")
+DATA_ROOT = Path("data/simulation/sigma_30")
 
 
 # ══════════════════════════════════════════════════════════════════════════════

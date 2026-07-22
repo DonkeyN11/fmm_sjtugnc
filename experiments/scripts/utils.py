@@ -24,7 +24,7 @@ import matplotlib
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-# ── Unified style (matching tests/python/gen_figures.py) ────────────────────
+# ── Unified style (matching python/experiments/gen_figures.py) ────────────────────
 DPI = 300
 COLOR_CMM = "#2166ac"
 COLOR_FMM = "#b2182b"

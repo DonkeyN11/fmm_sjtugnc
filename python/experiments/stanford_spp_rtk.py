@@ -24,7 +24,7 @@ plt.rcParams.update({"font.size":7,"axes.labelsize":8,"axes.titlesize":9,
     "legend.fontsize":6,"xtick.labelsize":6,"ytick.labelsize":6,
     "figure.dpi":DPI,"savefig.dpi":DPI,"savefig.bbox":"tight"})
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA = PROJECT_ROOT / "data/real_vehicle"
 PAPER_FIGS = PROJECT_ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
 OUT_DIR = PROJECT_ROOT / "experiments/output/spp_error"
