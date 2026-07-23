@@ -50,7 +50,7 @@ ax1, ax2, ax3, ax4, ax5, ax6 = axes.flat
 
 # (a) Point error
 ax1.bar(x - bar_w/2, [_get(cmm_all, c, "point_error_mean") for c in cond_order],
-        bar_w, color=COLOR_CMM, label="TMM", edgecolor="white", lw=0.5)
+        bar_w, color=COLOR_CMM, label="CaMM", edgecolor="white", lw=0.5)
 ax1.bar(x + bar_w/2, [_get(fmm_all, c, "point_error_mean") for c in cond_order],
         bar_w, color=COLOR_FMM, label="FMM", edgecolor="white", lw=0.5)
 ax1.set_xticks(x); ax1.set_xticklabels(x_labels, rotation=15, ha="right")
@@ -85,7 +85,7 @@ ax4.set_xticks(x); ax4.set_xticklabels(x_labels, rotation=15, ha="right")
 ax4.set_ylabel("AUC"); ax4.set_title("(d) ROC AUC")
 ax4.set_ylim(0.3, 1.0); ax4.grid(alpha=0.3, axis="y")
 
-# (e) Reliability diagram — TMM only, all 4 conditions overlaid
+# (e) Reliability diagram — CaMM only, all 4 conditions overlaid
 ax5.plot([0, 1], [0, 1], "k--", lw=0.6, label="Perfect")
 for cond in cond_order:
     m = next((m for m in cmm_all if m["label"] == cond), None)
@@ -99,10 +99,10 @@ for cond in cond_order:
     ax5.plot(confs, accs, "o-", color=CONDITION_COLORS.get(cond, "gray"),
              lw=1.0, ms=5, label=f"{CONDITION_LABELS[cond]} (ECE={ece:.3f})")
 ax5.set_xlabel("Confidence"); ax5.set_ylabel("Accuracy")
-ax5.set_title("(e) Reliability Diagram — TMM"); ax5.legend(fontsize=8)
+ax5.set_title("(e) Reliability Diagram — CaMM"); ax5.legend(fontsize=8)
 ax5.grid(alpha=0.3)
 
-# (f) ROC curves — TMM only
+# (f) ROC curves — CaMM only
 ax6.plot([0, 1], [0, 1], "k--", lw=0.6)
 for cond in cond_order:
     m = next((m for m in cmm_all if m["label"] == cond), None)
@@ -112,10 +112,10 @@ for cond in cond_order:
         ax6.plot(fpr, tpr, lw=1.2, color=CONDITION_COLORS.get(cond, "gray"),
                  label=f"{CONDITION_LABELS[cond]} (AUC={auc:.3f})")
 ax6.set_xlabel("FPR"); ax6.set_ylabel("TPR")
-ax6.set_title("(f) ROC Curves — TMM"); ax6.legend(fontsize=8)
+ax6.set_title("(f) ROC Curves — CaMM"); ax6.legend(fontsize=8)
 ax6.grid(alpha=0.3)
 
-fig.suptitle("TMM vs FMM Under Degraded Conditions (σ=30m)", fontsize=13, fontweight="bold")
+fig.suptitle("CaMM vs FMM Under Degraded Conditions (σ=30m)", fontsize=13, fontweight="bold")
 fig.tight_layout()
 out = FIGS_DIR / "degraded_comparison.png"
 fig.savefig(out, dpi=DPI)

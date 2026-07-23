@@ -47,7 +47,7 @@ ax1, ax2, ax3, ax4, ax5, ax6 = axes.flat
 sigma_vals = [int(s.replace("sigma_", "")) for s in sigmas]
 
 # (a) Point error
-ax1.plot(sigma_vals, [get(cmm_all, s, "point_error_mean") for s in sigmas], "o-", color=COLOR_CMM, lw=1.2, ms=5, label="TMM")
+ax1.plot(sigma_vals, [get(cmm_all, s, "point_error_mean") for s in sigmas], "o-", color=COLOR_CMM, lw=1.2, ms=5, label="CaMM")
 ax1.plot(sigma_vals, [get(fmm_all, s, "point_error_mean") for s in sigmas], "s-", color=COLOR_FMM, lw=1.2, ms=5, label="FMM")
 ax1.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax1.set_ylabel("Mean error (m)")
 ax1.set_title("(a) Point Error"); ax1.legend(); ax1.grid(alpha=0.3); ax1.set_xlim(0, 32)
@@ -59,7 +59,7 @@ ax2.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax2.set_ylabel("Accuracy (%)")
 ax2.set_title("(b) Segment Accuracy"); ax2.grid(alpha=0.3); ax2.set_xlim(0, 32); ax2.set_ylim(0, 105)
 
 # (c) ECE
-ax3.plot(sigma_vals, [get(cmm_all, s, "ece_tw") for s in sigmas], "o-", color=COLOR_CMM, lw=1.2, ms=5, label="TMM")
+ax3.plot(sigma_vals, [get(cmm_all, s, "ece_tw") for s in sigmas], "o-", color=COLOR_CMM, lw=1.2, ms=5, label="CaMM")
 ax3.plot(sigma_vals, [get(fmm_all, s, "ece_tw") for s in sigmas], "s-", color=COLOR_FMM, lw=1.2, ms=5, label="FMM")
 ax3.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax3.set_ylabel("ECE")
 ax3.set_title("(c) ECE (Trustworthiness)"); ax3.legend(); ax3.grid(alpha=0.3)
@@ -74,7 +74,7 @@ ax4.set_title("(d) ROC AUC"); ax4.grid(alpha=0.3); ax4.set_xlim(0, 32); ax4.set_
 
 # (e) Reliability diagram for sigma=10
 mid_sigma = "sigma_10"
-for label, metrics, color in [("TMM", cmm_all, COLOR_CMM), ("FMM", fmm_all, COLOR_FMM)]:
+for label, metrics, color in [("CaMM", cmm_all, COLOR_CMM), ("FMM", fmm_all, COLOR_FMM)]:
     bins = get(metrics, mid_sigma, "ece_tw_bins", [])
     if not bins:
         for s in sigmas:
@@ -91,7 +91,7 @@ ax5.set_title("(e) Reliability (σ=10m)"); ax5.legend(); ax5.grid(alpha=0.3)
 
 # (f) ROC curves for sigma=10
 ax6.plot([0, 1], [0, 1], "k--", lw=0.8)
-for label, metrics, color in [("TMM", cmm_all, COLOR_CMM), ("FMM", fmm_all, COLOR_FMM)]:
+for label, metrics, color in [("CaMM", cmm_all, COLOR_CMM), ("FMM", fmm_all, COLOR_FMM)]:
     fpr = get(metrics, mid_sigma, "fpr")
     tpr = get(metrics, mid_sigma, "tpr")
     auc = get(metrics, mid_sigma, "roc_auc")
@@ -105,7 +105,7 @@ for label, metrics, color in [("TMM", cmm_all, COLOR_CMM), ("FMM", fmm_all, COLO
 ax6.set_xlabel("FPR"); ax6.set_ylabel("TPR")
 ax6.set_title("(f) ROC (σ=10m)"); ax6.legend(); ax6.grid(alpha=0.3)
 
-fig.suptitle("TMM vs FMM: Matching Performance (k=16)", fontsize=13, fontweight="bold")
+fig.suptitle("CaMM vs FMM: Matching Performance (k=16)", fontsize=13, fontweight="bold")
 fig.tight_layout()
 out = FIGS_DIR / "sigma_sweep.png"
 fig.savefig(out, dpi=DPI)

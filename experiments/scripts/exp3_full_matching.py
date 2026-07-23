@@ -466,7 +466,7 @@ def plot_sigma_comparison(cmm_metrics: List[Dict], fmm_metrics: List[Dict], outp
 
     # (a) Point error vs sigma
     ax1.plot(sigma_vals, [get(cmm_metrics, s, "point_error_mean") for s in sigmas],
-             "o-", color=COLOR_CMM, lw=1.2, ms=5, label="TMM")
+             "o-", color=COLOR_CMM, lw=1.2, ms=5, label="CaMM")
     ax1.plot(sigma_vals, [get(fmm_metrics, s, "point_error_mean") for s in sigmas],
              "s-", color=COLOR_FMM, lw=1.2, ms=5, label="FMM")
     ax1.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax1.set_ylabel("Mean error (m)")
@@ -487,7 +487,7 @@ def plot_sigma_comparison(cmm_metrics: List[Dict], fmm_metrics: List[Dict], outp
 
     # (c) ECE (trustworthiness)
     ax3.plot(sigma_vals, [get(cmm_metrics, s, "ece_tw") for s in sigmas],
-             "o-", color=COLOR_CMM, lw=1.2, ms=5, label="TMM")
+             "o-", color=COLOR_CMM, lw=1.2, ms=5, label="CaMM")
     ax3.plot(sigma_vals, [get(fmm_metrics, s, "ece_tw") for s in sigmas],
              "s-", color=COLOR_FMM, lw=1.2, ms=5, label="FMM")
     ax3.set_xlabel(r"$\sigma_{\rho}$ (m)"); ax3.set_ylabel("ECE")
@@ -506,7 +506,7 @@ def plot_sigma_comparison(cmm_metrics: List[Dict], fmm_metrics: List[Dict], outp
 
     # (e) Reliability diagram for sigma=10
     mid_sigma = "sigma_10"
-    for label, metrics, color in [("TMM", cmm_metrics, COLOR_CMM), ("FMM", fmm_metrics, COLOR_FMM)]:
+    for label, metrics, color in [("CaMM", cmm_metrics, COLOR_CMM), ("FMM", fmm_metrics, COLOR_FMM)]:
         bins = get(metrics, mid_sigma, "ece_tw_bins", [])
         if not bins:
             # Try closest available
@@ -523,7 +523,7 @@ def plot_sigma_comparison(cmm_metrics: List[Dict], fmm_metrics: List[Dict], outp
     ax5.set_title("(e) Reliability (σ=10m)"); ax5.legend(); ax5.grid(alpha=0.3)
 
     # (f) ROC curves for sigma=10
-    for label, metrics, color in [("TMM", cmm_metrics, COLOR_CMM), ("FMM", fmm_metrics, COLOR_FMM)]:
+    for label, metrics, color in [("CaMM", cmm_metrics, COLOR_CMM), ("FMM", fmm_metrics, COLOR_FMM)]:
         fpr = get(metrics, mid_sigma, "fpr")
         tpr = get(metrics, mid_sigma, "tpr")
         auc = get(metrics, mid_sigma, "roc_auc")
@@ -539,7 +539,7 @@ def plot_sigma_comparison(cmm_metrics: List[Dict], fmm_metrics: List[Dict], outp
     ax6.set_xlabel("FPR"); ax6.set_ylabel("TPR")
     ax6.set_title("(f) ROC (σ=10m)"); ax6.legend(); ax6.grid(alpha=0.3)
 
-    fig.suptitle("TMM vs FMM: Matching Performance (k=16)", fontsize=13, fontweight="bold")
+    fig.suptitle("CaMM vs FMM: Matching Performance (k=16)", fontsize=13, fontweight="bold")
     fig.tight_layout()
     fig.savefig(output_dir / "sigma_sweep.png", dpi=DPI)
     plt.close(fig)
@@ -549,7 +549,7 @@ def plot_sigma_comparison(cmm_metrics: List[Dict], fmm_metrics: List[Dict], outp
     for idx, s in enumerate(sigmas[:8]):
         ax = axes.flat[idx]
         ax.plot([0, 1], [0, 1], "k--", lw=0.6)
-        for label, metrics, color in [("TMM", cmm_metrics, COLOR_CMM), ("FMM", fmm_metrics, COLOR_FMM)]:
+        for label, metrics, color in [("CaMM", cmm_metrics, COLOR_CMM), ("FMM", fmm_metrics, COLOR_FMM)]:
             bins = get(metrics, s, "ece_tw_bins", [])
             if not bins: continue
             confs = [b["mean_conf"] for b in bins if b["n"] > 0]

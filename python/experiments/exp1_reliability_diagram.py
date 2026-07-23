@@ -35,7 +35,7 @@ def load_aligned(path):
             if gt in ("", "0", "-1"):
                 skipped += 1
                 continue
-            # TMM
+            # CaMM
             tw_s = row.get("cmm_tw", "0").strip()
             tw = float(tw_s) if tw_s else 0.0
             cp = row.get("cmm_cpath", "").strip()
@@ -96,7 +96,7 @@ def main():
     tmm_acc = float(np.mean(tmm_labels))
     hmm_acc = float(np.mean(hmm_labels))
 
-    print(f"  TMM: {len(tmm)} epochs, TW ∈ [{tmm_confs.min():.4f}, {tmm_confs.max():.4f}], "
+    print(f"  CaMM: {len(tmm)} epochs, TW ∈ [{tmm_confs.min():.4f}, {tmm_confs.max():.4f}], "
           f"seg accuracy={tmm_acc*100:.1f}%")
     print(f"  HMM: {len(hmm)} epochs, TW ∈ [{hmm_confs.min():.4f}, {hmm_confs.max():.4f}], "
           f"seg accuracy={hmm_acc*100:.1f}%")
@@ -123,7 +123,7 @@ def main():
     # ── Summary ──
     n_corr_t = sum(tmm_labels)
     n_corr_h = sum(hmm_labels)
-    print(f"\n  TMM: {int(n_corr_t)}/{len(tmm)} correct ({tmm_acc*100:.1f}%) | "
+    print(f"\n  CaMM: {int(n_corr_t)}/{len(tmm)} correct ({tmm_acc*100:.1f}%) | "
           f"ECE={tmm_cal['ece']:.4f}  MCE={tmm_cal['mce']:.4f}  "
           f"Brier={brier_t:.4f}  LogLoss={ll_t:.4f}")
     print(f"  HMM: {int(n_corr_h)}/{len(hmm)} correct ({hmm_acc*100:.1f}%) | "
@@ -135,7 +135,7 @@ def main():
         "experiment": "exp1_reliability_diagram",
         "metric": "TW (trustworthiness / filtering posterior)",
         "label": "segment-level correctness (matched edge == GT edge)",
-        "methods": {"cmm": "TMM (anisotropic Mahalanobis)", "fmm": "HMM (isotropic Euclidean)"},
+        "methods": {"cmm": "CaMM (anisotropic Mahalanobis)", "fmm": "HMM (isotropic Euclidean)"},
         "per_threshold": {
             "5": {  # gen_figures.py uses key="5"
                 "cmm": {

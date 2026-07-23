@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""TMM Framework figure — IEEE journal style with LaTeX-rendered formulas."""
+"""CaMM Framework figure — IEEE journal style with LaTeX-rendered formulas."""
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import matplotlib.patches as patches
@@ -141,11 +141,11 @@ for i in range(cols):
           col_x[i] + col_w/2, bot_y + bot_h + 0.01, color='#777777', lw=1.5)
 
 # ── Title ──
-ax.text(0.5, 0.97, "Trustworthy Map Matching (TMM) — Framework Overview",
+ax.text(0.5, 0.97, "Covariance-aware Map Matching (CaMM) — Framework Overview",
         ha='center', va='top', fontsize=17, fontweight='bold', color='#222222')
 
-# ── TMM vs HMM badge ──
-ax.text(0.82, 0.96, "TMM vs. Classical HMM",
+# ── CaMM vs HMM badge ──
+ax.text(0.82, 0.96, "CaMM vs. Classical HMM",
         ha='center', va='top', fontsize=9, fontweight='bold', color='#555555',
         bbox=dict(boxstyle="round,pad=0.3", facecolor='white', edgecolor='#BBBBBB', alpha=0.9))
 ax.text(0.82, 0.93, "Isotropic → Anisotropic | Fixed $r$ → HPL-Adaptive | Uncalibrated → Calibrated",

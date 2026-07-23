@@ -417,7 +417,7 @@ def plot_degraded_comparison(cmm_all, fmm_all, output_dir):
 
     # (a) Point error
     ax1.bar(x - bar_w/2, [_get(cmm_all, c, "point_error_mean") for c in cond_order],
-            bar_w, color="#2166ac", label="TMM", edgecolor="white", lw=0.5)
+            bar_w, color="#2166ac", label="CaMM", edgecolor="white", lw=0.5)
     ax1.bar(x + bar_w/2, [_get(fmm_all, c, "point_error_mean") for c in cond_order],
             bar_w, color="#b2182b", label="FMM", edgecolor="white", lw=0.5)
     ax1.set_xticks(x); ax1.set_xticklabels(x_labels, rotation=15, ha="right")
@@ -482,7 +482,7 @@ def plot_degraded_comparison(cmm_all, fmm_all, output_dir):
     ax6.set_title("(f) ROC Curves — CMM"); ax6.legend(fontsize=8)
     ax6.grid(alpha=0.3)
 
-    fig.suptitle("TMM vs FMM Under Degraded Conditions (σ=30m)", fontsize=13, fontweight="bold")
+    fig.suptitle("CaMM vs FMM Under Degraded Conditions (σ=30m)", fontsize=13, fontweight="bold")
     fig.tight_layout()
     fig.savefig(output_dir / "degraded_comparison.png", dpi=DPI)
     plt.close(fig)
