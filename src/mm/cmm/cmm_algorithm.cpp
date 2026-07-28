@@ -830,6 +830,60 @@ double CovarianceMapMatch::calculate_emission_log_prob(
     return -0.5 * (log_2pi + std::log(det + 1e-12) + mahalanobis_dist_sq);
 }
 
+// Compute direction-consistency log penalty for reverse-direction candidates.
+// Only penalizes when the GNSS displacement velocity points opposite to the
+// candidate edge direction (cos(theta) < 0), using the von Mises concentration
+// kappa = |v|^2 / sigma_perp^2 derived from covariance propagation.
+//
+// Returns 0 (no penalty) or a negative log-probability term.
+double CovarianceMapMatch::compute_direction_penalty(
+    const CORE::Point &obs_prev,
+    const CORE::Point &obs_curr,
+    const CORE::Point &edge_start,
+    const CORE::Point &edge_end,
+    const CovarianceMatrix &cov) {
+    using boost::geometry::get;
+
+    // GNSS displacement velocity: v = (z_i - z_{i-1})
+    double vx = get<0>(obs_curr) - get<0>(obs_prev);
+    double vy = get<1>(obs_curr) - get<1>(obs_prev);
+    double speed2 = vx * vx + vy * vy;
+    double speed  = std::sqrt(speed2);
+
+    // No direction information if speed is near zero (stopped vehicle)
+    if (speed < 1e-12) return 0.0;
+
+    // Edge tangent direction (start → end, normalized)
+    double ex = get<0>(edge_end) - get<0>(edge_start);
+    double ey = get<1>(edge_end) - get<1>(edge_start);
+    double elen = std::sqrt(ex * ex + ey * ey);
+    if (elen < 1e-12) return 0.0;
+    ex /= elen; ey /= elen;
+
+    // Cosine of angle between GNSS velocity and edge direction
+    double cos_theta = (vx * ex + vy * ey) / speed;
+
+    // Only penalize reverse direction (cos < 0, i.e. > 90 degrees apart)
+    if (cos_theta >= 0.0) return 0.0;
+
+    // Estimate sigma_perp: the uncertainty of GNSS velocity perpendicular
+    // to the velocity direction. From covariance propagation:
+    //   Sigma_v ≈ 2 * Sigma_i  (assuming independent adjacent epochs)
+    // The perpendicular component is the smaller of sde^2 and sdn^2
+    // (conservative: use the geometric mean of the two variances)
+    double sigma_perp2 = cov.sde * cov.sdn;  // sqrt(var_e * var_n) as proxy
+    if (sigma_perp2 < 1e-20) return 0.0;
+
+    // von Mises concentration: kappa = |v|^2 / sigma_perp^2
+    double kappa = speed2 / sigma_perp2;
+
+    // Direction penalty: kappa * cos_theta — ranges from -kappa (180°)
+    // to ~0 (near 90°). Only called when cos_theta < 0.
+    // Applied as additive log-probability term since direction EP
+    // multiplies with position EP.
+    return kappa * cos_theta;  // ≤ 0, cos < 0 → penalty < 0
+}
+
 // Enumerate candidate projections per point by respecting both covariance ellipses
 // and the provided protection levels that limit how far points can deviate.
 CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_level(
@@ -1037,6 +1091,20 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                                              cov_inv_eff.m[1][1] * dy * dy;
                             // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + mahal_sq)
                             log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahal_sq);
+
+                            // Direction penalty for reverse-direction candidates
+                            if (i > 0 && entry.candidate.edge != nullptr) {
+                                const auto &edge_geom = network_.get_edge_geom(entry.candidate.edge->id);
+                                if (edge_geom.get_num_points() >= 2) {
+                                    CORE::Point obs_prev = geom.get_point(i - 1);
+                                    double penalty = compute_direction_penalty(
+                                        obs_prev, point,
+                                        edge_geom.get_point(0),          // edge start
+                                        edge_geom.get_point(edge_geom.get_num_points() - 1), // edge end
+                                        cov);
+                                    log_probability += penalty;
+                                }
+                            }
                         }
                     }
                     raw_probabilities.push_back(log_probability);
@@ -1093,6 +1161,20 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                                                       cov_inv_eff.m[1][1] * dy * dy;
                         // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + mahalanobis_dist_sq)
                         log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahalanobis_dist_sq);
+
+                        // Direction penalty for reverse-direction candidates
+                        if (i > 0 && cand.edge != nullptr) {
+                            const auto &edge_geom = network_.get_edge_geom(cand.edge->id);
+                            if (edge_geom.get_num_points() >= 2) {
+                                CORE::Point obs_prev = geom.get_point(i - 1);
+                                double penalty = compute_direction_penalty(
+                                    obs_prev, point,
+                                    edge_geom.get_point(0),
+                                    edge_geom.get_point(edge_geom.get_num_points() - 1),
+                                    cov);
+                                log_probability += penalty;
+                            }
+                        }
                     }
                 }
 

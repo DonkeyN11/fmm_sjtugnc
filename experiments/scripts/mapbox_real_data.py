@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Mapbox visualization of real-vehicle data using timestamp-aligned CSV.
+Mapbox visualization of real-vehicle data using timestamp-aligned CSV, quick check version, no search action can be applied.
 
 Layers:
   - Road network (gray, filtered to trajectory bounds)
@@ -18,6 +18,13 @@ Usage:
   export MAPBOX_ACCESS_TOKEN="pk.eyJ1..."
   python experiments/scripts/mapbox_real_data.py --output output.html
   python experiments/scripts/mapbox_real_data.py --traj 11 --every 5 --output traj11.html
+  python experiments/scripts/mapbox_real_data.py \
+  --input data/real_vehicle/hainan_06/processed/aligned.csv \
+  --edges input/map/hainan/edges.shp \
+  --every 5 \ visualize every 5th epoch to prevent too large html file
+  --max-epochs 20000 \
+  --output data/real_vehicle/hainan_06/processed/mapbox_aligned_viz.html
+
 """
 
 import argparse, csv, json, math, os, sys
@@ -56,6 +63,30 @@ def load_roads_near(shapefile, all_lons, all_lats, margin=0.005):
     return features
 
 
+def load_gt_edges(shapefile, edge_ids):
+    """Load geometries for specific edge IDs from shapefile."""
+    try:
+        from osgeo import ogr
+    except ImportError:
+        return []
+    ds = ogr.Open(str(shapefile))
+    if ds is None: return []
+    layer = ds.GetLayer()
+    features = []
+    for feat in layer:
+        eid = str(feat.GetField("key"))
+        if eid not in edge_ids: continue
+        geom = feat.GetGeometryRef()
+        if geom is None: continue
+        coords = [[geom.GetPoint(i)[0], geom.GetPoint(i)[1]]
+                  for i in range(geom.GetPointCount())]
+        if len(coords) >= 2:
+            features.append({"type": "Feature",
+                "geometry": {"type": "LineString", "coordinates": coords},
+                "properties": {"id": eid}})
+    return features
+
+
 def tw_color(tw):
     """Map trustworthiness [0,1] to hex color (red=0, yellow=0.5, green=1)."""
     try: v = float(tw)
@@ -88,6 +119,7 @@ def main():
     cmm_tw_points, fmm_tw_points = [], []
     cmm_path_by_id, fmm_path_by_id = defaultdict(list), defaultdict(list)
     gt_path_by_id = defaultdict(list)
+    gt_edge_set = set()  # collect non-zero gt_edge IDs per trajectory
 
     all_lons, all_lats = [], []
     count = 0
@@ -105,6 +137,11 @@ def main():
                 pass
 
             ts = row["timestamp"]
+
+            # Collect gt_edge (exclude 0/-1 = not on any road)
+            ge = row.get("gt_edge", "").strip()
+            if ge and ge not in ("0", "-1", ""):
+                gt_edge_set.add(ge)
 
             # SPP observation
             ox, oy = row.get("obs_x", ""), row.get("obs_y", "")
@@ -175,6 +212,11 @@ def main():
     roads = load_roads_near(args.edges, all_lons, all_lats) if all_lons else []
     print(f"  {len(roads)} road segments")
 
+    # ── GT edges ──
+    print(f"Loading {len(gt_edge_set)} GT edges...")
+    gt_edge_features = load_gt_edges(args.edges, gt_edge_set)
+    print(f"  {len(gt_edge_features)} GT edge geometries loaded")
+
     # ── HTML ──
     center_lon = float(np.mean(all_lons)) if all_lons else 110.48
     center_lat = float(np.mean(all_lats)) if all_lats else 19.96
@@ -193,6 +235,14 @@ def main():
                 border-radius:3px;vertical-align:middle}}
 </style></head><body>
 <div id="map"></div>
+<div class="search-panel">
+  <b>Search</b><br>
+  <input type="text" id="seq-input" placeholder="Traj-ID Seq (e.g. 11 500)" onkeydown="if(event.key==='Enter')jumpToSeq(this.value)">
+  <button onclick="jumpToSeq(document.getElementById('seq-input').value)">Go</button><br>
+  <input type="text" id="edge-input" placeholder="Edge ID (e.g. 8088)" onkeydown="if(event.key==='Enter')searchEdge(this.value)">
+  <button onclick="searchEdge(document.getElementById('edge-input').value)">Find</button>
+  <div class="result" id="search-result"></div>
+</div>
 <div class="legend" style="position:absolute;bottom:30px;right:10px;z-index:1">
   <div><span style="background:#3388ff"></span> SPP obs (n={len(obs_points)})</div>
   <div><span style="background:#33aa33"></span> RTK Ground Truth</div>
@@ -200,6 +250,7 @@ def main():
   <div><span style="background:#ff4444"></span> FMM matched path</div>
   <div><span style="background:linear-gradient(90deg,red,yellow,green);width:100px;display:inline-block;height:10px;margin-right:6px;vertical-align:middle"></span> Trustworthiness</div>
   <div><span style="background:#999"></span> Road network</div>
+  <div><span style="background:#FF00FF"></span> GT Edges (n={len(gt_edge_features)})</div>
 </div>
 <script>
 var token = '{token}';
@@ -214,6 +265,16 @@ map.on('load',function(){{
   map.addSource('roads',{{type:'geojson',data:{{type:'FeatureCollection',features:{json.dumps(roads)}}}}});
   map.addLayer({{id:'roads',source:'roads',type:'line',
     paint:{{'line-color':'#999','line-width':1.5,'line-opacity':0.4}}}});
+
+  // Road hover highlight layer
+  map.addLayer({{id:'road-hover',source:'roads',type:'line',
+    filter:['==',['get','id'],''],
+    paint:{{'line-color':'#f00','line-width':4,'line-opacity':0.8}}}});
+
+  // GT edges
+  map.addSource('gt_edges',{{type:'geojson',data:{{type:'FeatureCollection',features:{json.dumps(gt_edge_features)}}}}});
+  map.addLayer({{id:'gt_edges',source:'gt_edges',type:'line',
+    paint:{{'line-color':'#FF00FF','line-width':3,'line-opacity':0.75}},layout:{{visibility:'none'}}}});
 
   // GT path
   map.addSource('gt_path',{{type:'geojson',data:{{type:'FeatureCollection',features:{json.dumps(gt_paths)}}}}});
@@ -280,7 +341,7 @@ map.on('load',function(){{
     .setHTML('TW:'+e.features[0].properties.tw).addTo(map)}});
 }});
 
-// Toggle trustworthiness with keyboard 't'
+// Toggle trustworthiness with keyboard 't', GT edges with 'g'
 document.addEventListener('keydown',function(e){{
   if(e.key==='t'){{
     var v=map.getLayoutProperty('cmm_tw','visibility');
@@ -290,7 +351,46 @@ document.addEventListener('keydown',function(e){{
     map.setLayoutProperty('cmm','visibility',(nv==='visible')?'none':'visible');
     map.setLayoutProperty('fmm','visibility',(nv==='visible')?'none':'visible');
   }}
+  if(e.key==='g'){{
+    var gv=map.getLayoutProperty('gt_edges','visibility');
+    map.setLayoutProperty('gt_edges','visibility',(gv==='visible')?'none':'visible');
+  }}
 }});
+console.log('Press "t" to toggle TW coloring, "g" to toggle GT edges');
+
+  // Road hover — show edge ID on mouseover
+  var hoverPopup=document.createElement('div');hoverPopup.className='hover-popup';document.body.appendChild(hoverPopup);
+  map.on('mousemove','roads',function(e){{var id=e.features[0].properties.id;hoverPopup.style.display='block';
+    hoverPopup.style.left=(e.point.x+10)+'px';hoverPopup.style.top=(e.point.y-20)+'px';hoverPopup.textContent='Edge '+id;}});
+  map.on('mouseleave','roads',function(){{hoverPopup.style.display='none';}});
+
+  // Build trajectory paths for sequence search
+  var trajPaths={{}};
+  var cmmPathData={json.dumps({tid: coords for tid, coords in cmm_path_by_id.items()})};
+  Object.keys(cmmPathData).forEach(function(tid){{trajPaths[tid]=cmmPathData[tid];}});
+}});
+
+// Search: format "tid seq" e.g. "11 500"
+function jumpToSeq(query){{
+  var parts=query.trim().split(/\\s+/);
+  var tid=parts[0];
+  var seq=parseInt(parts[1]);
+  if(trajPaths[tid]){{
+    var coords=trajPaths[tid];
+    var idx=Math.min(seq,coords.length-1);
+    map.flyTo({{center:coords[idx],zoom:19,pitch:60}});
+  }}else{{alert('Trajectory '+tid+' not found');}}
+}}
+
+// Edge search — highlight and zoom to edge
+var highlightedEdge=null;
+function searchEdge(eid){{
+  if(highlightedEdge){{map.setFilter('road-hover',['==',['get','id'],'']);}}
+  map.setFilter('road-hover',['==',['get','id'],eid]);
+  highlightedEdge=eid;
+  var feats=map.querySourceFeatures('roads',{{filter:['==',['get','id'],eid]}});
+  if(feats.length>0){{var coords=feats[0].geometry.coordinates[0];map.flyTo({{center:coords,zoom:18}});}}
+}}
 </script></body></html>"""
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

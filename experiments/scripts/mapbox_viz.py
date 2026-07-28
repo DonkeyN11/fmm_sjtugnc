@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
 Interactive Mapbox GL viewer for comparing CMM/FMM results in the Hainan dataset.
+Sophisticated version for mapbox version compared to mapbox_real_data.py
 
 Features:
   - CMM/FMM Result Visualization

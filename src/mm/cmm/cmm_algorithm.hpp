@@ -328,6 +328,25 @@ protected:
                                        const CovarianceMapMatchConfig &config) const;
 
     /**
+     * Compute direction-consistency penalty for reverse-direction candidates.
+     * Uses GNSS displacement velocity v = obs_i - obs_{i-1} and the candidate
+     * edge's tangent direction to penalize wrong-way matches.
+     * Only penalizes when cos(theta) < 0 (opposite direction); forward and
+     * lateral directions receive no penalty.
+     * @param obs_prev      previous GNSS observation point (z_{i-1})
+     * @param obs_curr      current GNSS observation point (z_i)
+     * @param edge_start    start point of candidate road segment
+     * @param edge_end      end point of candidate road segment
+     * @param cov           current epoch covariance matrix (for kappa estimation)
+     * @return              log penalty term (≤0); 0 = no penalty, negative = penalty
+     */
+    static double compute_direction_penalty(const CORE::Point &obs_prev,
+                                            const CORE::Point &obs_curr,
+                                            const CORE::Point &edge_start,
+                                            const CORE::Point &edge_end,
+                                            const CovarianceMatrix &cov);
+
+    /**
      * Search candidates based on protection level
      * @param geom trajectory geometry
      * @param covariances covariance matrices for each point
