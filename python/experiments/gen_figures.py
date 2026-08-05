@@ -2,8 +2,8 @@
 """Generate publication-quality figures for the CaMM IEEE T-ITS article.
 
 Produces:
-  1. reliability_diagram.png — 10-bin calibration curve, CaMM vs FMM at 5m threshold
-  2. ece_ablation.png        — ECE ablation bar chart (FMM → CaMM aniso+norm → CaMM full+reverse)
+  1. reliability_diagram.png — 10-bin calibration curve, CaMM vs HMM at 5m threshold
+  2. ece_ablation.png        — ECE ablation bar chart (HMM → CaMM aniso+norm → CaMM full+reverse)
   3. lag_sweep_multitraj.png — ECE vs lag_steps for all 7 trajectories
 """
 
@@ -32,7 +32,7 @@ plt.rcParams.update({
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Figure 1: Reliability Diagram — CaMM vs FMM at 5m threshold
+# Figure 1: Reliability Diagram — CaMM vs HMM at 5m threshold
 # ══════════════════════════════════════════════════════════════════════════════
 
 def fig_reliability_diagram():
@@ -59,7 +59,7 @@ def fig_reliability_diagram():
 
     for label, bins, color, marker in [
         ("CaMM (anisotropic Mahalanobis)", cmm_bins, "#2166ac", "o"),
-        ("FMM (isotropic Euclidean)", fmm_bins, "#b2182b", "s"),
+        ("HMM (isotropic Euclidean)", fmm_bins, "#b2182b", "s"),
     ]:
         confs = [b["mean_conf"] for b in bins]
         accs  = [b["accuracy"] for b in bins]
@@ -88,14 +88,14 @@ def fig_reliability_diagram():
 
 def fig_ece_ablation():
     """Results from paper ablation study (real data, 5m threshold, 13,052 epochs).
-    Three configs: FMM baseline → CaMM aniso+norm HMM → CaMM full + reverse guard."""
+    Three configs: HMM baseline → CaMM aniso+norm HMM → CaMM full + reverse guard."""
     configs = [
-        ("FMM\n(isotropic\nbaseline)",  0.107),
+        ("HMM\n(isotropic\nbaseline)",  0.107),
         ("CaMM\n(anisotropic\n+ norm. HMM)", 0.072),
         ("CaMM full\n(+ reverse\nguard 3%)", 0.069),
     ]
     ece_decompose = [
-        ("FMM baseline\n(isotropic)", 0.107),
+        ("HMM baseline\n(isotropic)", 0.107),
         ("+ anisotropic\n+ norm. HMM", 0.072),
         ("+ cumulative\nreverse guard", 0.069),
     ]

@@ -476,8 +476,8 @@ def plot_mismatch_analysis(cmm_all: List[Dict], fmm_all: List[Dict], output_dir:
     ax1, ax2, ax3, ax4, ax5, ax6 = axes.flat
 
     # (a) Point error vs sigma_pseudorange
-    ax1.plot(sigma_pr, get_cmm("point_error_mean"), "o-", color="#2166ac", lw=1.5, ms=7, label="CMM")
-    ax1.plot(sigma_pr, get_fmm("point_error_mean"), "s--", color="#b2182b", lw=1.5, ms=7, label="FMM")
+    ax1.plot(sigma_pr, get_cmm("point_error_mean"), "o-", color="#2166ac", lw=1.5, ms=7, label="CaMM")
+    ax1.plot(sigma_pr, get_fmm("point_error_mean"), "s--", color="#b2182b", lw=1.5, ms=7, label="HMM")
     ax1.axvline(20, color="gray", ls=":", lw=1, alpha=0.5, label=r"$\sigma_{wls}=20$m")
     ax1.set_xlabel(r"True $\sigma_{\rho}$ (m)"); ax1.set_ylabel("Mean error (m)")
     ax1.set_title("(a) Point Error vs True Noise"); ax1.legend(); ax1.grid(alpha=0.3)
@@ -490,15 +490,15 @@ def plot_mismatch_analysis(cmm_all: List[Dict], fmm_all: List[Dict], output_dir:
     ax2.set_title("(b) Segment Accuracy"); ax2.grid(alpha=0.3)
 
     # (c) ECE vs sigma_pseudorange (KEY PLOT)
-    ax3.plot(sigma_pr, get_cmm("ece_tw"), "o-", color="#2166ac", lw=1.5, ms=7, label="CMM")
-    ax3.plot(sigma_pr, get_fmm("ece_tw"), "s--", color="#b2182b", lw=1.5, ms=7, label="FMM")
+    ax3.plot(sigma_pr, get_cmm("ece_tw"), "o-", color="#2166ac", lw=1.5, ms=7, label="CaMM")
+    ax3.plot(sigma_pr, get_fmm("ece_tw"), "s--", color="#b2182b", lw=1.5, ms=7, label="HMM")
     ax3.axvline(20, color="gray", ls=":", lw=1, alpha=0.5)
     ax3.set_xlabel(r"True $\sigma_{\rho}$ (m)"); ax3.set_ylabel("ECE")
     ax3.set_title("(c) Calibration Error (ECE) — Key Metric"); ax3.legend(); ax3.grid(alpha=0.3)
 
     # (d) Trustworthiness separation (correct - wrong)
-    ax4.plot(sigma_pr, get_cmm("trust_separation", None), "o-", color="#2166ac", lw=1.5, ms=7, label="CMM")
-    ax4.plot(sigma_pr, get_fmm("trust_separation", None), "s--", color="#b2182b", lw=1.5, ms=7, label="FMM")
+    ax4.plot(sigma_pr, get_cmm("trust_separation", None), "o-", color="#2166ac", lw=1.5, ms=7, label="CaMM")
+    ax4.plot(sigma_pr, get_fmm("trust_separation", None), "s--", color="#b2182b", lw=1.5, ms=7, label="HMM")
     ax4.axhline(0, color="gray", lw=0.8, ls="--")
     ax4.axvline(20, color="gray", ls=":", lw=1, alpha=0.5)
     ax4.set_xlabel(r"True $\sigma_{\rho}$ (m)"); ax4.set_ylabel(r"$\Delta$Trust (correct $-$ wrong)")
@@ -518,11 +518,11 @@ def plot_mismatch_analysis(cmm_all: List[Dict], fmm_all: List[Dict], output_dir:
         ax5.scatter(confs, accs, s=25, color=color, label=sigma_key, marker=marker,
                     edgecolors="white", lw=0.5)
     ax5.set_xlabel("Confidence"); ax5.set_ylabel("Accuracy")
-    ax5.set_title("(e) Reliability Diagram — CMM"); ax5.legend(fontsize=5); ax5.grid(alpha=0.3)
+    ax5.set_title("(e) Reliability Diagram — CaMM"); ax5.legend(fontsize=5); ax5.grid(alpha=0.3)
 
     # (f) ECE vs mismatch (sigma_true - sigma_assumed)
-    ax6.plot(mismatch, get_cmm("ece_tw"), "o-", color="#2166ac", lw=1.5, ms=7, label="CMM")
-    ax6.plot(mismatch, get_fmm("ece_tw"), "s--", color="#b2182b", lw=1.5, ms=7, label="FMM")
+    ax6.plot(mismatch, get_cmm("ece_tw"), "o-", color="#2166ac", lw=1.5, ms=7, label="CaMM")
+    ax6.plot(mismatch, get_fmm("ece_tw"), "s--", color="#b2182b", lw=1.5, ms=7, label="HMM")
     ax6.axvline(0, color="gray", ls=":", lw=1, alpha=0.5)
     ax6.set_xlabel(r"$\sigma_{true} - \sigma_{assumed}$ (m)")
     ax6.set_ylabel("ECE")
@@ -533,7 +533,7 @@ def plot_mismatch_analysis(cmm_all: List[Dict], fmm_all: List[Dict], output_dir:
     ax6.annotate("Over-\nconservative", xy=(-5, y_lim[1]*0.9), fontsize=6, ha="center", color="#2166ac")
     ax6.annotate("Over-\nconfident", xy=(5, y_lim[1]*0.9), fontsize=6, ha="center", color="#b2182b")
 
-    fig.suptitle("Effect of Wrong Emission Model (σ_mismatch): CMM vs FMM", fontsize=10, fontweight="bold")
+    fig.suptitle("Effect of Wrong Emission Model (σ_mismatch): CaMM vs HMM", fontsize=10, fontweight="bold")
     fig.tight_layout()
     fig.savefig(output_dir / "mismatch_analysis.png", dpi=DPI)
     plt.close(fig)

@@ -142,8 +142,8 @@ x = np.arange(len(tids))
 w = 0.35
 cmm_accs = [per_traj[t]["cmm_ok"] / per_traj[t]["cmm_n"] * 100 for t in tids]
 fmm_accs = [per_traj[t]["fmm_ok"] / per_traj[t]["fmm_n"] * 100 for t in tids]
-bars1 = ax.bar(x - w / 2, cmm_accs, w, color=COLOR_CMM, label="CMM", edgecolor="white", lw=0.5)
-bars2 = ax.bar(x + w / 2, fmm_accs, w, color=COLOR_FMM, label="FMM", edgecolor="white", lw=0.5)
+bars1 = ax.bar(x - w / 2, cmm_accs, w, color=COLOR_CMM, label="CaMM", edgecolor="white", lw=0.5)
+bars2 = ax.bar(x + w / 2, fmm_accs, w, color=COLOR_FMM, label="HMM", edgecolor="white", lw=0.5)
 for i, (cv, fv) in enumerate(zip(cmm_accs, fmm_accs)):
     ax.text(i - w / 2, cv + 1, f"{cv:.0f}", ha="center", fontsize=7, fontweight="bold", color=COLOR_CMM)
     ax.text(i + w / 2, fv + 1, f"{fv:.0f}", ha="center", fontsize=7, fontweight="bold", color=COLOR_FMM)
@@ -166,7 +166,7 @@ ax = axes[0]
 ax.plot([0, 1], [0, 1], "k--", lw=0.8)
 cmm_ece_val, cmm_mce, cmm_bins = ece(cT, cL)
 fmm_ece_val, fmm_mce, fmm_bins = ece(fT, fL)
-for label, bins, color, ece_v in [("CMM", cmm_bins, COLOR_CMM, cmm_ece_val), ("FMM", fmm_bins, COLOR_FMM, fmm_ece_val)]:
+for label, bins, color, ece_v in [("CaMM", cmm_bins, COLOR_CMM, cmm_ece_val), ("HMM", fmm_bins, COLOR_FMM, fmm_ece_val)]:
     confs = [b["mean_conf"] for b in bins if b["n"] > 0]
     accs = [b["accuracy"] for b in bins if b["n"] > 0]
     ns = [b["n"] for b in bins if b["n"] > 0]
@@ -202,7 +202,7 @@ ax.bar(range(len(gaps)), gaps, color=colors, edgecolor="white", lw=0.5)
 ax.set_xticks(range(len(gaps)))
 ax.set_xticklabels(labels_bin, rotation=45, fontsize=6)
 ax.set_ylabel("|Conf - Acc|")
-ax.set_title(f"(c) ECE per Bin (CMM)")
+ax.set_title(f"(c) ECE per Bin (CaMM)")
 ax.grid(alpha=0.3, axis="y")
 fig.tight_layout()
 fig.savefig(OUT / "fig_calibration.png", dpi=DPI)
@@ -286,7 +286,7 @@ if td22["cmm"]:
 # ── Figure 5: Error CDF ──
 print("Drawing reliability.png (Error CDF)...")
 fig, ax = plt.subplots(figsize=(7, 4))
-for errs, color, label in [(cE, COLOR_CMM, "CMM"), (fE, COLOR_FMM, "FMM")]:
+for errs, color, label in [(cE, COLOR_CMM, "CaMM"), (fE, COLOR_FMM, "HMM")]:
     se = np.sort(errs)
     cdf = np.arange(1, len(se) + 1) / len(se)
     ax.plot(se, cdf, color=color, lw=1.5, label=f"{label} (μ={np.mean(errs):.1f}m, P95={np.percentile(errs, 95):.1f}m)")
@@ -294,7 +294,7 @@ ax.axhline(0.5, color="gray", lw=0.8, ls="--")
 ax.axhline(0.95, color="gray", lw=0.8, ls="--")
 ax.set_xlabel("Position Error (m)")
 ax.set_ylabel("CDF")
-ax.set_title("Position Error CDF: CMM vs FMM")
+ax.set_title("Position Error CDF: CaMM vs HMM")
 ax.legend()
 ax.grid(alpha=0.3)
 ax.set_xlim(0, np.percentile(np.concatenate([cE, fE]), 99))
@@ -310,14 +310,14 @@ bins = np.linspace(0, 1, 41)
 ax.hist(cT, bins=bins, alpha=0.7, color=COLOR_CMM, label=f"CMM (μ={np.mean(cT):.3f}, σ={np.std(cT):.3f})")
 ax.set_xlabel("Trustworthiness")
 ax.set_ylabel("Count")
-ax.set_title("CMM Trustworthiness Distribution")
+ax.set_title("CaMM Trustworthiness Distribution")
 ax.legend(fontsize=7)
 ax.grid(alpha=0.3)
 ax = axes[1]
 ax.hist(fT, bins=bins, alpha=0.7, color=COLOR_FMM, label=f"FMM (μ={np.mean(fT):.3f}, σ={np.std(fT):.3f})")
 ax.set_xlabel("Trustworthiness")
 ax.set_ylabel("Count")
-ax.set_title("FMM Trustworthiness Distribution")
+ax.set_title("HMM Trustworthiness Distribution")
 ax.legend(fontsize=7)
 ax.grid(alpha=0.3)
 fig.tight_layout()
@@ -363,7 +363,7 @@ if td11["cmm"]:
     if e11:
         ax.hist(e11, bins=40, alpha=0.7, color=COLOR_CMM)
         ax.set_xlabel("Position Error (m)")
-        ax.set_title(f"CMM Error (μ={np.mean(e11):.1f}m)")
+        ax.set_title(f"CaMM Error (μ={np.mean(e11):.1f}m)")
         ax.grid(alpha=0.3)
     # Per-traj summary
     ax = axes[1, 0]
@@ -371,8 +371,8 @@ if td11["cmm"]:
     x_all = np.arange(len(tids_all))
     cmm_a = [per_traj[t]["cmm_ok"] / max(per_traj[t]["cmm_n"], 1) * 100 for t in tids_all]
     fmm_a = [per_traj[t]["fmm_ok"] / max(per_traj[t]["fmm_n"], 1) * 100 for t in tids_all]
-    ax.bar(x_all - 0.2, cmm_a, 0.35, color=COLOR_CMM, label="CMM")
-    ax.bar(x_all + 0.2, fmm_a, 0.35, color=COLOR_FMM, label="FMM")
+    ax.bar(x_all - 0.2, cmm_a, 0.35, color=COLOR_CMM, label="CaMM")
+    ax.bar(x_all + 0.2, fmm_a, 0.35, color=COLOR_FMM, label="HMM")
     for i, (cv, fv) in enumerate(zip(cmm_a, fmm_a)):
         ax.text(i - 0.2, cv + 1, f"{cv:.0f}", ha="center", fontsize=6, color=COLOR_CMM)
         ax.text(i + 0.2, fv + 1, f"{fv:.0f}", ha="center", fontsize=6, color=COLOR_FMM)

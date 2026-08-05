@@ -9,6 +9,27 @@ Features:
   - Road Network with Hover-to-ID
   - Specific Edge Filtering (Top Right)
   - Coordinate (Lon, Lat) Search & Marker (Bottom Right)
+
+Usage:
+export MAPBOX_ACCESS_TOKEN="pk.eyJ1..."
+python experiments/scripts/mapbox_viz.py \
+  --cmm data/real_vehicle/hainan_06/processed/cmm_result.csv \
+  --fmm data/real_vehicle/hainan_06/processed/fmm_result.csv \
+  --input data/real_vehicle/hainan_06/cmm_input_points.csv \
+  --edges input/map/hainan/edges.shp \
+  --ground-truth data/real_vehicle/hainan_06/processed/ground_truth_points.csv \
+  --output data/real_vehicle/hainan_06/processed/mapbox_viz_new.html
+
+python experiments/scripts/mapbox_viz.py \
+  ... 同上参数 ... \
+  --ids "22" \
+  --output data/real_vehicle/hainan_06/processed/mapbox_viz_traj22.html
+
+python experiments/scripts/mapbox_viz.py \
+  ... 同上参数 ... \
+  --ids "11,22,23" \
+  --output data/real_vehicle/hainan_06/processed/mapbox_viz_select.html
+
 """
 
 import argparse
@@ -325,6 +346,34 @@ def load_ground_truth_path(path: Path, ids: Set[str], bounds: Bounds) -> Tuple[L
     return features, updated_bounds
 
 
+def load_gt_edges_geojson(shapefile: Path, gt_csv: Path) -> Dict:
+    """Load geometries for edge IDs appearing as GT in ground_truth.csv."""
+    edge_ids = set()
+    with open(gt_csv, newline="") as f:
+        for row in csv.DictReader(f, delimiter=";"):
+            eid = row.get("edge_id", "").strip()
+            if eid and eid not in ("0", "-1", ""):
+                edge_ids.add(eid)
+    print(f"  {len(edge_ids)} unique GT edge IDs")
+    try:
+        from osgeo import ogr
+        ds = ogr.Open(str(shapefile))
+        if ds is None: return {"type": "FeatureCollection", "features": []}
+        layer = ds.GetLayer()
+        features = []
+        for feat in layer:
+            eid = str(feat.GetField("key"))
+            if eid not in edge_ids: continue
+            geom = feat.GetGeometryRef()
+            if geom is None: continue
+            coords = [[geom.GetPoint(i)[0], geom.GetPoint(i)[1]] for i in range(geom.GetPointCount())]
+            if len(coords) >= 2:
+                features.append({"type": "Feature", "geometry": {"type": "LineString", "coordinates": coords}, "properties": {"id": eid}})
+        print(f"  Loaded {len(features)} GT edge geometries")
+        return {"type": "FeatureCollection", "features": features}
+    except ImportError:
+        return {"type": "FeatureCollection", "features": []}
+
 def load_edges_geojson(shapefile: Path, used_edges: Optional[Set[str]]) -> Dict:
     """Load road network and return as GeoJSON using ogr2ogr/ogrinfo to filter."""
     if not shapefile.exists():
@@ -371,6 +420,7 @@ def render_html(
     fmm_geojson: Dict,
     road_geojson: Dict,
     gt_geojson: Dict = None,
+    gt_edges_geojson: Dict = None,
     ids: List[str] = None
 ) -> str:
     bounds_js = json.dumps([[bounds[0], bounds[1]], [bounds[2], bounds[3]]]) if math.isfinite(bounds[0]) else "null"
@@ -451,8 +501,9 @@ def render_html(
   
   <div class="legend-item"><div class="legend-color" style="background:#17becf;"></div> Observations</div>
   <div class="legend-item"><div class="legend-color" style="background:#ff7f0e;"></div> CMM Result</div>
-  <div class="legend-item"><div class="legend-color" style="background:#2ca02c;"></div> FMM Result</div>
+  <div class="legend-item"><div class="legend-color" style="background:#d62728;"></div> FMM Result</div>
   <div class="legend-item"><div class="legend-color" style="background:#27ae60;"></div> GT Points</div>
+  <div class="legend-item"><div class="legend-color" style="background:#FF00FF;"></div> GT Edges</div>
   <div class="legend-item"><div style="width: 12px; height: 3px; background:#2ecc71; margin-right: 10px;"></div> GT Path</div>
   <div class="legend-item"><div style="width: 12px; height: 3px; background:#888; margin-right: 10px;"></div> Road Network</div>
   
@@ -520,6 +571,7 @@ def render_html(
   const fmmGeojson = $FMM_GEOJSON;
   const roadGeojson = $ROAD_GEOJSON;
   const gtGeojson = $GT_GEOJSON;
+  const gtEdgesGeojson = $GT_EDGES_GEOJSON;
 
   const map = new mapboxgl.Map({
     container: 'map',
@@ -545,9 +597,15 @@ def render_html(
     if (!map.getSource('cmm')) map.addSource('cmm', { type: 'geojson', data: cmmGeojson });
     if (!map.getSource('fmm')) map.addSource('fmm', { type: 'geojson', data: fmmGeojson });
     if (!map.getSource('road')) map.addSource('road', { type: 'geojson', data: roadGeojson });
+    if (!map.getSource('gt_edges')) map.addSource('gt_edges', { type: 'geojson', data: gtEdgesGeojson });
     if (!map.getSource('gt')) map.addSource('gt', { type: 'geojson', data: gtGeojson });
 
     // Ground Truth Layers
+    if (!map.getLayer('gt-edges-layer')) {
+      map.addLayer({ id: 'gt-edges-layer', type: 'line', source: 'gt_edges',
+        paint: { 'line-color': '#FF00FF', 'line-width': 2.5, 'line-opacity': 0.8 } });
+    }
+
     if (!map.getLayer('gt-layer')) {
       map.addLayer({ id: 'gt-layer', type: 'line', source: 'gt',
         filter: ['==', ['get', 'kind'], 'ground_truth_path'],
@@ -565,6 +623,7 @@ def render_html(
     if (!map.getLayer('road-layer')) {
       map.addLayer({
         id: 'road-layer',
+        layout: {'visibility': 'none'},
         type: 'line',
         source: 'road',
         paint: {
@@ -640,7 +699,7 @@ def render_html(
         source: 'fmm',
         paint: {
           'circle-radius': ['interpolate', ['linear'], ['zoom'], 10, 3, 16, 8],
-          'circle-color': '#2ca02c',
+          'circle-color': '#d62728',
           'circle-stroke-width': 1.5,
           'circle-stroke-color': '#fff'
         }
@@ -894,6 +953,7 @@ def render_html(
         FMM_GEOJSON=json.dumps(fmm_geojson),
         ROAD_GEOJSON=json.dumps(road_geojson),
         GT_GEOJSON=json.dumps(gt_geojson or {"type": "FeatureCollection", "features": []}),
+        GT_EDGES_GEOJSON=json.dumps(gt_edges_geojson or {"type": "FeatureCollection", "features": []}),
         IDS_LABEL=", ".join(ids) if ids else "All",
     )
 
@@ -939,13 +999,14 @@ def main():
 
     # 在这里传入 None，表示提取所有的路网（不根据 matching 结果过滤）
     road_geojson = load_edges_geojson(Path(args.edges), None)
+    gt_edges_geojson = load_gt_edges_geojson(Path(args.edges), Path("data/real_vehicle/hainan_06/processed/ground_truth.csv"))
 
     obs_geojson = {"type": "FeatureCollection", "features": obs_features}
     gt_geojson = {"type": "FeatureCollection", "features": gtp_features + gt_features}
     cmm_geojson = {"type": "FeatureCollection", "features": cmm_features}
     fmm_geojson = {"type": "FeatureCollection", "features": fmm_features}
 
-    html = render_html(MAPBOX_DEFAULT_TOKEN, bounds, obs_geojson, cmm_geojson, fmm_geojson, road_geojson, gt_geojson, list(selected_ids))
+    html = render_html(MAPBOX_DEFAULT_TOKEN, bounds, obs_geojson, cmm_geojson, fmm_geojson, road_geojson, gt_geojson, gt_edges_geojson, list(selected_ids))
     
     output_path = Path(args.output)
     output_path.parent.mkdir(parents=True, exist_ok=True)
