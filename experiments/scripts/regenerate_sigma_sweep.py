@@ -11,11 +11,16 @@ Changes from previous version:
   - Reads sigma_sweep_full.json first, falls back to sigma_sweep_table.csv
   - Panels (e-f) fallback order: sigma_10 → sigma_10_sr1 → sigma_15_sr1
   - Handles n=0 entries gracefully
+  - Panel (a) plots median error with IQR (P25-P75) error bars; quartiles are
+    read from point_error_p25/point_error_p75 in the JSON when present, else
+    recomputed from the raw result CSVs + ground truth in data/simulation/
+  - Saves both PNG and SVG versions
 """
-import csv, json, sys
+import csv, json, math, re, sys
 from pathlib import Path
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+import matplotlib.lines as mlines
 import numpy as np
 
 PROJECT = Path(__file__).resolve().parents[2]
@@ -100,18 +105,126 @@ def csv_get(data_dict, sigma_label, key, default=np.nan):
     val = entry.get(key)
     return val if val is not None else default
 
+# ── IQR (P25-P75) for panel (a) error bars ──
+# sigma_sweep_full.json only stores mean/median/rmse/p95, so the quartiles are
+# recomputed from the raw per-point errors (result CSV + ground truth) using the
+# same logic as compute_metrics() in exp3_full_matching.py.
+RAW_DATA_ROOT = PROJECT / "data/simulation"
+_IQR_CACHE = {}
+
+
+def _find_sigma_data_dir(sigma_label):
+    """Locate raw dataset dir for a sigma label (mirrors exp3_full_matching.py)."""
+    candidates = [
+        RAW_DATA_ROOT / sigma_label / "no_occlusion" / "no_fault",
+        RAW_DATA_ROOT / sigma_label,
+    ]
+    for d in candidates:
+        if d.is_dir() and (d / "observations.csv").exists():
+            return d
+    return None
+
+
+def _load_gt_points_by_ts(data_dir):
+    """(id, ts) and (id, round(ts)) -> (x, y) from ground_truth_points.csv."""
+    gt = {}
+    gt_path = data_dir / "ground_truth_points.csv"
+    if not gt_path.exists():
+        return gt
+    with open(gt_path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f, delimiter=";"):
+            tid = row["id"].strip()
+            ts_str = row.get("timestamp", "").strip()
+            if not ts_str:
+                continue
+            ts = float(ts_str)
+            x, y = float(row["x"]), float(row["y"])
+            gt[(tid, ts)] = (x, y)
+            gt[(tid, int(round(ts)))] = (x, y)
+    return gt
+
+
+def _parse_point(wkt):
+    m = re.search(r'POINT\s*\(\s*([\d.\-]+)\s+([\d.\-]+)\s*\)', str(wkt), re.I)
+    return (float(m.group(1)), float(m.group(2))) if m else None
+
+
+def _haversine_deg_to_m(lon1, lat1, lon2, lat2):
+    mlat = math.radians((lat1 + lat2) / 2.0)
+    dx = (lon1 - lon2) * 111320.0 * math.cos(mlat)
+    dy = (lat1 - lat2) * 111320.0
+    return math.sqrt(dx * dx + dy * dy)
+
+
+def _get_iqr(sigma_label, algo):
+    """Return (p25, p75) in meters for a sigma level, or None.
+
+    algo is the JSON dict key: 'cmm' or 'fmm'. Prefers point_error_p25/p75 from
+    the loaded data; otherwise recomputes from the raw result CSV + ground truth.
+    """
+    key = (sigma_label, algo)
+    if key in _IQR_CACHE:
+        return _IQR_CACHE[key]
+
+    entry = (cmm_data if algo == "cmm" else hmm_data).get(sigma_label, {})
+    p25, p75 = entry.get("point_error_p25"), entry.get("point_error_p75")
+    if p25 is not None and p75 is not None:
+        _IQR_CACHE[key] = (float(p25), float(p75))
+        return _IQR_CACHE[key]
+
+    data_dir = _find_sigma_data_dir(sigma_label)
+    mr_name = "cmm_result.csv" if algo == "cmm" else "fmm_result.csv"
+    if data_dir is not None and (data_dir / mr_name).exists():
+        gt = _load_gt_points_by_ts(data_dir)
+        errors = []
+        with open(data_dir / mr_name, newline="", encoding="utf-8") as f:
+            for row in csv.DictReader(f, delimiter=";"):
+                tid = row.get("id", "").strip()
+                ts_str = row.get("timestamp", "").strip()
+                pt = _parse_point(row.get("pgeom", ""))
+                if pt and ts_str:
+                    try:
+                        ts = float(ts_str)
+                    except ValueError:
+                        continue
+                    g = gt.get((tid, ts)) or gt.get((tid, int(round(ts))))
+                    if g is not None:
+                        errors.append(_haversine_deg_to_m(pt[0], pt[1], g[0], g[1]))
+        if errors:
+            err = np.array(errors)
+            iqr = (float(np.percentile(err, 25)), float(np.percentile(err, 75)))
+            _IQR_CACHE[key] = iqr
+            print(f"  IQR from raw data: {sigma_label}/{algo} "
+                  f"P25={iqr[0]:.4f} m, P75={iqr[1]:.4f} m (n={len(err)})")
+            return iqr
+
+    _IQR_CACHE[key] = None
+    print(f"  WARNING: no P25/P75 for {sigma_label}/{algo} — drawing without error bars")
+    return None
+
+
 # ── Build figure ──
 fig, axes = plt.subplots(3, 2, figsize=(7.5, 10.5))
 ax1, ax2, ax3, ax4, ax5, ax6 = axes.flat
 
-# (a) Point error
-ax1.plot(sigma_vals, [csv_get(cmm_data, s, "point_error_mean") for s in sigma_labels],
-         "o-", color=COLOR_CMM, lw=1.2, ms=5, label="CaMM")
-ax1.plot(sigma_vals, [csv_get(hmm_data, s, "point_error_mean") for s in sigma_labels],
-         "s--", color=COLOR_HMM, lw=1.2, ms=5, label="HMM")
+# (a) Point error — median with IQR (P25-P75) error bars
+for algo, fmt, color, data in [
+    ("cmm", "o-", COLOR_CMM, cmm_data),
+    ("fmm", "s--", COLOR_HMM, hmm_data),
+]:
+    meds = [csv_get(data, s, "point_error_median") for s in sigma_labels]
+    iqrs = [_get_iqr(s, algo) for s in sigma_labels]
+    # Asymmetric yerr = [median-P25, P75-median]; mask levels without data
+    yerr = np.ma.masked_invalid(np.array([
+        [m - i[0] if i else np.nan for m, i in zip(meds, iqrs)],
+        [i[1] - m if i else np.nan for m, i in zip(meds, iqrs)],
+    ]))
+    ax1.errorbar(sigma_vals, meds, yerr=yerr, fmt=fmt, color=color,
+                 lw=1.2, ms=5, capsize=2.5, ecolor=color, elinewidth=1.0,
+                 label="CaMM" if algo == "cmm" else "HMM")
 ax1.set_xlabel(r"$\sigma_{\rho}$ (m)")
-ax1.set_ylabel("Mean error (m)")
-ax1.set_title("(a) Point Error")
+ax1.set_ylabel("Median error (m)")
+ax1.set_title("(a) Point Error (Median ± IQR)")
 ax1.legend()
 ax1.grid(alpha=0.3)
 ax1.set_xlim(0, 32)
@@ -179,6 +292,7 @@ cmm_detail = _find_detail_data(detail_cmm, RELIABILITY_SIGMA)
 hmm_detail = _find_detail_data(detail_hmm, RELIABILITY_SIGMA)
 
 reliability_plotted = False
+all_ns = []
 for label, detail, color in [("CaMM", cmm_detail, COLOR_CMM), ("HMM", hmm_detail, COLOR_HMM)]:
     if detail is None:
         continue
@@ -187,11 +301,26 @@ for label, detail, color in [("CaMM", cmm_detail, COLOR_CMM), ("HMM", hmm_detail
         confs = [b["mean_conf"] for b in bins if b.get("n", 0) > 0]
         accs = [b["accuracy"] for b in bins if b.get("n", 0) > 0]
         ns = [b["n"] for b in bins if b.get("n", 0) > 0]
+        all_ns.extend(ns)
         if confs:
             ax5.scatter(confs, accs, s=[max(n * 0.5, 10) for n in ns],
                        color=color, label=label, edgecolors="white", lw=0.5, zorder=3, alpha=0.8)
             ax5.plot(confs, accs, "-", color=color, lw=1.0, alpha=0.4)
             reliability_plotted = True
+
+# Add sample-size (bubble size) legend
+if all_ns:
+    max_n = max(all_ns)
+    small_samp = mlines.Line2D([], [], color='gray', marker='o', linestyle='None',
+                               markersize=5, label=f'< {max_n//4:.0f}')
+    medium_samp = mlines.Line2D([], [], color='gray', marker='o', linestyle='None',
+                                markersize=8, label=f'{max_n//4:.0f} – {max_n//2:.0f}')
+    large_samp = mlines.Line2D([], [], color='gray', marker='o', linestyle='None',
+                               markersize=12, label=f'> {max_n//2:.0f}')
+    legend_size = ax5.legend(handles=[small_samp, medium_samp, large_samp],
+                             title="Sample Size (n)", loc='lower right',
+                             fontsize=5.5, title_fontsize=6)
+    ax5.add_artist(legend_size)
 
 # Fallback: if no detailed bins, show note
 if not reliability_plotted:
@@ -236,7 +365,11 @@ ax6.grid(alpha=0.3)
 fig.suptitle("CaMM vs HMM: Sigma Sensitivity ($k=16$)", fontsize=13, fontweight="bold")
 fig.tight_layout()
 out = FIGS_DIR / "sigma_sweep.png"
+out_svg = FIGS_DIR / "sigma_sweep.svg"
 fig.savefig(out, dpi=DPI)
+fig.savefig(out_svg)
 plt.close(fig)
 print(f"Saved {out}")
-print(f"  File size: {out.stat().st_size // 1024} KB")
+print(f"Saved {out_svg}")
+print(f"  PNG file size: {out.stat().st_size // 1024} KB")
+print(f"  SVG file size: {out_svg.stat().st_size // 1024} KB")

@@ -218,27 +218,35 @@ def plot_case_study(seg, title, out_stem, figsize=(16, 6.5)):
     # ── Figure ──
     fig = plt.figure(figsize=figsize, dpi=DPI)
 
-    # GridSpec: left panel | right panel
+    # GridSpec: left panel | right panel, leave room for colorbar on right
     gs = fig.add_gridspec(1, 2, width_ratios=[1.0, 1.0],
-                          left=0.04, right=0.90, top=0.92, bottom=0.12,
+                          left=0.04, right=0.88, top=0.92, bottom=0.12,
                           wspace=0.08)
 
     ax_tw = fig.add_subplot(gs[0, 0])
     ax_map = fig.add_subplot(gs[0, 1])
 
+    # Colorbar axes: wider strip on far right (must be wide enough to render)
+    ax_cbar = fig.add_axes([0.905, 0.22, 0.035, 0.56])
+
     # ── Left Panel: TW Curve ──
     _plot_tw_curve(ax_tw, seqs, tws)
 
-    # ── Right Panel: Satellite Map + Colorbar ──
+    # ── Right Panel: Satellite Map ──
     _plot_satellite_map(ax_map, seg, xs, ys, tws, corrects, lo, hi, bo, to, zoom)
+
+    # ── Colorbar (imshow-based, the only approach that works in mpl 3.11) ──
+    _plot_colorbar(ax_cbar)
 
     # ── Title ──
     fig.suptitle(title, fontsize=12, fontweight='bold', y=0.97)
 
     # ── Save ──
-    for fmt, ext in [('svg', '.svg'), ('png', '.png')]:
+    for fmt, ext, use_tight in [('svg', '.svg', False), ('png', '.png', False)]:
         out_path = Path(str(out_stem) + ext)
-        kwargs = dict(bbox_inches='tight', facecolor='white', edgecolor='none')
+        kwargs = dict(facecolor='white', edgecolor='none')
+        if use_tight:
+            kwargs['bbox_inches'] = 'tight'
         if ext == '.png':
             kwargs['dpi'] = 200
         fig.savefig(out_path, format=fmt, **kwargs)
@@ -302,11 +310,21 @@ def _plot_satellite_map(ax, seg, xs, ys, tws, corrects, lo, hi, bo, to, zoom):
     ax.yaxis.set_major_formatter(ScalarFormatter())
     ax.ticklabel_format(style='plain', useOffset=False)
 
-    # ── Colorbar (overlaid on map, using LineCollection as mappable) ──
-    cbar = plt.colorbar(lc, ax=ax, shrink=0.55, aspect=20, pad=0.025)
-    cbar.set_label('TW', fontsize=9, fontweight='bold')
-    cbar.ax.tick_params(labelsize=7)
-    cbar.set_ticks([0.0, 0.25, 0.5, 0.75, 1.0])
+
+def _plot_colorbar(ax):
+    """imshow-based RdYlGn colorbar (the only approach that renders in mpl 3.11)."""
+    gradient = np.linspace(1, 0, 256).reshape(256, 1)
+    ax.imshow(gradient, aspect='auto', cmap='RdYlGn',
+              extent=[0, 1, 0, 1])
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_xticks([])
+    ax.yaxis.set_ticks_position('right')
+    ax.set_yticks([0.0, 0.25, 0.5, 0.75, 1.0])
+    ax.set_yticklabels(['0.0', '0.25', '0.50', '0.75', '1.0'], fontsize=7)
+    ax.yaxis.set_label_position('right')
+    ax.set_ylabel('TW', fontsize=9, fontweight='bold', rotation=0,
+                  labelpad=12, va='center')
 
 
 # ── Main ──────────────────────────────────────────────────────────────────
