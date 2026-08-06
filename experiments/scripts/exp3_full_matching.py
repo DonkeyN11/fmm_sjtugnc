@@ -684,6 +684,7 @@ def main():
     project_root = Path(__file__).resolve().parents[2]
     network_shp = str((project_root / args.network_shp).resolve())
     ubodt = str((project_root / args.ubodt).resolve())
+    args.data_root = (project_root / args.data_root).resolve()
     args.output_dir.mkdir(parents=True, exist_ok=True)
 
     # ── Sigma-level datasets ──
@@ -691,6 +692,12 @@ def main():
     if not dataset_dirs:
         dataset_dirs = sorted([d for d in args.data_root.glob("sigma_*")
                                if d.is_dir() and (d / "observations.csv").exists()])
+    if not dataset_dirs:
+        raise FileNotFoundError(
+            f"No sigma-level datasets found under {args.data_root}: expected "
+            "'sigma_*/no_occlusion/no_fault' (or 'sigma_*' with observations.csv). "
+            "Refusing to write empty results."
+        )
     print(f"Found {len(dataset_dirs)} sigma-level datasets")
 
     # ── Sample rate config ──

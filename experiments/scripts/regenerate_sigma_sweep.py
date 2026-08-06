@@ -2,13 +2,14 @@
 """Regenerate sigma_sweep.png (Figure 6) from available data sources.
 
 Data sources:
-  - summary_table.csv: summary metrics for all sigma levels (panels a-d)
-  - sample_rate_full.json: detailed bins/ROC data for panels (e-f)
-    Uses the closest available sigma level with full data.
+  - sigma_sweep_full.json: full metrics (summary + bins/ROC) for all sigma
+    levels (primary source; feeds panels a-f)
+  - sigma_sweep_table.csv: summary metrics only (fallback for panels a-d)
 
 Changes from previous version:
   - FMM → HMM in all legend labels
-  - Uses CSV fallback when JSON is empty
+  - Reads sigma_sweep_full.json first, falls back to sigma_sweep_table.csv
+  - Panels (e-f) fallback order: sigma_10 → sigma_10_sr1 → sigma_15_sr1
   - Handles n=0 entries gracefully
 """
 import csv, json, sys
@@ -19,8 +20,8 @@ import numpy as np
 
 PROJECT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = PROJECT / "experiments/output/3_full_matching"
-SUMMARY_CSV = OUTPUT_DIR / "summary_table.csv"
-SAMPLE_RATE_JSON = OUTPUT_DIR / "sample_rate_full.json"
+FULL_JSON = OUTPUT_DIR / "sigma_sweep_full.json"
+SUMMARY_CSV = OUTPUT_DIR / "sigma_sweep_table.csv"
 FIGS_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -33,32 +34,51 @@ plt.rcParams.update({
     "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight",
 })
 
-# ── Load summary data from CSV ──
-if not SUMMARY_CSV.exists():
-    print(f"ERROR: {SUMMARY_CSV} not found.")
-    sys.exit(1)
-
-cmm_data = {}  # label -> {metric: value}
+# ── Load data: sigma_sweep_full.json first, fall back to sigma_sweep_table.csv ──
+cmm_data = {}    # label -> {metric: value}  (panels a-d)
 hmm_data = {}
+detail_cmm = {}  # label -> full metrics dict with bins/ROC (panels e-f)
+detail_hmm = {}
 
-with open(SUMMARY_CSV, newline="") as f:
-    for row in csv.DictReader(f):
-        algo = row["algorithm"].strip()
-        label = row["label"].strip()
-        target = cmm_data if algo == "CMM" else hmm_data
-        target[label] = {
-            "n": int(row["n"]) if row["n"] else 0,
-            "point_error_mean": float(row["point_error_mean"]) if row["point_error_mean"] else None,
-            "point_error_median": float(row["point_error_median"]) if row["point_error_median"] else None,
-            "point_error_rmse": float(row["point_error_rmse"]) if row["point_error_rmse"] else None,
-            "point_error_p95": float(row["point_error_p95"]) if row["point_error_p95"] else None,
-            "seg_accuracy": float(row["seg_accuracy"]) if row["seg_accuracy"] else None,
-            "ece_tw": float(row["ece_tw"]) if row["ece_tw"] else None,
-            "ece_ep": float(row["ece_ep"]) if row["ece_ep"] else None,
-            "roc_auc": float(row["roc_auc"]) if row["roc_auc"] else None,
-        }
+loaded_source = None
+if FULL_JSON.exists():
+    with open(FULL_JSON) as f:
+        full_data = json.load(f)
+    for m in full_data.get("cmm", []):
+        detail_cmm[m["label"]] = m
+        cmm_data[m["label"]] = m
+    for m in full_data.get("fmm", []):
+        detail_hmm[m["label"]] = m
+        hmm_data[m["label"]] = m
+    if cmm_data or hmm_data:
+        loaded_source = FULL_JSON.name
+        print(f"Loaded {FULL_JSON.name}: {len(cmm_data)} CMM, {len(hmm_data)} HMM entries")
+    else:
+        print(f"WARNING: {FULL_JSON.name} has no entries — falling back to {SUMMARY_CSV.name}")
 
-print(f"Loaded CSV: {len(cmm_data)} CMM, {len(hmm_data)} HMM entries")
+if loaded_source is None:
+    if not SUMMARY_CSV.exists():
+        print(f"ERROR: neither {FULL_JSON.name} nor {SUMMARY_CSV.name} found.")
+        sys.exit(1)
+
+    with open(SUMMARY_CSV, newline="") as f:
+        for row in csv.DictReader(f):
+            algo = row["algorithm"].strip()
+            label = row["label"].strip()
+            target = cmm_data if algo == "CMM" else hmm_data
+            target[label] = {
+                "n": int(row["n"]) if row["n"] else 0,
+                "point_error_mean": float(row["point_error_mean"]) if row["point_error_mean"] else None,
+                "point_error_median": float(row["point_error_median"]) if row["point_error_median"] else None,
+                "point_error_rmse": float(row["point_error_rmse"]) if row["point_error_rmse"] else None,
+                "point_error_p95": float(row["point_error_p95"]) if row["point_error_p95"] else None,
+                "seg_accuracy": float(row["seg_accuracy"]) if row["seg_accuracy"] else None,
+                "ece_tw": float(row["ece_tw"]) if row["ece_tw"] else None,
+                "ece_ep": float(row["ece_ep"]) if row["ece_ep"] else None,
+                "roc_auc": float(row["roc_auc"]) if row["roc_auc"] else None,
+            }
+
+    print(f"Loaded {SUMMARY_CSV.name}: {len(cmm_data)} CMM, {len(hmm_data)} HMM entries")
 
 # Determine sigma levels (sorted by numeric value, filter out sr variants)
 sigma_labels_cmm = sorted(
@@ -74,21 +94,7 @@ sigma_labels = sorted(set(sigma_labels_cmm) | set(sigma_labels_hmm),
 sigma_vals = [int(s.replace("sigma_", "")) for s in sigma_labels]
 print(f"Sigma levels: {sigma_labels}")
 
-# ── Load detailed data from sample_rate_full.json for panels (e)-(f) ──
-detail_cmm = {}  # label -> full metrics dict
-detail_hmm = {}
-if SAMPLE_RATE_JSON.exists():
-    with open(SAMPLE_RATE_JSON) as f:
-        sr_data = json.load(f)
-    for m in sr_data.get("cmm", []):
-        detail_cmm[m["label"]] = m
-    for m in sr_data.get("fmm", []):
-        detail_hmm[m["label"]] = m
-    print(f"Loaded detailed JSON: {len(detail_cmm)} CMM, {len(detail_hmm)} HMM entries")
-else:
-    print(f"WARNING: {SAMPLE_RATE_JSON} not found — panels (e)-(f) will use fallback")
-
-# Helper: get a metric from CSV data
+# Helper: get a metric from loaded data
 def csv_get(data_dict, sigma_label, key, default=np.nan):
     entry = data_dict.get(sigma_label, {})
     val = entry.get(key)
@@ -150,16 +156,15 @@ ax4.grid(alpha=0.3)
 ax4.set_xlim(0, 32)
 ax4.set_ylim(0.4, 1.0)
 
-# (e) Reliability diagram — use sigma_10 if available in detailed JSON,
-#     fall back to sigma_05_sr1 or sigma_15_sr1 from sample_rate_full.json
-#     then fall back to CSV bins if present
+# (e) Reliability diagram — use sigma_10 if available in detailed data,
+#     fall back to sigma_10_sr1, then sigma_15_sr1
 RELIABILITY_SIGMA = "sigma_10"
 def _find_detail_data(detail_dict, preferred_label):
     """Find detailed data, trying preferred label first, then fallbacks."""
     if preferred_label in detail_dict:
         return detail_dict[preferred_label]
     # Try sr1 variants
-    for fallback in [f"{preferred_label}_sr1", "sigma_05_sr1", "sigma_15_sr1", "sigma_25_sr1"]:
+    for fallback in [f"{preferred_label}_sr1", "sigma_15_sr1"]:
         if fallback in detail_dict:
             return detail_dict[fallback]
     # Try any key starting with preferred prefix
