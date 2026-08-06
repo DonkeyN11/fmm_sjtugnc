@@ -11,7 +11,7 @@ Plots:
 
 Usage:
   python experiments/scripts/exp2_stanford_pl.py \
-    --data-root experiments/data \
+    --data-root data/simulation \
     --output-dir experiments/output/2_stanford
 """
 
@@ -125,7 +125,7 @@ def stanford_single(dataset_path: Path, output_dir: Path) -> dict:
 
 def main():
     parser = argparse.ArgumentParser(description="Stanford PL analysis.")
-    parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--data-root", type=Path, default=Path("data/simulation"))
     parser.add_argument("--output-dir", type=Path,
                         default=Path("experiments/output/2_stanford"))
     args = parser.parse_args()

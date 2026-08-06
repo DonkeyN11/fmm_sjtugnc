@@ -14,7 +14,8 @@ plt.rcParams.update({"font.size":8,"axes.labelsize":9,"axes.titlesize":10,
     "figure.dpi":DPI,"savefig.dpi":DPI,"savefig.bbox":"tight"})
 
 ROOT=Path(__file__).resolve().parents[1]
-DATA=ROOT/"data/real_data"
+PROJECT = Path(__file__).resolve().parents[2]
+DATA = PROJECT / "data/real_vehicle/hainan_06/processed"
 OUT=ROOT/"output/exp6_real"; OUT.mkdir(parents=True,exist_ok=True)
 
 REV=json.load(open(ROOT/"config/reverse_edge_map.json"))

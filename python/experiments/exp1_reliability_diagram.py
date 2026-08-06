@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Reliability diagram: trustworthiness calibration against segment-level ground truth.
-Reads aligned.csv (TMM + HMM results with ground truth edge IDs).
+Reads aligned.csv (CaMM + HMM results with ground truth edge IDs).
 Outputs: exp1_reliability.json (consumed by gen_figures.py).
 """
 
@@ -17,7 +17,7 @@ OUT.parent.mkdir(parents=True, exist_ok=True)
 
 
 def load_aligned(path):
-    """Load aligned.csv, return TMM and HMM rows with segment-level correctness."""
+    """Load aligned.csv, return CaMM and HMM rows with segment-level correctness."""
     REV = {}
     if REV_MAP.exists():
         with open(REV_MAP) as f:
@@ -108,7 +108,7 @@ def main():
     brier_h, ll_h = compute_brier_logloss(hmm_confs, hmm_labels)
 
     # ── Bin table ──
-    print(f"\n  {'Bin':>4s}  {'Range':>8s}  {'TMM n':>7s}  {'TMM TW':>7s}  {'TMM acc':>8s}  "
+    print(f"\n  {'Bin':>4s}  {'Range':>8s}  {'CaMM n':>7s}  {'CaMM TW':>7s}  {'CaMM acc':>8s}  "
           f"{'HMM n':>7s}  {'HMM TW':>7s}  {'HMM acc':>8s}")
     print("  " + "-" * 70)
     for i in range(10):

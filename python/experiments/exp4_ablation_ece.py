@@ -3,7 +3,7 @@
 Experiment 4: 100-bin ECE ablation study across parameter configurations.
 
 Configurations tested:
-  A1. FMM (isotropic Euclidean) — baseline
+  A1. HMM (isotropic Euclidean) — baseline
   A2. CMM / anisotropic Mahalanobis (lag=0, no PHMI)
   A3. CMM + fixed-lag smoothing (lag=20 real, lag=40 synth)
   A4. CMM + lag + PHMI integrity (phmi=1e-5, phmi_pl_multiplier=5)
@@ -235,7 +235,7 @@ if fmm_csv.exists():
     if fmm_tw:
         ece_tw, _ = compute_ece(fmm_tw, labels)
         results['r1_fmm'] = {'ece_tw': ece_tw, 'ece_ep': 0, 'n': len(fmm_tw), 'pct': sum(labels)/len(fmm_tw)*100}
-        print(f"  {'R1. FMM (isotropic)':<40s}  {len(fmm_tw):6d}  {ece_tw:8.4f}  {'--':>8s}  {sum(labels)/len(fmm_tw)*100:8.1f}%")
+        print(f"  {'R1. HMM (isotropic)':<40s}  {len(fmm_tw):6d}  {ece_tw:8.4f}  {'--':>8s}  {sum(labels)/len(fmm_tw)*100:8.1f}%")
 
 # R2: CMM aniso, lag=0
 tw, ep, err = load_metrics(REAL_DIR / 'cmm_all_lag000.csv')

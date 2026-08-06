@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-Evaluate CMM match-quality metrics against FMM trustworthiness baseline.
+Evaluate CMM match-quality metrics against HMM trustworthiness baseline.
 
 Ground truth: CMM's ogeom (original GNSS position, ~1m accuracy) used for
-both algorithms.  FMM lacks ogeom, so we match FMM rows to CMM rows by
+both algorithms.  HMM lacks ogeom, so we match HMM rows to CMM rows by
 nearest timestamp (93.8% within 10 ms) and use the CMM ogeom as reference.
 
 Metrics evaluated:
   CMM individual:   trustworthiness⁻¹, delta_entropy, ep⁻¹, tp⁻¹, cumu_prob⁻¹
   CMM combinations: logistic regression (5-fold CV)
-  FMM baseline:     trustworthiness⁻¹
+  HMM baseline:     trustworthiness⁻¹
 
 Output: ROC-AUC table per error threshold, best-metric recommendation.
 """
@@ -169,7 +169,7 @@ def main():
     fmm_path = base / 'data/real_vehicle/mr/fmm_traj11_0508.csv'
 
     print("=" * 78)
-    print("  Match-Error Detection ROC Analysis  —  CMM vs FMM")
+    print("  Match-Error Detection ROC Analysis  —  CMM vs HMM")
     print("  Ground truth: CMM ogeom (GNSS position)")
     print("=" * 78)
 
@@ -179,7 +179,7 @@ def main():
     print(f"\n  CMM: {n_cmm} points  |  error {min(cmm_errors):.1f} – {max(cmm_errors):.1f} m"
           f"  |  mean={sum(cmm_errors)/n_cmm:.1f}  median={sorted(cmm_errors)[n_cmm//2]:.1f}")
 
-    # ── 2. Load FMM + match to CMM's ogeom by timestamp ──
+    # ── 2. Load HMM + match to CMM's ogeom by timestamp ──
     cmm_ogeom_map, _ = load_cmm_ogeom_map(cmm_path)
     cmm_ts_sorted = sorted(cmm_ogeom_map.keys())
 
@@ -198,7 +198,7 @@ def main():
 
     n_fmm = len(fmm_errors)
     fmm_sorted_err = sorted(fmm_errors)
-    print(f"  FMM: {n_fmm} points  |  error {fmm_sorted_err[0]:.1f} – {fmm_sorted_err[-1]:.1f} m"
+    print(f"  HMM: {n_fmm} points  |  error {fmm_sorted_err[0]:.1f} – {fmm_sorted_err[-1]:.1f} m"
           f"  |  mean={sum(fmm_errors)/n_fmm:.1f}  median={fmm_sorted_err[n_fmm//2]:.1f}")
 
     # ── 3. Build error-prediction metrics ──
@@ -269,7 +269,7 @@ def main():
             if fold_aucs:
                 all_results.append((thresh, 'CMM', 'logistic(all)', sum(fold_aucs) / len(fold_aucs)))
 
-        # --- FMM ---
+        # --- HMM ---
         fmm_labels = [1 if e > thresh else 0 for e in fmm_errors]
         for name, values in fmm_metrics.items():
             valid = [(v, l) for v, l in zip(values, fmm_labels) if not math.isnan(v)]
@@ -278,14 +278,14 @@ def main():
             vals, labs = zip(*valid)
             roc = compute_roc(list(labs), list(vals))
             if roc:
-                all_results.append((thresh, 'FMM', name, roc['auc']))
+                all_results.append((thresh, 'HMM', name, roc['auc']))
 
         # Per-threshold summary
         best_cmm = max((r for r in all_results if r[0] == thresh and r[1] == 'CMM'), key=lambda r: r[3], default=(0, '', '', 0))
-        best_fmm = max((r for r in all_results if r[0] == thresh and r[1] == 'FMM'), key=lambda r: r[3], default=(0, '', '', 0))
+        best_hmm = max((r for r in all_results if r[0] == thresh and r[1] == 'HMM'), key=lambda r: r[3], default=(0, '', '', 0))
         print(f"  {thresh:3d}m  |  err={n_cmm_err:4d} ({pct:5.1f}%)"
               f"  |  Best CMM: {best_cmm[2]:<20s} AUC={best_cmm[3]:.4f}"
-              f"  |  FMM -trust: AUC={best_fmm[3]:.4f}")
+              f"  |  HMM -trust: AUC={best_hmm[3]:.4f}")
 
     # ── 5. Detailed table ──
     print("\n" + "-" * 78)
@@ -310,7 +310,7 @@ def main():
     print("=" * 78)
     print(f"""
   CMM error  : mean={sum(cmm_errors)/n_cmm:5.1f}m  median={sorted(cmm_errors)[n_cmm//2]:5.1f}m  max={max(cmm_errors):5.1f}m
-  FMM error  : mean={sum(fmm_errors)/n_fmm:5.1f}m  median={sorted(fmm_errors)[n_fmm//2]:5.1f}m  max={max(fmm_errors):5.1f}m
+  HMM error  : mean={sum(fmm_errors)/n_fmm:5.1f}m  median={sorted(fmm_errors)[n_fmm//2]:5.1f}m  max={max(fmm_errors):5.1f}m
   (FMM median 400m implies basic FMM cannot handle this noisy trajectory;
    CMM's covariance-aware matching reduces median error 130×.)
 
@@ -319,14 +319,14 @@ def main():
     for thresh in thresholds_m:
         cmm_only = [r for r in all_results if r[0] == thresh and r[1] == 'CMM' and r[2] != 'logistic(all)']
         best = max(cmm_only, key=lambda r: r[3], default=(thresh, '', '', 0))
-        fmm_auc = next((r[3] for r in all_results if r[0] == thresh and r[1] == 'FMM'), 0)
+        hmm_auc = next((r[3] for r in all_results if r[0] == thresh and r[1] == 'HMM'), 0)
         n_err = sum(1 for e in cmm_errors if e > thresh)
-        print(f"    ≥{thresh:3d}m ({n_err/n_cmm*100:4.1f}% errors): {best[2]:<20s} AUC={best[3]:.4f}  (FMM AUC={fmm_auc:.4f})")
+        print(f"    ≥{thresh:3d}m ({n_err/n_cmm*100:4.1f}% errors): {best[2]:<20s} AUC={best[3]:.4f}  (HMM AUC={hmm_auc:.4f})")
 
     print("""
   Key findings:
     1. delta_entropy is the strongest single metric at 3–10m thresholds.
-       It exploits uncertainty-sourced information gain not present in FMM.
+       It exploits uncertainty-sourced information gain not present in HMM.
     2. Logistic regression over all 5 metrics adds 3–8 points AUC at 15–25m,
        making it the best detector for moderate mismatches.
     3. -ep excels at ≥30m (catastrophic mismatches) with near-perfect AUC 0.997+.
@@ -334,11 +334,11 @@ def main():
     5. -trustworthiness alone is NOT a strong CMM error detector (AUC ≤ 0.53),
        suggesting trustworthiness captures within-edge certainty, not cross-edge error.
 
-  FMM comparison caveat:
-    FMM's error distribution (median 400m) is fundamentally different from CMM's
-    (median 3m). FMM trustworthiness detects FMM's own large errors well at the
-    2–3m threshold (AUC 0.69–0.75) because almost ALL FMM matches are >2m wrong.
-    At CMM-relevant thresholds (>5m) where CMM itself dominates, FMM
+  HMM comparison caveat:
+    HMM's error distribution (median 400m) is fundamentally different from CMM's
+    (median 3m). HMM trustworthiness detects HMM's own large errors well at the
+    2–3m threshold (AUC 0.69–0.75) because almost ALL HMM matches are >2m wrong.
+    At CMM-relevant thresholds (>5m) where CMM itself dominates, HMM
     trustworthiness is effectively random (AUC ~0.5).
 
   Practical recommendation for CMM quality monitoring:

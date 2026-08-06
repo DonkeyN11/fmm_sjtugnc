@@ -9,7 +9,7 @@ Pipeline:
 
 Usage:
   python experiments/scripts/run_cmm_matching.py \
-    --data-root experiments/data \
+    --data-root data/simulation \
     --cmm-bin build/cmm \
     --output-dir experiments/output/cmm_matching
 """

@@ -220,8 +220,8 @@ target_link_libraries(interactive_match FMMLIB)
 add_executable(cmm_example example/cmm_example.cpp)
 target_link_libraries(cmm_example FMMLIB)
 
-add_executable(performance_test tmp/ubodt_performance_test.cpp)
-target_link_libraries(performance_test FMMLIB)
+# add_executable(performance_test tmp/ubodt_performance_test.cpp)
+# target_link_libraries(performance_test FMMLIB)
 
 message(STATUS "Installation folder ${CMAKE_INSTALL_PREFIX}")
 

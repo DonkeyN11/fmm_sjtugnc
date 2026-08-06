@@ -15,7 +15,7 @@ Output: summary_table.csv with KS statistics across all sigma levels.
 
 Usage:
   python experiments/scripts/exp1_covariance_validation.py \
-    --data-root experiments/data \
+    --data-root data/simulation \
     --output-dir experiments/output/1_covariance_validation
 """
 
@@ -205,7 +205,7 @@ def _ks(d2):
 
 def main():
     parser = argparse.ArgumentParser(description="Covariance model validation.")
-    parser.add_argument("--data-root", type=Path, required=True)
+    parser.add_argument("--data-root", type=Path, default=Path("data/simulation"))
     parser.add_argument("--output-dir", type=Path, default=Path("experiments/output/1_covariance_validation"))
     args = parser.parse_args()
 

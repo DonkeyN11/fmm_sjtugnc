@@ -13,7 +13,7 @@ The correctness label is based on SEGMENT-LEVEL match:
 
 Usage:
   python experiments/scripts/exp3_parameter_sensitivity.py \
-    --data-root experiments/data \
+    --data-root data/simulation \
     --output-dir experiments/output/3_parameter_sensitivity
 """
 
@@ -236,7 +236,7 @@ def write_summary_csv(all_results: Dict[str, dict], output_dir: Path):
 
 def main():
     parser = argparse.ArgumentParser(description="Parameter sensitivity analysis.")
-    parser.add_argument("--data-root", type=Path, required=True,
+    parser.add_argument("--data-root", type=Path, default=Path("data/simulation"),
                         help="Root data directory with sigma_XX subdirectories.")
     parser.add_argument("--output-dir", type=Path,
                         default=Path("experiments/output/3_parameter_sensitivity"),

@@ -419,7 +419,7 @@ def plot_degraded_comparison(cmm_all, fmm_all, output_dir):
     ax1.bar(x - bar_w/2, [_get(cmm_all, c, "point_error_mean") for c in cond_order],
             bar_w, color="#2166ac", label="CaMM", edgecolor="white", lw=0.5)
     ax1.bar(x + bar_w/2, [_get(fmm_all, c, "point_error_mean") for c in cond_order],
-            bar_w, color="#b2182b", label="FMM", edgecolor="white", lw=0.5)
+            bar_w, color="#b2182b", label="HMM", edgecolor="white", lw=0.5)
     ax1.set_xticks(x); ax1.set_xticklabels(x_labels, rotation=15, ha="right")
     ax1.set_ylabel("Mean error (m)"); ax1.set_title("(a) Point Error")
     ax1.legend(); ax1.grid(alpha=0.3, axis="y")
@@ -489,7 +489,7 @@ def plot_degraded_comparison(cmm_all, fmm_all, output_dir):
 
     # ── Second figure: stacked bar of seg accuracy breakdown ──
     fig, axes = plt.subplots(1, 2, figsize=(12, 4))
-    for ax_idx, (algo, color) in enumerate([("CMM", "#2166ac"), ("FMM", "#b2182b")]):
+    for ax_idx, (algo, color) in enumerate([("CaMM", "#2166ac"), ("HMM", "#b2182b")]):
         ax = axes[ax_idx]
         mlist = cmm_all if algo == "CMM" else fmm_all
         vals = [(_get(mlist, c, "seg_accuracy", 0) or 0) * 100 for c in cond_order]

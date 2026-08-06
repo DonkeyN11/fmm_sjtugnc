@@ -16,9 +16,9 @@ import csv
 from pathlib import Path
 from datetime import date, datetime, timezone
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data/real_data"
-RTK_BASE = PROJECT_ROOT.parent / "data/real_vehicle"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data/real_vehicle/hainan_06/processed"
+RTK_BASE = PROJECT_ROOT / "data/real_vehicle"
 
 TRAJ_MAP = {11: "1.1", 12: "1.2", 13: "1.3", 14: "1.4",
              21: "2.1", 22: "2.2", 23: "2.3"}

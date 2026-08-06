@@ -6,8 +6,8 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
 PROJECT = Path(__file__).resolve().parents[2]
-SIM_DATA = PROJECT / "experiments/data"
-REAL_DATA = PROJECT / "data/real_vehicle/processed"
+SIM_DATA = PROJECT / "data/simulation"
+REAL_DATA = PROJECT / "data/real_vehicle/hainan_06/processed"
 OUT_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
 DPI, C_CaMM, C_HMM = 300, "#2166ac", "#b2182b"
 plt.rcParams.update({"font.size":9,"axes.labelsize":10,"axes.titlesize":11,

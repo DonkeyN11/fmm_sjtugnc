@@ -52,7 +52,7 @@ ax1, ax2, ax3, ax4, ax5, ax6 = axes.flat
 ax1.bar(x - bar_w/2, [_get(cmm_all, c, "point_error_mean") for c in cond_order],
         bar_w, color=COLOR_CMM, label="CaMM", edgecolor="white", lw=0.5)
 ax1.bar(x + bar_w/2, [_get(fmm_all, c, "point_error_mean") for c in cond_order],
-        bar_w, color=COLOR_FMM, label="FMM", edgecolor="white", lw=0.5)
+        bar_w, color=COLOR_FMM, label="HMM", edgecolor="white", lw=0.5)
 ax1.set_xticks(x); ax1.set_xticklabels(x_labels, rotation=15, ha="right")
 ax1.set_ylabel("Mean error (m)"); ax1.set_title("(a) Point Error")
 ax1.legend(); ax1.grid(alpha=0.3, axis="y")
@@ -115,7 +115,7 @@ ax6.set_xlabel("FPR"); ax6.set_ylabel("TPR")
 ax6.set_title("(f) ROC Curves — CaMM"); ax6.legend(fontsize=8)
 ax6.grid(alpha=0.3)
 
-fig.suptitle("CaMM vs FMM Under Degraded Conditions (σ=30m)", fontsize=13, fontweight="bold")
+fig.suptitle("CaMM vs HMM Under Degraded Conditions (σ=30m)", fontsize=13, fontweight="bold")
 fig.tight_layout()
 out = FIGS_DIR / "degraded_comparison.png"
 fig.savefig(out, dpi=DPI)

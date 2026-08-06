@@ -407,7 +407,7 @@ def main():
     print(f"\n  [Step 2] Running CMM lag sweep ({len(LAGS)} lags)...")
     cmm_results = run_cmm_lag_sweep(final_csv, LAGS)
 
-    print(f"\n  [Step 3] Running FMM baseline...")
+    print(f"\n  [Step 3] Running HMM baseline...")
     fmm_result = run_fmm(final_csv)
 
     # ── Summary ──
@@ -424,7 +424,7 @@ def main():
         print(f"    Correct ≤{THRESHOLD_M:.0f}m: {r0['n_correct']/r0['n']*100:.1f}%")
 
     if fmm_result and fmm_result.get('n', 0) > 0:
-        print(f"\n  Synthetic FMM: {fmm_result['n']} points")
+        print(f"\n  Synthetic HMM: {fmm_result['n']} points")
         print(f"    Error: mean={fmm_result['error_mean']:.1f}m  median={fmm_result['error_median']:.1f}m  max={fmm_result['error_max']:.1f}m")
         print(f"    Correct ≤{THRESHOLD_M:.0f}m: {fmm_result['n_correct']/fmm_result['n']*100:.1f}%")
 
@@ -445,7 +445,7 @@ def main():
 
     # FMM calibration
     if fmm_result and fmm_result.get('n', 0) > 0:
-        print(f"\n  FMM calibration (trustworthiness):")
+        print(f"\n  HMM calibration (trustworthiness):")
         print(f"    ECE = {fmm_result['ece']:.4f}  Brier = {fmm_result['brier']:.4f}  LogLoss = {fmm_result['logloss']:.4f}")
 
     # Comparison table
