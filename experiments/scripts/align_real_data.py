@@ -24,8 +24,8 @@ import csv, re, math
 from pathlib import Path
 from collections import defaultdict
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data/real_data"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data/real_vehicle/hainan_06/processed"
 
 
 def parse_point(wkt):

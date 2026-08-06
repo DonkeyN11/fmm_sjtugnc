@@ -33,9 +33,9 @@ from collections import defaultdict
 
 import numpy as np
 
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
-DATA_DIR = PROJECT_ROOT / "data/real_data"
-OUT_DIR = PROJECT_ROOT / "output/spp_error"
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+DATA_DIR = PROJECT_ROOT / "data/real_vehicle/hainan_06/processed"
+OUT_DIR = PROJECT_ROOT / "experiments/output/spp_error"
 
 
 def load_roads_near(shapefile, all_lons, all_lats, margin=0.005):

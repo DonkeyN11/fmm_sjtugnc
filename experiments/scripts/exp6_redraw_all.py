@@ -6,9 +6,9 @@ from collections import defaultdict
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 
-ROOT = Path(__file__).resolve().parents[1]
-DATA = ROOT / "data/real_data"
-OUT = ROOT / "output/exp6_real"
+PROJECT = Path(__file__).resolve().parents[2]
+DATA = PROJECT / "data/real_vehicle/hainan_06/processed"
+OUT = PROJECT / "experiments/output/exp6_real"
 OUT.mkdir(parents=True, exist_ok=True)
 
 DPI = 200
@@ -18,7 +18,7 @@ plt.rcParams.update({"font.size": 8, "axes.labelsize": 9, "axes.titlesize": 10,
                      "legend.fontsize": 7, "xtick.labelsize": 7, "ytick.labelsize": 7,
                      "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight"})
 
-REV = json.load(open(ROOT / "config/reverse_edge_map.json"))
+REV = json.load(open(PROJECT / "config/reverse_edge_map.json"))
 REV = {str(k): str(v) for k, v in REV.items()}
 def em(m, t):
     return str(m) == str(t) or REV.get(str(m)) == str(t)

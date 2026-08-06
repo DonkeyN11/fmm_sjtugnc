@@ -20,7 +20,7 @@ Config per experiments/README.md:
 
 Usage:
   python experiments/scripts/exp3_full_matching.py \
-    --data-root experiments/data \
+    --data-root data/simulation \
     --cmm-bin build/cmm \
     --fmm-bin build/fmm \
     --output-dir experiments/output/3_full_matching \
@@ -668,7 +668,7 @@ def write_summary(cmm_metrics, fmm_metrics, output_dir, prefix="summary"):
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--data-root", type=Path, default=Path("experiments/data"))
+    parser.add_argument("--data-root", type=Path, default=Path("data/simulation"))
     parser.add_argument("--cmm-bin", type=Path, default=Path("build/cmm"))
     parser.add_argument("--fmm-bin", type=Path, default=Path("build/fmm"))
     parser.add_argument("--output-dir", type=Path, default=Path("experiments/output/3_full_matching"))

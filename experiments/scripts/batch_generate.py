@@ -11,7 +11,7 @@ Generates datasets for:
 
 Usage:
   python experiments/scripts/batch_generate.py \
-    --output-dir experiments/data \
+    --output-dir data/simulation \
     --shapefile input/map/haikou/edges.shp \
     --jobs 8
 """
@@ -62,7 +62,7 @@ def run_generation(output_dir: Path, extra_args: List[str], description: str, jo
 
 def main():
     parser = argparse.ArgumentParser(description="Batch data generation for all experiments.")
-    parser.add_argument("--output-dir", type=Path, default=Path("experiments/data"),
+    parser.add_argument("--output-dir", type=Path, default=Path("data/simulation"),
                         help="Root data output directory.")
     parser.add_argument("--shapefile", type=Path,
                         default=Path("input/map/haikou/edges.shp"),
