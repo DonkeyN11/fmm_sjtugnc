@@ -35,7 +35,7 @@ with open(JSON_PATH) as f:
 cmm_data = {m["label"]: m for m in data["cmm"]}
 hmm_data = {m["label"]: m for m in data["fmm"]}
 
-sr_intervals = [1, 2, 5, 10]
+sr_intervals = [1, 2, 5, 10, 20, 30, 60]
 sigma_levels = ["sigma_05", "sigma_15", "sigma_25"]
 
 def get_vals(data_dict, sigma, intervals, key):

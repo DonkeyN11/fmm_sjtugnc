@@ -142,7 +142,8 @@ struct CovarianceMapMatchConfig {
                            int lag_steps_arg = 0,
                            double phmi_pl_multiplier_arg = 5.0,
                            double h0_prior_log_odds_arg = 0.0,
-                           double cumulative_reverse_pct_arg = 0.03);
+                           double cumulative_reverse_pct_arg = 0.03,
+                           bool temperature_adapt_arg = true);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -169,6 +170,7 @@ struct CovarianceMapMatchConfig {
     int lag_steps;                      /**< Fixed-lag smoothing steps: 0=realtime filtering, N=delay N steps for backward evidence */
     double h0_prior_log_odds;           /**< Log-odds of null hypothesis prior: log(P(H0)/P(¬H0)). Default 0 (λ₀=1). */
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
+    bool temperature_adapt;              /**< Entropy-aware adaptive temperature scaling of the trustworthiness posterior (default true). When the layer posterior entropy exceeds 30% of the max possible entropy log2(K), the posterior is sharpened with temperature tau = max(0.35, 1 - 0.5 * H/H_max). */
 
     /**
      * Check if the configuration is valid or not

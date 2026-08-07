@@ -121,6 +121,27 @@ double log_sum_exp(const std::vector<double> &log_vals) {
     return max_val + std::log(sum);
 }
 
+// Tempered log-sum-exp: log Σ exp(log_vals[i] / tau) over the first `count`
+// entries (in-place array form of log_sum_exp). Used by the entropy-aware
+// adaptive temperature scaling to renormalize the sharpened posterior so that
+// trustworthiness values still sum to 1.
+double log_sum_exp_tempered(const std::vector<double> &log_vals, size_t count, double tau) {
+    double max_val = -std::numeric_limits<double>::infinity();
+    for (size_t i = 0; i < count; ++i) {
+        if (log_vals[i] > max_val) max_val = log_vals[i];
+    }
+    if (max_val == -std::numeric_limits<double>::infinity()) {
+        return max_val;
+    }
+    double sum = 0.0;
+    for (size_t i = 0; i < count; ++i) {
+        if (log_vals[i] > -std::numeric_limits<double>::infinity()) {
+            sum += std::exp(log_vals[i] / tau - max_val / tau);
+        }
+    }
+    return max_val / tau + std::log(sum);
+}
+
 template <typename T>
 // Parse a JSON array (encoded inside a CSV field) into a numeric vector of type T.
 //
@@ -584,7 +605,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    int lag_steps_arg,
                                                    double phmi_pl_multiplier_arg,
                                                    double h0_prior_log_odds_arg,
-                                                   double cumulative_reverse_pct_arg)
+                                                   double cumulative_reverse_pct_arg,
+                                                   bool temperature_adapt_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -602,7 +624,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       lag_steps(lag_steps_arg),
       phmi_pl_multiplier(phmi_pl_multiplier_arg),
       h0_prior_log_odds(h0_prior_log_odds_arg),
-      cumulative_reverse_pct(cumulative_reverse_pct_arg) {
+      cumulative_reverse_pct(cumulative_reverse_pct_arg),
+      temperature_adapt(temperature_adapt_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -617,6 +640,7 @@ void CovarianceMapMatchConfig::print() const {
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
     SPDLOG_INFO("map_error_std {} background_prob {} phmi {} lag_steps {}", map_error_std, background_prob, phmi, lag_steps);
     SPDLOG_INFO("h0_prior_log_odds {} cumulative_reverse_pct {}", h0_prior_log_odds, cumulative_reverse_pct);
+    SPDLOG_INFO("temperature_adapt {}", temperature_adapt);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -652,6 +676,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double phmi_pl_multiplier = xml_data.get("config.parameters.phmi_pl_multiplier", 5.0);
     double h0_prior_log_odds = xml_data.get("config.parameters.h0_prior_log_odds", 0.0);
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
+    bool temperature_adapt = xml_data.get("config.parameters.temperature_adapt", true);
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
@@ -660,7 +685,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct};
+                                    cumulative_reverse_pct, temperature_adapt};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -692,6 +717,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double phmi_pl_multiplier = arg_data.count("phmi_pl_multiplier") ? arg_data["phmi_pl_multiplier"].as<double>() : 5.0;
     double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
+    bool temperature_adapt = arg_data.count("temperature_adapt") ? arg_data["temperature_adapt"].as<bool>() : true;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
@@ -700,7 +726,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct};
+                                    cumulative_reverse_pct, temperature_adapt};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -743,7 +769,9 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("h0_prior_log_odds", "Log-odds of H0 prior: log(P(H0)/P(¬H0))",
          cxxopts::value<double>()->default_value("0.0"))
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
-         cxxopts::value<double>()->default_value("0.03"));
+         cxxopts::value<double>()->default_value("0.03"))
+        ("temperature_adapt", "Entropy-aware adaptive temperature scaling of trustworthiness posterior (true)",
+         cxxopts::value<bool>()->default_value("true"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -767,6 +795,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--phmi_pl_multiplier (optional) <double>: PHMI protection level multiplier (5.0)\n";
     oss << "--h0_prior_log_odds (optional) <double>: Log-odds of H0 prior (0.0)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
+    oss << "--temperature_adapt (optional) <bool>: Entropy-aware adaptive temperature scaling of trustworthiness posterior (true)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -2145,20 +2174,58 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         double log_sum = log_sum_exp(layer_log_probs);
         double inv_log2 = 1.0 / std::log(2.0);
 
+        // Pass 1: unsharpened posterior → per-candidate log probs + layer entropy (bits).
+        std::vector<double> norm_log_probs(next_count, -std::numeric_limits<double>::infinity());
         for (size_t b = 0; b < next_count; ++b) {
             TGNode &node_b = (*lb_ptr)[b];
             if (node_b.forward_cumu > -std::numeric_limits<double>::infinity()) {
                 double log_norm = node_b.forward_cumu - log_sum;
+                norm_log_probs[b] = log_norm;
                 double p_norm = std::exp(log_norm);
-                node_b.trustworthiness = p_norm;  // filtering posterior
                 if (p_norm > 0.0) {
                     layer_entropy -= p_norm * log_norm * inv_log2;
                 }
+            }
+        }
+        if (layer_entropy < 0.0) layer_entropy = 0.0;
+
+        // Option B: entropy-aware adaptive temperature scaling.
+        // When the posterior is nearly uniform (layer entropy > 30% of the max
+        // possible entropy log2(K)), the softmax is flattened and TW is over-smoothed.
+        // Sharpen it with temperature tau < 1:
+        //     tau = max(0.35, 1 - 0.5 * H / H_max),   H_max = log2(K)
+        // applied as a tempered softmax: p_b ∝ exp(log_norm / tau), renormalized
+        // so trustworthiness still sums to 1. Toggle via config.temperature_adapt.
+        const size_t k_valid = layer_log_probs.size();
+        double tau = 1.0;
+        if (config.temperature_adapt && k_valid > 1) {
+            double max_entropy = std::log(static_cast<double>(k_valid)) * inv_log2;
+            if (max_entropy > 0.0 && layer_entropy > 0.3 * max_entropy) {
+                double entropy_ratio = layer_entropy / max_entropy;
+                tau = 1.0 - 0.5 * entropy_ratio;
+                if (tau < 0.35) tau = 0.35;  // hard floor: never over-sharpen
+                SPDLOG_DEBUG("Adaptive temperature: H={:.4f} H_max={:.4f} ratio={:.3f} tau={:.3f}",
+                             layer_entropy, max_entropy, entropy_ratio, tau);
+            }
+        }
+
+        // Pass 2: tempered softmax with renormalization (tau == 1.0 → identity).
+        // norm_log_probs are already log-softmax values (forward_cumu - log_sum,
+        // Σ exp = 1), so the renormalization constant is LSE_tau(norm_log_probs):
+        // for tau == 1.0 this is log(Σ exp(norm_log_probs)) ≈ 0 and the branch is
+        // the identity posterior. Do NOT use `log_sum` (the LSE of the raw
+        // forward_cumu) here — subtracting it again would double-normalize and
+        // produce trustworthiness ≫ 1 (exp(forward_cumu - 2·log_sum)).
+        double log_sum_sharp = log_sum_exp_tempered(norm_log_probs, next_count, tau);
+        for (size_t b = 0; b < next_count; ++b) {
+            TGNode &node_b = (*lb_ptr)[b];
+            if (norm_log_probs[b] > -std::numeric_limits<double>::infinity()) {
+                node_b.trustworthiness =
+                    std::exp(norm_log_probs[b] / tau - log_sum_sharp);  // filtering posterior
             } else {
                 node_b.trustworthiness = 0.0;
             }
         }
-        if (layer_entropy < 0.0) layer_entropy = 0.0;
     }
 
     // 5a. 计算先验分布熵: H(P(x_t | z_{1:t-1}))
