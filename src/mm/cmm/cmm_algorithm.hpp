@@ -143,7 +143,8 @@ struct CovarianceMapMatchConfig {
                            double phmi_pl_multiplier_arg = 5.0,
                            double h0_prior_log_odds_arg = 0.0,
                            double cumulative_reverse_pct_arg = 0.03,
-                           bool temperature_adapt_arg = true);
+                           bool temperature_adapt_arg = true,
+                           bool direction_penalty_arg = true);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -171,6 +172,7 @@ struct CovarianceMapMatchConfig {
     double h0_prior_log_odds;           /**< Log-odds of null hypothesis prior: log(P(H0)/P(¬H0)). Default 0 (λ₀=1). */
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
     bool temperature_adapt;              /**< Entropy-aware adaptive temperature scaling of the trustworthiness posterior (default true). When the layer posterior entropy exceeds 30% of the max possible entropy log2(K), the posterior is sharpened with temperature tau = max(0.35, 1 - 0.5 * H/H_max). */
+    bool direction_penalty;              /**< Whether to apply direction-consistency von Mises penalty for reverse-direction candidates (default true). Set to false for ablation studies isolating the contribution of direction awareness. */
 
     /**
      * Check if the configuration is valid or not

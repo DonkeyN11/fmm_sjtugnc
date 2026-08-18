@@ -174,7 +174,7 @@ def main():
     print(f"\n{'=' * 90}")
     print(f"  RESULTS: PL Coverage and ECE by multiplier")
     print(f"{'=' * 90}")
-    traj_ids = ['11', '12', '13', '14', '21', '22', '23']
+    traj_ids = ['11', '13', '14', '21', '22', '23']
     header = f"  {'mult':>4s} {'effPL':>7s}"
     for tid in traj_ids: header += f"  {'T' + tid + ' frac_in':>12s}"
     header += f"  {'MEAN frac_in':>12s}  {'MEAN ECE':>9s}  {'ΔECE':>9s}"

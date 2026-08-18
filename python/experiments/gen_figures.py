@@ -168,7 +168,7 @@ def fig_lag_sweep():
 
     # Lag values are embedded in filenames: cmm_all_lag000.csv, cmm_all_lag005.csv, ...
     lags = [0, 5, 10, 15, 20, 25, 30, 35, 40, 50]
-    traj_ids = [11, 12, 13, 14, 21, 22, 23]
+    traj_ids = [11, 13, 14, 21, 22, 23]
     ece_tw = {tid: [] for tid in traj_ids}
 
     for lag in lags:

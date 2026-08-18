@@ -606,7 +606,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double phmi_pl_multiplier_arg,
                                                    double h0_prior_log_odds_arg,
                                                    double cumulative_reverse_pct_arg,
-                                                   bool temperature_adapt_arg)
+                                                   bool temperature_adapt_arg,
+                                                   bool direction_penalty_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
@@ -625,7 +626,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       phmi_pl_multiplier(phmi_pl_multiplier_arg),
       h0_prior_log_odds(h0_prior_log_odds_arg),
       cumulative_reverse_pct(cumulative_reverse_pct_arg),
-      temperature_adapt(temperature_adapt_arg) {
+      temperature_adapt(temperature_adapt_arg),
+      direction_penalty(direction_penalty_arg) {
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -640,7 +642,7 @@ void CovarianceMapMatchConfig::print() const {
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
     SPDLOG_INFO("map_error_std {} background_prob {} phmi {} lag_steps {}", map_error_std, background_prob, phmi, lag_steps);
     SPDLOG_INFO("h0_prior_log_odds {} cumulative_reverse_pct {}", h0_prior_log_odds, cumulative_reverse_pct);
-    SPDLOG_INFO("temperature_adapt {}", temperature_adapt);
+    SPDLOG_INFO("temperature_adapt {} direction_penalty {}", temperature_adapt, direction_penalty);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -677,6 +679,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double h0_prior_log_odds = xml_data.get("config.parameters.h0_prior_log_odds", 0.0);
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
     bool temperature_adapt = xml_data.get("config.parameters.temperature_adapt", true);
+    bool direction_penalty = xml_data.get("config.parameters.direction_penalty", true);
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
@@ -685,7 +688,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct, temperature_adapt};
+                                    cumulative_reverse_pct, temperature_adapt, direction_penalty};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -718,6 +721,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
     bool temperature_adapt = arg_data.count("temperature_adapt") ? arg_data["temperature_adapt"].as<bool>() : true;
+    bool direction_penalty = arg_data.count("direction_penalty") ? arg_data["direction_penalty"].as<bool>() : true;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
                                     normalized, use_mahalanobis_candidates,
@@ -726,7 +730,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, background_prob, phmi, lag_steps,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct, temperature_adapt};
+                                    cumulative_reverse_pct, temperature_adapt, direction_penalty};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -771,6 +775,8 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
          cxxopts::value<double>()->default_value("0.03"))
         ("temperature_adapt", "Entropy-aware adaptive temperature scaling of trustworthiness posterior (true)",
+         cxxopts::value<bool>()->default_value("true"))
+        ("direction_penalty", "Apply direction-consistency penalty for reverse-direction candidates (true)",
          cxxopts::value<bool>()->default_value("true"));
 }
 
@@ -796,6 +802,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--h0_prior_log_odds (optional) <double>: Log-odds of H0 prior (0.0)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
     oss << "--temperature_adapt (optional) <bool>: Entropy-aware adaptive temperature scaling of trustworthiness posterior (true)\n";
+    oss << "--direction_penalty (optional) <bool>: Apply direction-consistency penalty for reverse-direction candidates (true)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -1122,7 +1129,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                             log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahal_sq);
 
                             // Direction penalty for reverse-direction candidates
-                            if (i > 0 && entry.candidate.edge != nullptr) {
+                            if (config.direction_penalty && i > 0 && entry.candidate.edge != nullptr) {
                                 const auto &edge_geom = network_.get_edge_geom(entry.candidate.edge->id);
                                 if (edge_geom.get_num_points() >= 2) {
                                     CORE::Point obs_prev = geom.get_point(i - 1);
@@ -1192,7 +1199,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                         log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahalanobis_dist_sq);
 
                         // Direction penalty for reverse-direction candidates
-                        if (i > 0 && cand.edge != nullptr) {
+                        if (config.direction_penalty && i > 0 && cand.edge != nullptr) {
                             const auto &edge_geom = network_.get_edge_geom(cand.edge->id);
                             if (edge_geom.get_num_points() >= 2) {
                                 CORE::Point obs_prev = geom.get_point(i - 1);
