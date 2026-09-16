@@ -17,7 +17,6 @@ CMMAppConfig::CMMAppConfig()
     : ubodt_file(),
       use_omp(true),
       log_level(2),
-      step(100),
       input_epsg(4326),  // Default to WGS84
       help_specified(false),
       network_bbox_from_gps(false),
@@ -35,7 +34,6 @@ CMMAppConfig CMMAppConfig::load_from_xml(const std::string &xml_file) {
     config.ubodt_file = tree.get<std::string>("config.input.ubodt.file", "");
     config.use_omp = tree.get("config.other.use_omp", true);
     config.log_level = tree.get("config.other.log_level", 2);
-    config.step = tree.get("config.other.step", 100);
     config.input_epsg = tree.get("config.other.input_epsg", 4326);  // Default to WGS84
     config.network_bbox_from_gps = tree.get("config.other.network_bbox_from_gps", false);
     config.network_bbox_padding = tree.get("config.other.network_bbox_padding", 0.0);
@@ -67,7 +65,6 @@ CMMAppConfig CMMAppConfig::load_from_arg(const cxxopts::ParseResult &arg_data) {
     config.ubodt_file = arg_data["ubodt"].as<std::string>();
     config.use_omp = arg_data["use_omp"].as<bool>();
     config.log_level = arg_data["log_level"].as<int>();
-    config.step = arg_data["step"].as<int>();
     config.input_epsg = arg_data["input_epsg"].as<int>();
     config.network_bbox_from_gps = arg_data["network_bbox_from_gps"].as<bool>();
     config.network_bbox_padding = arg_data["network_bbox_padding"].as<double>();
@@ -104,8 +101,6 @@ void CMMAppConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<bool>()->default_value("false"))
         ("log_level", "Log level (0=trace, 1=debug, 2=info, 3=warn, 4=error, 5=critical)",
          cxxopts::value<int>()->default_value("2"))
-        ("step", "Progress report step",
-         cxxopts::value<int>()->default_value("100"))
         ("input_epsg", "EPSG code of input trajectory CRS (4326=WGS84, 326xx=UTM N, 327xx=UTM S)",
          cxxopts::value<int>()->default_value("4326"))
         ("network_bbox_from_gps", "Auto-crop network by GPS bounds",
@@ -123,7 +118,6 @@ void CMMAppConfig::register_help(std::ostringstream &oss) {
     oss << "--ubodt (required) <string>: UBODT file name\n";
     oss << "--use_omp (optional): Use OpenMP for parallel processing (false)\n";
     oss << "--log_level (optional): Log level (0=trace, 1=debug, 2=info, 3=warn, 4=error, 5=critical) (2)\n";
-    oss << "--step (optional): Progress report step (100)\n";
     oss << "--input_epsg (optional): EPSG code of input trajectory CRS (4326=WGS84, 326xx=UTM N, 327xx=UTM S) (4326)\n";
     oss << "--network_bbox_from_gps (optional): Auto-crop network by GPS bounds (false)\n";
     oss << "--network_bbox_padding (optional): Padding for GPS-derived bbox (0.0)\n";
@@ -139,7 +133,6 @@ void CMMAppConfig::print() const {
     SPDLOG_INFO("UBODT file {}", ubodt_file);
     SPDLOG_INFO("Log level {}", log_level);
     SPDLOG_INFO("Use omp {}", use_omp);
-    SPDLOG_INFO("Step {}", step);
     SPDLOG_INFO("Input EPSG {}", input_epsg);
     SPDLOG_INFO("Network bbox from GPS {}", (network_bbox_from_gps ? "true" : "false"));
     SPDLOG_INFO("Network bbox padding {}", network_bbox_padding);

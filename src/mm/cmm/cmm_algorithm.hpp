@@ -128,18 +128,14 @@ struct CovarianceMapMatchConfig {
     CovarianceMapMatchConfig(int k_arg = 8, int min_candidates_arg = 3,
                              double protection_level_multiplier_arg = 1.0,
                            double reverse_tolerance = 0.0,
-                           bool normalized_arg = true,
                            bool use_mahalanobis_candidates_arg = true,
                            bool filtered_arg = true,
                            bool enable_gap_bridging_arg = true,
-                           double max_gap_distance_arg = 2000.0, /* in meters */
-                           double min_gps_error_degrees_arg = 1.0e-6,
                            double max_interval_arg = 180.0, /* in seconds */
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double map_error_std_arg = 5.0e-6, /* in degrees */
                            double phmi_arg = 1.0e-5,
                            double phmi_pl_multiplier_arg = 5.0,
-                           double h0_prior_log_odds_arg = 0.0,
                            double cumulative_reverse_pct_arg = 0.03,
                            bool direction_penalty_arg = true);
 
@@ -148,23 +144,18 @@ struct CovarianceMapMatchConfig {
     double protection_level_multiplier; /**< Multiplier for protection level (search radius) */
     double phmi_pl_multiplier;          /**< Multiplier for PHMI integrity check (decoupled from search) */
     double reverse_tolerance;           /**< Reverse movement tolerance */
-    bool normalized;                    /**< Whether to normalize emission probabilities */
     bool use_mahalanobis_candidates;    /**< Whether to use Mahalanobis-based candidate search */
     bool filtered;                      /**< Whether to filter out points with no candidates/disconnected transitions */
 
     // --- Gap Handling & Integrity Parameters ---
     bool enable_gap_bridging;           /**< Enable skipping invalid points to bridge gaps */
-    double max_gap_distance;            /**< Maximum physical distance (meters) to attempt bridging */
     double phmi;                        /**< Probability of Hazardously Misleading Integrity information (default 1e-5) */
 
-    // --- Minimum GPS Error for Emission Probability ---
-    double min_gps_error_degrees;       /**< Minimum GPS error in degrees to prevent over-confidence (default 1e-5 ≈ 1.1m) */
     double max_interval;                /**< Maximum time interval to split trajectory */
     double trustworthiness_threshold;   /**< Threshold to filter out low-confidence matches */
 
-    // --- New Parameters for Additive Map Noise ---
+    // --- Additive Map Noise ---
     double map_error_std;               /**< Map error standard deviation in degrees (default 5e-5 ≈ 5m). Added to GPS variance. */
-    double h0_prior_log_odds;           /**< Log-odds of null hypothesis prior: log(P(H0)/P(¬H0)). Default 0 (λ₀=1). */
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
     bool direction_penalty;              /**< Whether to apply direction-consistency von Mises penalty for reverse-direction candidates (default true). Set to false for ablation studies isolating the contribution of direction awareness. */
 
@@ -345,20 +336,6 @@ public:
 
 protected:
     /**
-     * Calculate emission probability using covariance matrix (LOG-SPACE)
-     * Returns the log of emission probability to prevent numerical underflow.
-     * @param point_observed observed GPS point
-     * @param point_candidate candidate point on road network
-     * @param covariance covariance matrix of GPS observation
-     * @param config CMM configuration containing min_gps_error_degrees
-     * @return log emission probability
-     */
-    double calculate_emission_log_prob(const CORE::Point &point_observed,
-                                       const CORE::Point &point_candidate,
-                                       const CovarianceMatrix &covariance,
-                                       const CovarianceMapMatchConfig &config) const;
-
-    /**
      * Compute direction-consistency penalty for reverse-direction candidates.
      * Uses GNSS displacement velocity v = obs_i - obs_{i-1} and the candidate
      * edge's tangent direction to penalize wrong-way matches.
@@ -423,18 +400,6 @@ protected:
                          bool *connected,
                          const CovarianceMapMatchConfig &config,
                          double &log_prob_unconsidered);
-
-public:
-protected:
-    /**
-     * Update probabilities in a transition graph using CMM emission probabilities
-     * @param tg transition graph
-     * @param traj raw trajectory with covariance data
-     * @param config map match configuration
-     */
-    void update_tg_cmm(TransitionGraph *tg,
-                      const CMMTrajectory &traj,
-                      const CovarianceMapMatchConfig &config);
 
     /**
      * Slice a CMMTrajectory into a sub-segment [start_idx, end_idx)

@@ -225,40 +225,6 @@ struct CandidateWithMetric {
     double metric;
 };
 
-// Normalize trustworthiness values of a layer so that they sum to one when positive.
-void normalize_layer_trust(TGLayer *layer) {
-    if (layer == nullptr || layer->empty()) {
-        return;
-    }
-    double trust_sum = 0.0;
-    for (auto &node : *layer) {
-        if (std::isfinite(node.trustworthiness) && node.trustworthiness > 0) {
-            trust_sum += node.trustworthiness;
-        }
-    }
-    if (trust_sum > 0) {
-        for (auto &node : *layer) {
-            if (node.trustworthiness > 0) {
-                node.trustworthiness /= trust_sum;
-            }
-        }
-        return;
-    }
-    size_t positive_count = 0;
-    for (auto &node : *layer) {
-        if (node.ep > 0) {
-            positive_count++;
-        }
-    }
-    if (positive_count == 0) {
-        return;
-    }
-    // 没有正的trustworthiness，用emission probability代替
-    for (auto &node : *layer) {
-        node.trustworthiness = (node.ep > 0) ? node.ep : 0.0;
-    }
-}
-
 // Project an observation onto every segment of an edge and return the best candidate
 // according to Mahalanobis (or Euclidean) distance along with the score used to rank it.
 std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
@@ -569,35 +535,27 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
 CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates_arg,
                                                    double protection_level_multiplier_arg,
                                                    double reverse_tolerance_arg,
-                                                   bool normalized_arg,
                                                    bool use_mahalanobis_candidates_arg,
                                                    bool filtered_arg,
                                                    bool enable_gap_bridging_arg,
-                                                   double max_gap_distance_arg,
-                                                   double min_gps_error_degrees_arg,
                                                    double max_interval_arg,
                                                    double trustworthiness_threshold_arg,
                                                    double map_error_std_arg,
                                                    double phmi_arg,
                                                    double phmi_pl_multiplier_arg,
-                                                   double h0_prior_log_odds_arg,
                                                    double cumulative_reverse_pct_arg,
                                                    bool direction_penalty_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
-      normalized(normalized_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
       filtered(filtered_arg),
       enable_gap_bridging(enable_gap_bridging_arg),
-      max_gap_distance(max_gap_distance_arg),
-      min_gps_error_degrees(min_gps_error_degrees_arg),
       max_interval(max_interval_arg),
       trustworthiness_threshold(trustworthiness_threshold_arg),
       map_error_std(map_error_std_arg),
       phmi(phmi_arg),
       phmi_pl_multiplier(phmi_pl_multiplier_arg),
-      h0_prior_log_odds(h0_prior_log_odds_arg),
       cumulative_reverse_pct(cumulative_reverse_pct_arg),
       direction_penalty(direction_penalty_arg) {
 }
@@ -607,13 +565,13 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
     SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {}",
                 k, min_candidates, protection_level_multiplier, reverse_tolerance);
-    SPDLOG_INFO("normalized {} use_mahalanobis {} filtered {}",
-                normalized, use_mahalanobis_candidates, filtered);
-    SPDLOG_INFO("gap_bridging {} max_gap_distance {}", enable_gap_bridging, max_gap_distance);
-    SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold {}",
-                min_gps_error_degrees, max_interval, trustworthiness_threshold);
+    SPDLOG_INFO("use_mahalanobis {} filtered {}",
+                use_mahalanobis_candidates, filtered);
+    SPDLOG_INFO("gap_bridging {}", enable_gap_bridging);
+    SPDLOG_INFO("max_interval {} trustworthiness_threshold {}",
+                max_interval, trustworthiness_threshold);
     SPDLOG_INFO("map_error_std {} phmi {}", map_error_std, phmi);
-    SPDLOG_INFO("h0_prior_log_odds {} cumulative_reverse_pct {}", h0_prior_log_odds, cumulative_reverse_pct);
+    SPDLOG_INFO("cumulative_reverse_pct {}", cumulative_reverse_pct);
     SPDLOG_INFO("direction_penalty {}", direction_penalty);
 }
 
@@ -624,37 +582,30 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     int min_candidates = xml_data.get("config.parameters.min_candidates", 3);
     double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 1.0);
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
-    bool normalized = xml_data.get("config.parameters.normalized", true);
     bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
     bool filtered = xml_data.get("config.parameters.filtered", true);
 
     // Gap bridging and integrity parameters
     bool enable_gap_bridging = xml_data.get("config.parameters.enable_gap_bridging", true);
-    double max_gap_distance = xml_data.get("config.parameters.max_gap_distance", 2000.0);
     double phmi = xml_data.get("config.parameters.phmi", 1.0e-5);
-
-    // Minimum GPS error to prevent over-confidence
-    double min_gps_error_degrees = xml_data.get("config.parameters.min_gps_error_degrees", 1.0e-4);
 
     double max_interval = xml_data.get("config.parameters.max_interval", 180.0);
     double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 0.0);
 
-    // New parameter for additive map noise
+    // Additive map noise
     double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
 
     // PHMI integrity multiplier: decoupled from search radius
     double phmi_pl_multiplier = xml_data.get("config.parameters.phmi_pl_multiplier", 5.0);
-    double h0_prior_log_odds = xml_data.get("config.parameters.h0_prior_log_odds", 0.0);
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
     bool direction_penalty = xml_data.get("config.parameters.direction_penalty", true);
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                                    normalized, use_mahalanobis_candidates,
-                                    filtered,
-                                    enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
+                                    use_mahalanobis_candidates, filtered,
+                                    enable_gap_bridging,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, phmi,
-                                    phmi_pl_multiplier, h0_prior_log_odds,
+                                    phmi_pl_multiplier,
                                     cumulative_reverse_pct, direction_penalty};
 }
 
@@ -665,35 +616,28 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     int min_candidates = arg_data["min_candidates"].as<int>();
     double protection_level_multiplier = arg_data["protection_level_multiplier"].as<double>();
     double reverse_tolerance = arg_data["reverse_tolerance"].as<double>();
-    bool normalized = arg_data["normalized"].as<bool>();
     bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
     bool filtered = arg_data["filtered"].as<bool>();
 
     // Check if new args exist (assuming they are registered) or use defaults
     bool enable_gap = arg_data.count("enable_gap_bridging") ? arg_data["enable_gap_bridging"].as<bool>() : true;
-    double max_gap = arg_data.count("max_gap_distance") ? arg_data["max_gap_distance"].as<double>() : 2000.0;
     double phmi = arg_data.count("phmi") ? arg_data["phmi"].as<double>() : 1.0e-5;
-
-    // Minimum GPS error to prevent over-confidence
-    double min_gps_error = arg_data.count("min_gps_error_degrees") ? arg_data["min_gps_error_degrees"].as<double>() : 1.0e-4;
 
     double max_interval = arg_data.count("max_interval") ? arg_data["max_interval"].as<double>() : 180.0;
     double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 0.0;
 
-    // New parameter for additive map noise
+    // Additive map noise
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
     double phmi_pl_multiplier = arg_data.count("phmi_pl_multiplier") ? arg_data["phmi_pl_multiplier"].as<double>() : 5.0;
-    double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
     bool direction_penalty = arg_data.count("direction_penalty") ? arg_data["direction_penalty"].as<bool>() : true;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                                    normalized, use_mahalanobis_candidates,
-                                    filtered,
-                                    enable_gap, max_gap, min_gps_error,
+                                    use_mahalanobis_candidates, filtered,
+                                    enable_gap,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, phmi,
-                                    phmi_pl_multiplier, h0_prior_log_odds,
+                                    phmi_pl_multiplier,
                                     cumulative_reverse_pct, direction_penalty};
 }
 
@@ -708,18 +652,12 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("2.0"))
         ("reverse_tolerance", "Ratio of reverse movement allowed",
          cxxopts::value<double>()->default_value("0.0"))
-        ("normalized", "Normalize emission probabilities",
-         cxxopts::value<bool>()->default_value("true"))
         ("use_mahalanobis", "Use Mahalanobis-based candidate search",
          cxxopts::value<bool>()->default_value("true"))
         ("filtered", "Filter out points with no candidates or disconnected transitions",
          cxxopts::value<bool>()->default_value("true"))
         ("enable_gap_bridging", "Enable trajectory gap bridging",
          cxxopts::value<bool>()->default_value("true"))
-        ("max_gap_distance", "Max distance for gap bridging (meters)",
-         cxxopts::value<double>()->default_value("2000.0"))
-        ("min_gps_error_degrees", "Minimum GPS error in degrees to prevent over-confidence (default 1e-4 ≈ 11m)",
-         cxxopts::value<double>()->default_value("1.0e-4"))
         ("max_interval", "Maximum time interval (seconds) to split segments",
          cxxopts::value<double>()->default_value("180.0"))
         ("trustworthiness_threshold", "Threshold on trustworthiness posterior [0,1] to filter low-confidence epochs (0.0)",
@@ -730,8 +668,6 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("1.0e-5"))
         ("phmi_pl_multiplier", "PHMI protection level multiplier (decoupled from search radius)",
          cxxopts::value<double>()->default_value("5.0"))
-        ("h0_prior_log_odds", "Log-odds of H0 prior: log(P(H0)/P(¬H0))",
-         cxxopts::value<double>()->default_value("0.0"))
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
          cxxopts::value<double>()->default_value("0.03"))
         ("direction_penalty", "Apply direction-consistency penalty for reverse-direction candidates (true)",
@@ -744,18 +680,14 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--min_candidates (optional) <int>: Minimum number of candidates to keep (3)\n";
     oss << "--protection_level_multiplier (optional) <double>: Multiplier for protection level (1.0)\n";
     oss << "--reverse_tolerance (optional) <double>: proportion of reverse movement allowed on an edge\n";
-    oss << "--normalized (optional) <bool>: whether to normalize emission probabilities (true)\n";
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
     oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
     oss << "--enable_gap_bridging (optional) <bool>: Enable trajectory gap bridging (true)\n";
-    oss << "--max_gap_distance (optional) <double>: Max distance for gap bridging in meters (2000.0)\n";
-    oss << "--min_gps_error_degrees (optional) <double>: Minimum GPS error in degrees to prevent over-confidence (1e-4 ≈ 11m)\n";
     oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
     oss << "--trustworthiness_threshold (optional) <double>: trustworthiness posterior [0,1] threshold for filtering (0.0)\n";
     oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
     oss << "--phmi_pl_multiplier (optional) <double>: PHMI protection level multiplier (5.0)\n";
-    oss << "--h0_prior_log_odds (optional) <double>: Log-odds of H0 prior (0.0)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
     oss << "--direction_penalty (optional) <bool>: Apply direction-consistency penalty for reverse-direction candidates (true)\n";
 }
@@ -764,13 +696,12 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
-        max_gap_distance < 0 ||
         map_error_std < 0 || phmi < 0 || phmi > 1.0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
                        "protection_level_multiplier {} reverse_tolerance {} "
-                       "max_gap_distance {} map_error_std {} phmi {}",
+                       "map_error_std {} phmi {}",
                        k, min_candidates, protection_level_multiplier, reverse_tolerance,
-                       max_gap_distance, map_error_std, phmi);
+                       map_error_std, phmi);
         return false;
     }
     if (max_interval < 0) return false;
@@ -778,48 +709,6 @@ bool CovarianceMapMatchConfig::validate() const {
 }
 
 // Implementation of CovarianceMapMatch
-// Evaluate log emission probabilities by respecting each observation's covariance model.
-// Returns log(P) to prevent numerical underflow.
-double CovarianceMapMatch::calculate_emission_log_prob(
-    const CORE::Point &point_observed,
-    const CORE::Point &point_candidate,
-    const CovarianceMatrix &covariance,
-    const CovarianceMapMatchConfig &config) const {
-
-    double obs_x = boost::geometry::get<0>(point_observed);
-    double obs_y = boost::geometry::get<1>(point_observed);
-    double cand_x = boost::geometry::get<0>(point_candidate);
-    double cand_y = boost::geometry::get<1>(point_candidate);
-
-    double dx = obs_x - cand_x;
-    double dy = obs_y - cand_y;
-
-    Matrix2d cov = covariance.to_2d_matrix();
-
-    // Apply minimum GPS error to prevent over-confidence
-    // This ensures covariance matrix is not too small, which would cause
-    // extremely low emission probabilities for reasonable map-matching deviations
-    double min_var = config.min_gps_error_degrees * config.min_gps_error_degrees;
-    if (cov.m[0][0] < min_var) cov.m[0][0] = min_var;
-    if (cov.m[1][1] < min_var) cov.m[1][1] = min_var;
-
-    Matrix2d cov_inv = cov.inverse();
-    double det = cov.determinant();
-
-    // Protection against singular matrices or extremely confident GPS
-    // Add a small regularization term to determinant for numerical stability
-    if (det <= 1e-50) {
-        return -std::numeric_limits<double>::infinity();
-    }
-
-    double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
-                                 2 * cov_inv.m[0][1] * dx * dy +
-                                 cov_inv.m[1][1] * dy * dy;
-
-    // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + dist^2)
-    static const double log_2pi = std::log(2.0 * M_PI);
-    return -0.5 * (log_2pi + std::log(det + 1e-12) + mahalanobis_dist_sq);
-}
 
 // Compute direction-consistency log penalty for reverse-direction candidates.
 // Only penalizes when the GNSS displacement velocity points opposite to the
@@ -1768,7 +1657,6 @@ double CovarianceMapMatch::get_sp_dist(const Candidate *ca, const Candidate *cb,
         // near polyline vertices can produce offset oscillations even when the
         // vehicle moves forward. This threshold is independent of reverse_tolerance.
         double offset_diff = ca->offset - cb->offset;
-        double pct = offset_diff / ca->edge->length * 100.0;
         if (offset_diff <= ca->edge->length * 0.15) {
             return 0.0;
         }
@@ -1892,8 +1780,6 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
     // 初始化未考虑状态概率
     log_prob_unconsidered = std::log(config.phmi);
 }
-
-// ... update_tg_cmm remains same ...
 
 // See the declaration in cmm_algorithm.hpp for why the sub-segment size is
 // deliberately absent from this predicate.
