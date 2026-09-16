@@ -7,6 +7,32 @@ import os
 import math
 from datetime import datetime, timezone, date
 
+# --- Receiver calibration of the NMEA GST covariance ------------------------
+# The Tersus BX50C reports a GST 1-sigma ellipse describing its *RTK* solution
+# class, not the SPP solution it is actually emitting here. Measured 2026-09-16
+# against the RTK ground truth in processed/aligned.csv, over the 15034 epochs
+# that carry both an SPP fix, an RTK fix and a GST record:
+#
+#     E[d^T Sigma_gst^-1 d] = 18.0097,   median = 5.39
+#
+# A correctly scaled bivariate Gaussian has E[d^T Sigma^-1 d] = 2, so the GST
+# covariance is short by a factor of sqrt(18.0097 / 2) = 3.0008 in sigma, or
+# 9.0049 in variance. This is the single scalar that reproduces the observed
+# quadratic form; the per-epoch GST *shape* is left untouched.
+#
+# The scale is applied to the covariance, so sigma scales by
+# GST_COVARIANCE_SCALE and the cross-covariance by its square. The
+# protection_level computed below is derived from the same covariance and so
+# inherits the scale -- it is a 6-sigma ellipse of the calibrated covariance,
+# not of the raw GST one.
+#
+# experiments/scripts/apply_gst_calibration.py applies the same constant to an
+# existing cmm_input_points.csv, which is the path that was actually taken:
+# the hainan_06 raw receiver logs are no longer on disk, so the CSV cannot be
+# regenerated from scratch. That script also records the per-trajectory spread.
+GST_COVARIANCE_SCALE = 3.0008
+
+
 def dm_to_dd(dm_str):
     if not dm_str: return 0.0
     try:
@@ -165,8 +191,10 @@ def process_spp_file(file_path, transformer):
         smaj, smin, orient = rec['smaj'], rec['smin'], rec['orient']
         alt_sd = rec.get('alt_sd', 1.0)
         
-        # 1. Covariance in meters (Local North-East frame)
-        cov_m = ellipse_to_cov_m(smaj, smin, orient)
+        # 1. Covariance in meters (Local North-East frame), receiver-calibrated.
+        # Scaling by a scalar commutes with the Jacobian below, so applying it
+        # here and applying it to cov_deg give the same matrix.
+        cov_m = GST_COVARIANCE_SCALE ** 2 * ellipse_to_cov_m(smaj, smin, orient)
         
         # 2. Jacobian transformation
         J_inv = get_jacobian_inv(lon, lat, transformer)
