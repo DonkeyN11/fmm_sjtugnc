@@ -1,30 +1,39 @@
 #!/usr/bin/env python3
-"""Merge RAIM-computed HPL values into cmm_input_points.csv.
+"""Merge RAIM-computed HPL values into the CMM aggregated input table.
 
 Replaces the 'protection_level' column with RAIM HPL values (in degrees),
 preserving all other columns. Backs up the original file to .bak.
 
-Usage: python3 python/experiments/merge_raim_pl.py
+The trajectories and the raim_pl_*.csv files live under --base-dir, e.g.
+data/real_vehicle/hainan_06. The historical default (data/real_vehicle) no
+longer contains them, so pass --base-dir explicitly for that dataset.
+
+Usage:
+    python experiments/scripts/merge_raim_pl.py \
+        --base-dir data/real_vehicle/hainan_06
+    # write to a new file, leaving the original untouched:
+    python experiments/scripts/merge_raim_pl.py \
+        --base-dir data/real_vehicle/hainan_06 \
+        --out data/real_vehicle/hainan_06/cmm_input_points_enu.csv
 """
 
+import argparse
 import os
 import shutil
 import sys
 
 import numpy as np
 
-BASE_DIR = "data/real_vehicle"
-CMM_FILE = os.path.join(BASE_DIR, "cmm_input_points.csv")
-RAIM_FILE_PATTERN = os.path.join(BASE_DIR, "raim_pl_{traj}.csv")
+DEFAULT_BASE_DIR = "data/real_vehicle"
 
 
-def load_raim_pl(traj_name: str) -> dict:
+def load_raim_pl(traj_name: str, raim_pattern: str) -> dict:
     """Load RAIM PL values for a trajectory.
 
     Returns dict[traj_epoch_index] = hpl_deg (float).
     """
     fname = traj_name.replace('.', '_')
-    raim_file = RAIM_FILE_PATTERN.format(traj=fname)
+    raim_file = raim_pattern.format(traj=fname)
     if not os.path.exists(raim_file):
         print(f"  WARNING: RAIM file not found: {raim_file}")
         return {}
@@ -41,11 +50,32 @@ def load_raim_pl(traj_name: str) -> dict:
     return pl_dict
 
 
-def merge_pl():
-    """Main merge function: replace protection_level with RAIM HPL."""
+def merge_pl(base_dir: str = DEFAULT_BASE_DIR,
+             cmm_file: str = None,
+             out_file: str = None) -> None:
+    """Main merge function: replace protection_level with RAIM HPL.
+
+    base_dir  : directory holding raim_pl_<traj>.csv and, by default,
+                cmm_input_points.csv.
+    cmm_file  : input aggregated CMM table (default <base_dir>/cmm_input_points.csv).
+    out_file  : destination (default: overwrite cmm_file in place, after backing
+                it up to <cmm_file>.bak). Pass an explicit path to keep the
+                original untouched.
+    """
+    if cmm_file is None:
+        cmm_file = os.path.join(base_dir, "cmm_input_points.csv")
+    raim_pattern = os.path.join(base_dir, "raim_pl_{traj}.csv")
+    CMM_FILE = cmm_file
+    write_file = out_file or cmm_file
+
     if not os.path.exists(CMM_FILE):
         print(f"ERROR: CMM input file not found: {CMM_FILE}")
         sys.exit(1)
+
+    if out_file is not None:
+        print(f"  Writing to a separate file; {CMM_FILE} will NOT be modified.")
+    else:
+        print(f"  NOTE: {CMM_FILE} will be overwritten in place.")
 
     # Backup original
     bak_file = CMM_FILE + ".bak"
@@ -57,7 +87,7 @@ def merge_pl():
     all_pl = {}
     trajectory_names = ["1.1", "1.2", "1.3", "1.4", "2.1", "2.2", "2.3"]
     for traj in trajectory_names:
-        pl_dict = load_raim_pl(traj)
+        pl_dict = load_raim_pl(traj, raim_pattern)
         traj_id = int(traj.replace(".", ""))  # "1.1" -> 11
         all_pl[traj_id] = pl_dict
         print(f"  Trajectory {traj}: {len(pl_dict)} PL epochs loaded")
@@ -107,8 +137,9 @@ def merge_pl():
             output_lines.append(";".join(parts))
 
     # Write output
-    with open(CMM_FILE, "w", encoding="utf-8") as f:
+    with open(write_file, "w", encoding="utf-8") as f:
         f.write("\n".join(output_lines) + "\n")
+    print(f"\n  Wrote {write_file}")
 
     # Print statistics
     print(f"\n=== Merge Summary ===")
@@ -142,5 +173,18 @@ def merge_pl():
             print(f"    max   = {pl_m.max():.1f}")
 
 
+def main():
+    ap = argparse.ArgumentParser(description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--base-dir", default=DEFAULT_BASE_DIR,
+                    help="directory holding raim_pl_<traj>.csv (default: %(default)s)")
+    ap.add_argument("--cmm-input", default=None,
+                    help="input CMM table (default: <base-dir>/cmm_input_points.csv)")
+    ap.add_argument("--out", default=None,
+                    help="output path; omit to overwrite --cmm-input in place")
+    args = ap.parse_args()
+    merge_pl(args.base_dir, args.cmm_input, args.out)
+
+
 if __name__ == "__main__":
-    merge_pl()
+    main()

@@ -576,23 +576,31 @@ def lla_to_ecef(lat_deg: float, lon_deg: float, alt_m: float = 0.0) -> np.ndarra
     return np.array([x, y, z])
 
 
+def ecef_to_enu_rotation(lat_deg: float, lon_deg: float) -> np.ndarray:
+    """Return the 3x3 orthogonal ECEF-to-ENU rotation matrix R.
+
+    R maps a *difference* vector expressed in ECEF to the local East-North-Up
+    frame at the given geodetic latitude/longitude (R @ d_ecef = d_enu). It
+    satisfies R R^T = I. Used to resolve the line-of-sight unit vectors in ENU
+    so that the WLS covariance and the RAIM slopes are expressed in
+    East/North/Up rather than in the arbitrary ECEF x/y/z axes.
+    """
+    lat = math.radians(lat_deg)
+    lon = math.radians(lon_deg)
+    sin_lat, cos_lat = math.sin(lat), math.cos(lat)
+    sin_lon, cos_lon = math.sin(lon), math.cos(lon)
+    return np.array([
+        [-sin_lon,             cos_lon,             0.0],
+        [-sin_lat * cos_lon,  -sin_lat * sin_lon,   cos_lat],
+        [cos_lat * cos_lon,    cos_lat * sin_lon,   sin_lat],
+    ])
+
+
 def ecef_to_enu(x_ecef: np.ndarray, ref_lla: Tuple[float, float, float]) -> np.ndarray:
     """Convert ECEF position to ENU relative to reference point."""
-    lat = math.radians(ref_lla[0])
-    lon = math.radians(ref_lla[1])
-    sin_lat = math.sin(lat)
-    cos_lat = math.cos(lat)
-    sin_lon = math.sin(lon)
-    cos_lon = math.cos(lon)
-
     ref_ecef = lla_to_ecef(ref_lla[0], ref_lla[1], ref_lla[2])
     d = x_ecef - ref_ecef
-
-    e = -sin_lon * d[0] + cos_lon * d[1]
-    n = -sin_lat * cos_lon * d[0] - sin_lat * sin_lon * d[1] + cos_lat * d[2]
-    u = cos_lat * cos_lon * d[0] + cos_lat * sin_lon * d[1] + sin_lat * d[2]
-
-    return np.array([e, n, u])
+    return ecef_to_enu_rotation(ref_lla[0], ref_lla[1]) @ d
 
 
 def compute_azel(user_pos_ecef: np.ndarray, sat_pos_ecef: np.ndarray,
@@ -615,11 +623,19 @@ def compute_azel(user_pos_ecef: np.ndarray, sat_pos_ecef: np.ndarray,
 
 def compute_geometry_matrix(sat_positions: List[np.ndarray],
                             user_pos_ecef: np.ndarray,
-                            sys_chars: Optional[List[str]] = None) -> np.ndarray:
+                            sys_chars: Optional[List[str]] = None,
+                            ref_lla: Optional[Tuple[float, float, float]] = None) -> np.ndarray:
     """Compute the geometry matrix H (direction cosines + clock per constellation).
 
-    For multi-GNSS: columns are [dx, dy, dz, clk_gps, isb_bds, isb_gal, ...].
+    For multi-GNSS: columns are [dE, dN, dU, clk_gps, isb_bds, isb_gal, ...].
     sys_chars: list of constellation letters ('G','C','E','J','R') per satellite.
+    ref_lla: geodetic reference (lat, lon, alt) at which the line-of-sight unit
+        vectors are rotated from ECEF into the local ENU frame. When provided,
+        the first three columns of H are d/dE, d/dN, d/dU, so that
+        (H^T W H)^-1[:2, :2] is the true East-North covariance block and
+        A[0], A[1] are the East, North error-per-bias components.
+        When None, raw ECEF x/y/z components are used (legacy behaviour; the
+        first two columns are then NOT the horizontal plane).
     """
     n = len(sat_positions)
     if sys_chars is None:
@@ -631,13 +647,21 @@ def compute_geometry_matrix(sat_positions: List[np.ndarray],
         if sc not in unique_sys and sc in ('C', 'E', 'J', 'R'):
             unique_sys.append(sc)
 
-    n_state = 3 + len(unique_sys)  # x, y, z, clk_gps, isb_c, ...
+    n_state = 3 + len(unique_sys)  # E, N, U, clk_gps, isb_c, ...
     H = np.zeros((n, n_state))
+
+    R_enu = None
+    if ref_lla is not None:
+        R_enu = ecef_to_enu_rotation(ref_lla[0], ref_lla[1])
 
     for i, (sat_pos, sc) in enumerate(zip(sat_positions, sys_chars)):
         los = sat_pos - user_pos_ecef
         rng = np.linalg.norm(los)
-        H[i, :3] = -los / rng
+        los_unit = los / rng
+        if R_enu is not None:
+            # Rotate the ECEF line-of-sight unit vector into the local ENU frame
+            los_unit = R_enu @ los_unit
+        H[i, :3] = -los_unit
         H[i, 3] = 1.0  # GPS receiver clock
         if sc in unique_sys and sc != 'G':
             # ISB column: 4 for first non-GPS, 5 for second, etc.
@@ -676,7 +700,8 @@ def wls_solve(H: np.ndarray, W: np.ndarray, prange_residuals: np.ndarray,
 
     Δx = (H^T W H)^-1 H^T W Δρ
 
-    Returns (dx, cov, sigma0) in ECEF [m].
+    Returns (dx, cov, sigma0) in the frame spanned by the first three columns of
+    H (East-North-Up when H was built with ref_lla, otherwise ECEF) [m].
     sigma0 is the unit-weight standard deviation from residuals.
     """
     Hv = H[valid_idx]
@@ -722,11 +747,17 @@ def compute_hpl(H: np.ndarray, W: np.ndarray,
                 p_fa: float = P_FA, p_md: float = P_MD) -> Tuple[float, float, Optional[float]]:
     """Compute Horizontal Protection Level using the residual-based slope method.
 
+    NOTE: this function is currently unused (kept for reference). The HPL
+    actually written to the output files comes from `_compute_epoch_pl`, which
+    implements the ARP term only. If you wire this back in, remember that
+    columns 0 and 1 of A are East/North only when H was built with `ref_lla`
+    (see compute_geometry_matrix); otherwise they are ECEF x/y.
+
     Algorithm:
         1. Form S = I - H(H^TWH)^-1 H^T W  (projection onto residual space)
         2. For each satellite i:
-            SLOPE_i = sqrt( (A_{1,i}^2 + A_{2,i}^2) / S_{i,i} )
-            where A = (H^TWH)^-1 H^T W and indices 1,2 are the E,N components
+            SLOPE_i = sqrt( (A_{E,i}^2 + A_{N,i}^2) / S_{i,i} )
+            where A = (H^TWH)^-1 H^T W and indices 0,1 are the E,N components
         3. MDB = sigma0 * sqrt(lambda)
             where lambda = chi2_{nc}^{-1}(1-Pmd, 1, lambda_0)
         4. HPL = min(max_i(SLOPE_i * MDB), max_i(HPL_ARP_i))
@@ -800,11 +831,12 @@ def compute_hpl(H: np.ndarray, W: np.ndarray,
 
     # ── Alternative: ARP method (conservative) ──
     # HPL_ARP = k_H * sigma_major
-    cov_enu = np.eye(3)  # placeholder — ECEF cov would need rotation to ENU
     k_h = math.sqrt(t_d * lam / dof) if dof > 0 else 6.0
-    cov_pos_xyz = HWH_inv[:3, :3] * sigma0 ** 2
+    # H's first three columns are E, N, U when built with ref_lla (see
+    # compute_geometry_matrix), so [:2, :2] is the East-North block.
+    cov_pos_enu = HWH_inv[:3, :3] * sigma0 ** 2
     # Compute semi-major axis
-    cov_h = cov_pos_xyz[:2, :2]  # Rough: use x,y components as approximate horizontal
+    cov_h = cov_pos_enu[:2, :2]
     try:
         eigvals = np.linalg.eigvalsh(cov_h)
         sigma_major = math.sqrt(max(eigvals))
@@ -996,7 +1028,7 @@ def _compute_epoch_pl(epoch: EpochObs,
         return None
 
     # Compute geometry matrix with separate clock params per constellation
-    H = compute_geometry_matrix(sat_positions, approx_ecef, sys_chars)
+    H = compute_geometry_matrix(sat_positions, approx_ecef, sys_chars, ref_lla)
 
     # Elevation-based weights
     W, valid_idx = compute_elevation_weights(sat_positions, approx_ecef, ref_lla)
@@ -1039,6 +1071,9 @@ def _compute_epoch_pl(epoch: EpochObs,
         lam = lam * (1.2 if prob > P_MD else 0.8)
     k_h = math.sqrt(lam / dof) if dof > 0 else 6.0
 
+    # cov is expressed in the frame of H's first three columns. H is built with
+    # ref_lla by compute_geometry_matrix, so cov[:2, :2] is the East-North
+    # horizontal block and sigma_major is the true horizontal semi-major axis.
     cov_h = cov[:2, :2]
     try:
         eigvals = np.linalg.eigvalsh(cov_h)
