@@ -22,20 +22,12 @@
   <parameters>
     <k>16</k>
     <min_candidates>1</min_candidates>
-    <protection_level_multiplier>3</protection_level_multiplier>
     <reverse_tolerance>0.1</reverse_tolerance>
-    <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>
     <filtered>true</filtered>
-    <window_length>100</window_length>
     <max_interval>180.0</max_interval>
     <trustworthiness_threshold>0.0</trustworthiness_threshold>
     <phmi>0.00001</phmi>
-    <lag_steps>0</lag_steps>
-    <phmi_pl_multiplier>1</phmi_pl_multiplier>
-    <h0_prior_log_odds>0</h0_prior_log_odds>
-    <map_error_std>5.0e-6</map_error_std>
-    <min_gps_error_degrees>1.0e-6</min_gps_error_degrees>
     <cumulative_reverse_pct>0.03</cumulative_reverse_pct>
   </parameters>
   <other>

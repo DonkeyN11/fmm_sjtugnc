@@ -43,9 +43,7 @@
   <parameters>
     <k>16</k>
     <min_candidates>1</min_candidates>
-    <protection_level_multiplier>1.0</protection_level_multiplier>
     <reverse_tolerance>0.0</reverse_tolerance>
-    <normalized>true</normalized>
     <use_mahalanobis>true</use_mahalanobis>
     <max_interval>180.0</max_interval>
     <trustworthiness_threshold>0.5</trustworthiness_threshold>
@@ -55,6 +53,5 @@
     <log_level>2</log_level>
     <use_omp>true</use_omp>
     <step>500</step>
-    <convert_to_projected>true</convert_to_projected>
   </other>
 </config>

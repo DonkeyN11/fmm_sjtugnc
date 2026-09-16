@@ -18,14 +18,11 @@
       <status/><delta_entropy/><posterior_entropy/><h0_lambda/><cumu_prob/></fields>
   </output>
   <parameters>
-    <k>16</k><min_candidates>1</min_candidates><protection_level_multiplier>3</protection_level_multiplier>
-    <reverse_tolerance>0.0</reverse_tolerance><normalized>false</normalized>
+    <k>16</k><min_candidates>1</min_candidates>
+    <reverse_tolerance>0.0</reverse_tolerance>
     <use_mahalanobis>true</use_mahalanobis><filtered>false</filtered>
-    <window_length>100</window_length>
     <max_interval>180.0</max_interval><trustworthiness_threshold>0.0</trustworthiness_threshold>
-    <phmi>0.00001</phmi><lag_steps>5</lag_steps>
-    <phmi_pl_multiplier>1</phmi_pl_multiplier><h0_prior_log_odds>0</h0_prior_log_odds>
+    <phmi>0.00001</phmi>
   </parameters>
-  <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step>
-    <convert_to_projected>false</convert_to_projected></other>
+  <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step></other>
 </config>
