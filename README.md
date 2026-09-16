@@ -14,7 +14,7 @@ TMM extends the [Fast Map Matching (FMM)](https://github.com/cyang-kth/fmm) fram
 
 - **GNSS-consistent emission model** — anisotropic Mahalanobis distance replaces isotropic Euclidean projection
 - **HPL-adaptive candidate search** — protection level dynamically scales the search radius, reducing candidate count by up to 7.6×
-- **Calibrated trustworthiness (TW)** — filtering posterior with proper probabilistic normalization (background state, row-normalized transitions, uniform prior)
+- **Calibrated trustworthiness (TW)** — filtering posterior with proper probabilistic normalization (row-normalized transitions, uniform prior)
 - **96.0% segment accuracy** on real-vehicle data (15,421 epochs, Haikou, Hainan) vs. 88.9% for classical HMM
 - **ECE = 0.040** (95% reduction over HMM baseline ECE 0.876)
 - C++17 core with Python bindings via SWIG; Monte Carlo simulation framework included

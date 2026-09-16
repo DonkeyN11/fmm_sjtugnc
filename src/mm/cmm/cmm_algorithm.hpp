@@ -137,7 +137,6 @@ struct CovarianceMapMatchConfig {
                            double max_interval_arg = 180.0, /* in seconds */
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double map_error_std_arg = 5.0e-6, /* in degrees */
-                           double background_prob_arg = 0.1, /* linear prob of off-road background state */
                            double phmi_arg = 1.0e-5,
                            int lag_steps_arg = 0,
                            double phmi_pl_multiplier_arg = 5.0,
@@ -165,9 +164,8 @@ struct CovarianceMapMatchConfig {
     double max_interval;                /**< Maximum time interval to split trajectory */
     double trustworthiness_threshold;   /**< Threshold to filter out low-confidence matches */
 
-    // --- New Parameters for Additive Map Noise and Background Noise ---
+    // --- New Parameters for Additive Map Noise ---
     double map_error_std;               /**< Map error standard deviation in degrees (default 5e-5 ≈ 5m). Added to GPS variance. */
-    double background_prob;             /**< Background state linear probability (default 0.1). Probability that vehicle is not on any mapped road edge. */
     int lag_steps;                      /**< Fixed-lag smoothing steps: 0=realtime filtering, N=delay N steps for backward evidence */
     double h0_prior_log_odds;           /**< Log-odds of null hypothesis prior: log(P(H0)/P(¬H0)). Default 0 (λ₀=1). */
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */

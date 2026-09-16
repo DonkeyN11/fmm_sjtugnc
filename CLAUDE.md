@@ -143,10 +143,11 @@ where $\mathbf{d}_{i,j} = z_i - x_{i,j}$. This is implemented in `calculate_emis
 
 ### Level 3: Trustworthiness as Calibrated Posterior
 
-**Probabilistic normalization (critical for calibration).** Three normalization steps ensure valid probabilities:
-1. **Background state**: A pseudo-candidate with fixed emission $p_{\text{bg}}$ (default 0.1) represents the off-road hypothesis. Effective emission: $p'(z_i \mid x_{i,j}) = (1-p_{\text{bg}}) \cdot p(z_i \mid x_{i,j})$. This prevents overconfidence when all road candidates have low likelihood.
-2. **Row-normalized transitions**: $t_{a \to b} = w_{a \to b} / \sum_j w_{a \to j}$ where $w_{a \to b} = \min(1, d_{\text{gnss}} / d_{\text{road}})$, ensuring $\sum_j t_{a \to j} = 1$.
-3. **Uniform initial prior**: $\pi(i) = 1/K$ for $K$ real candidates.
+**Probabilistic normalization (critical for calibration).** Two normalization steps ensure valid probabilities:
+1. **Row-normalized transitions**: $t_{a \to b} = w_{a \to b} / \sum_j w_{a \to j}$ where $w_{a \to b} = \min(1, d_{\text{gnss}} / d_{\text{road}})$, ensuring $\sum_j t_{a \to j} = 1$.
+2. **Uniform initial prior**: $\pi(i) = 1/K$ for $K$ road candidates.
+
+An off-road **background state** $p_{\text{bg}} = 0.1$ used to be listed here as a third step. It has been removed from the code: because both the emission and the transition normalisation happen before the softmax that produces trustworthiness, the constant factor cancels, and the only place it did not cancel was layer initialisation, where it was miscounted into $K$. Measured on the Haikou set it changed the reported trustworthiness of exactly 8 of 16155 epochs — the first epoch of each trajectory and sub-segment — and no matched path. It was also actively harmful: appending it made a zero-candidate epoch look non-empty, which let an off-road epoch enter the Viterbi layer and permanently stall the sub-segment. An epoch with no road candidate is now simply skipped.
 
 **Forward algorithm (trustworthiness computation).** The per-epoch trustworthiness is the filtering posterior of the Viterbi-optimal candidate $i^*$:
 $$
@@ -201,7 +202,6 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 | `reverse_tolerance` | 0.1 | **Ratio of edge length** — 0.1 = 10% max reverse travel |
 | `cumulative_reverse_pct` | 0.03 | Max cumulative reverse as fraction of edge length (one-way edges only). 3% in paper, reduced from 15% to fix Traj 22 false lock. |
 | `lag_steps` | 0 (real) / 5 (sim) | Fixed-lag smoothing steps. 0 = real-time filtering, N = N-step delay |
-| `background_prob` | 0.1 | Off-road background state probability (Laplace smoothing) |
 | `map_error_std` | 5.0e-6 deg (~0.5 m) | Map error added in quadrature to GPS variance |
 | `min_gps_error_degrees` | 1.0e-6 (~0.1 m) | Floor on GPS error to prevent over-confidence |
 | `phmi` | 1.0e-5 | Integrity risk for PHMI mode |
@@ -229,7 +229,7 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 
 4. **RAIM requires ≥5 visible satellites**: Performance in urban canyons with frequent blockage is untested. ARAIM MHSS (multi-hypothesis solution separation) would be needed for multi-fault integrity guarantees.
 
-5. **Background state $p_{\text{bg}} = 0.1$** acts as Laplace smoothing; the optimal value likely depends on road network density and GNSS quality. A data-driven calibration is future work.
+5. **Off-road epochs are skipped, not modelled**: an epoch whose search radius admits no road candidate now contributes no candidate at all, so it is excluded from the evaluation and matching continues with the remaining epochs. The alternative -- an explicit off-road state in the HMM -- would emit a row for such an epoch, at the cost of the Viterbi-layer bookkeeping that previously stalled the sub-segment. Which is preferable depends on whether the downstream consumer needs a row per input epoch.
 
 6. **Single-city validation**: Real experiments are limited to Haikou, Hainan (152,547 edges, 6 trajectories, 15,421 epochs). External validity for different cities and receiver classes is not yet established.
 

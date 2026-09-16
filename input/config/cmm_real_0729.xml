@@ -34,7 +34,6 @@
     <lag_steps>0</lag_steps>
     <phmi_pl_multiplier>1</phmi_pl_multiplier>
     <h0_prior_log_odds>0</h0_prior_log_odds>
-    <background_prob>0.1</background_prob>
     <map_error_std>5.0e-6</map_error_std>
     <min_gps_error_degrees>1.0e-6</min_gps_error_degrees>
     <cumulative_reverse_pct>0.03</cumulative_reverse_pct>
