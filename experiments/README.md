@@ -19,7 +19,8 @@ experiments/
       with_occlusion/with_fault/   #   Occlusion + fault combined
     sigma_mismatch/                # Sigma mismatch datasets for Exp4
       pr10_wls20/ ~ pr30_wls20/    #   pr = true pseudorange noise, wls = assumed
-  scripts/                         # All experiment & analysis scripts (22 files)
+  scripts/                         # Live experiment & analysis scripts (63 files)
+  obsolete/                        # Void scripts — do NOT run (12 files), see obsolete/README.md
   output/
     1_covariance_validation/       # Per-sigma 4-panel validation figures + KS summary
     2_stanford/                    # Per-condition Stanford plots + P_md/P_fa table
@@ -63,10 +64,15 @@ experiments/
 | `utils.py` | Shared I/O, metrics (ECE, ROC/AUC), plotting helpers |
 | `compute_raim_pl.py` | RAIM PL from RINEX 3.04 observations (canonical copy) |
 | `merge_raim_pl.py` | Merge RAIM PL into CMM input CSV |
-| `run_cmm_matching.py` | Standalone CMM batch runner |
 | `mapbox_viz.py` | Mapbox 3D visualization: CMM/FMM results + GT + road network |
 | `mapbox_spp_rtk.py` | Mapbox visualization: SPP + covariance ellipses vs RTK ground truth |
 | `fig_stanford_combined.py` | Combined 4-panel Stanford figure for paper |
+
+Ten scripts that measured now-removed mechanisms, or whose configuration schema no
+longer matches any loader, were moved to [obsolete/](obsolete/). They are kept for
+provenance only and must not be run: they fail silently, because a config key no
+loader recognises is ignored without a warning. See [obsolete/README.md](obsolete/README.md)
+for the per-script reason.
 
 ---
 
