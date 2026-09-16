@@ -17,18 +17,18 @@ import re
 BASE = Path(__file__).resolve().parents[2]
 REV_MAP = json.load(open(BASE / 'experiments/config/reverse_edge_map.json'))
 
-# Paper claims (from LaTeX as of 2026-06-07)
+# Paper claims (from LaTeX as of 2026-09-02, fixed E/N + Traj 12 excluded)
 PAPER = {
     'accuracy': {
-        '11': (2377, 93.8, 87.1), '12': (133, 100, 0), '13': (1908, 98.1, 94.2),
-        '14': (352, 100, 79.5), '21': (3516, 98.7, 92.1), '22': (2062, 93.4, 83.3),
-        '23': (2704, 98.6, 88.3), 'ALL': (13052, 96.9, 88.0),
+        '11': (2439, 92.3, 87.4), '13': (1908, 97.6, 94.2),
+        '14': (352, 100, 79.5), '21': (3581, 97.5, 92.0), '22': (2123, 91.6, 83.8),
+        '23': (2720, 99.3, 87.8), 'ALL': (13123, 96.0, 88.9),
     },
-    'tw_sep': {'cmm_corr': 0.925, 'cmm_wrong': 0.633, 'cmm_sep': 0.292,
-               'fmm_corr': 0.996, 'fmm_wrong': 0.909, 'fmm_sep': 0.087, 'ratio': 3.3},
-    'ece': {'cmm': 0.069, 'fmm': 0.107},
-    'auc': {'cmm': 0.600, 'fmm': 0.965},
-    'pos_err': {'cmm_mean': 5.6, 'cmm_p95': 13.5, 'fmm_mean': 9.4, 'fmm_p95': 40.3},
+    'tw_sep': {'cmm_corr': 0.972, 'cmm_wrong': 0.710, 'cmm_sep': 0.262,
+               'fmm_corr': 0.015, 'fmm_wrong': 0.001, 'fmm_sep': 0.014, 'ratio': 18.7},
+    'ece': {'cmm': 0.040, 'fmm': 0.876},
+    'auc': {'cmm': 0.721, 'fmm': 0.583},
+    'pos_err': {'cmm_mean': 5.6, 'cmm_p95': 13.6, 'fmm_mean': 8.9, 'fmm_p95': 36.1},
     'fmr': {'cmm': 3.1, 'fmm': 12.0},
 }
 
@@ -63,30 +63,47 @@ def auc(labels,scores):
     if n_pos==0 or n_neg==0:return 0.5
     return float(np.trapz(np.cumsum(ls)/n_pos,np.cumsum(1-ls)/n_neg))
 
+def norm_ts(s):
+    """Key a timestamp column numerically.
+
+    The tables disagree on formatting ('1750306260' vs '1750306260.0'), so the
+    join must be numeric. Do NOT normalise by stripping trailing zeros: that
+    maps 1750306260 and 175030626 to the same key, which would silently merge
+    two distinct epochs. float() is exact for every value in these tables.
+    """
+    return float(s)
+
 def main():
-    # Load GT by timestamp
+    # Load GT by (id, timestamp). An epoch is evaluable when it has a road edge
+    # -- edge correctness compares cpath against gt_edge and needs no
+    # coordinates. gt_x/gt_y are only required for the position-error metric,
+    # so a row with unparseable coordinates stays in the accuracy denominator
+    # and contributes (None, None) to the error stats instead of being dropped.
+    # Dropping those rows instead loses 204 of the 13123 evaluable epochs and
+    # silently changes the reported accuracy, which is what exp6_real_accuracy
+    # and the paper both count as 13123.
     gt_by_ts = {}
-    with open(BASE/'data/real_vehicle/processed/aligned.csv',newline='') as f:
+    with open(BASE/'data/real_vehicle/hainan_06/processed/aligned.csv',newline='') as f:
         for r in csv.DictReader(f,delimiter=';'):
             gt_e = r['gt_edge'].strip()
             if gt_e in ('0','-1',''): continue
             try: gx=float(r['gt_x']); gy=float(r['gt_y'])
-            except: continue
-            gt_by_ts[r['timestamp'].strip()] = (r['id'].strip(), gt_e, gx, gy)
+            except: gx=gy=None
+            gt_by_ts[(r['id'].strip(), norm_ts(r['timestamp']))] = (gt_e, gx, gy)
 
-    # Load CMM/FMM by timestamp
+    # Load CMM/FMM by (id, timestamp)
     def load_mr(path):
         d = {}
         with open(path,newline='') as f:
             for r in csv.DictReader(f,delimiter=';'):
-                d[r['timestamp'].strip()] = (
+                d[(r['id'].strip(), norm_ts(r['timestamp']))] = (
                     r['cpath'].strip(), float(r['trustworthiness']),
                     r.get('ogeom',''), r.get('pgeom','')
                 )
         return d
 
-    cmm = load_mr(BASE/'data/real_vehicle/processed/cmm_result.csv')
-    fmm = load_mr(BASE/'data/real_vehicle/processed/fmm_result.csv')
+    cmm = load_mr(BASE/'data/real_vehicle/hainan_06/processed/cmm_result_fixed_en.csv')
+    fmm = load_mr(BASE/'data/real_vehicle/hainan_06/processed/fmm_result.csv')
 
     # Evaluate
     cmm_pt = defaultdict(lambda:{'c':0,'t':0,'perr':[]})
@@ -94,22 +111,23 @@ def main():
     cmm_tw_c=[]; cmm_tw_w=[]
     fmm_tw_c=[]; fmm_tw_w=[]
 
-    for ts,(tid,gt_e,gx,gy) in gt_by_ts.items():
-        if ts in cmm:
-            cpath,tw,ogeom,pgeom = cmm[ts]
+    for key,(gt_e,gx,gy) in gt_by_ts.items():
+        tid = key[0]
+        if key in cmm:
+            cpath,tw,ogeom,pgeom = cmm[key]
             cmm_pt[tid]['t'] += 1
             if is_edge_match(cpath,gt_e): cmm_pt[tid]['c']+=1; cmm_tw_c.append(tw)
             else: cmm_tw_w.append(tw)
             px,py = parse_point(pgeom) if pgeom else (None,None)
-            if px is not None: cmm_pt[tid]['perr'].append(haversine_m(px,py,gx,gy))
+            if px is not None and gx is not None: cmm_pt[tid]['perr'].append(haversine_m(px,py,gx,gy))
 
-        if ts in fmm:
-            fpath,ftw,_,fpgeom = fmm[ts]
+        if key in fmm:
+            fpath,ftw,_,fpgeom = fmm[key]
             fmm_pt[tid]['t'] += 1
             if is_edge_match(fpath,gt_e): fmm_pt[tid]['c']+=1; fmm_tw_c.append(ftw)
             else: fmm_tw_w.append(ftw)
             px,py = parse_point(fpgeom) if fpgeom else (None,None)
-            if px is not None: fmm_pt[tid]['perr'].append(haversine_m(px,py,gx,gy))
+            if px is not None and gx is not None: fmm_pt[tid]['perr'].append(haversine_m(px,py,gx,gy))
 
     cmm_tw_c=np.array(cmm_tw_c); cmm_tw_w=np.array(cmm_tw_w)
     fmm_tw_c=np.array(fmm_tw_c); fmm_tw_w=np.array(fmm_tw_w)

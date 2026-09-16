@@ -167,7 +167,7 @@ Note from the paper (README.md §Trustworthiness Evaluation): $\Delta H$ is info
 
 ### Fixed-Lag Smoothing
 
-When `lag_steps > 0`, CMM buffers $L+1$ transition graph layers and re-evaluates posterior probabilities using future evidence before finalizing trustworthiness scores. This is implemented in `apply_lag_smoothing()` and `flush_lag_buffer()`. However, the paper reports that on real data with tight RAIM-derived HPL, lag smoothing degrades TW calibration (ECE increases from 0.069 at $L=0$ to 0.26 at $L=20$), suggesting it is most beneficial when the receiver does NOT provide covariance outputs. For receivers providing full covariance, $L=0$ is recommended.
+When `lag_steps > 0`, CMM buffers $L+1$ transition graph layers and re-evaluates posterior probabilities using future evidence before finalizing trustworthiness scores. This is implemented in `apply_lag_smoothing()` and `flush_lag_buffer()`. However, the paper reports that on real data with tight RAIM-derived HPL, lag smoothing degrades TW calibration (ECE increases from 0.040 at $L=0$ to 0.26 at $L=20$), suggesting it is most beneficial when the receiver does NOT provide covariance outputs. For receivers providing full covariance, $L=0$ is recommended.
 
 ### PHMI (Integrity Monitoring Mode)
 
@@ -185,8 +185,8 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 | GPS error | Constant scalar $\sigma$ | Per-epoch covariance $\boldsymbol{\Sigma}_i$ |
 | Trustworthiness | Raw Viterbi score (uncalibrated) | Filtering posterior via forward algorithm (calibrated) |
 | Prerequisites | UBODT only | UBODT + covariance + protection level per epoch |
-| Calibration (ECE) | 0.107 (over-confident) | 0.069 (36% reduction) |
-| Real accuracy | 88.1% segment | 96.9% segment |
+| Calibration (ECE) | 0.876 (under-confident) | 0.040 (95% reduction) |
+| Real accuracy | 88.9% segment | 96.0% segment |
 
 ## Key Configuration Parameters
 
@@ -221,17 +221,17 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 
 ## Known Limitations and Failure Modes
 
-1. **Parallel-edge emission ambiguity** (Traj 22 failure case, §V-G of paper): The Mahalanobis emission cannot reliably distinguish parallel carriageway edges separated by ~12 m when SPP accuracy is ~2–5 m. The emission systematically favors the geometrically closer edge even when it's the wrong direction. The cumulative reverse guard (3% of edge length, one-way edges only) partially mitigates this (Traj 22 accuracy: 71.6% → 93.4%), but the underlying ambiguity remains for closely-spaced parallel roads.
+1. **Parallel-edge emission ambiguity** (Traj 22 failure case, §V-G of paper): The Mahalanobis emission cannot reliably distinguish parallel carriageway edges separated by ~12 m when SPP accuracy is ~2–5 m. The emission systematically favors the geometrically closer edge even when it's the wrong direction. The cumulative reverse guard (3% of edge length, one-way edges only) partially mitigates this (Traj 22 accuracy: 71.6% → 91.6%), but the underlying ambiguity remains for closely-spaced parallel roads.
 
 2. **Cumulative reverse guard CRS sensitivity**: The guard was originally calibrated for metric coordinate systems. When applied in EPSG:4326 (degree-based), the hard cap becomes ~111,000× too large, effectively disabling the guard. Always verify the guard threshold is dimensionally consistent with the CRS.
 
-3. **Fixed-lag smoothing degrades with tight PL**: When the RAIM-derived HPL is already tight (median ~22.8 m), fixed-lag smoothing can degrade TW calibration (ECE 0.069 → 0.26 at L=20). Use L=0 for covariance-equipped receivers; L > 0 may help for receivers without covariance output.
+3. **Fixed-lag smoothing degrades with tight PL**: When the RAIM-derived HPL is already tight (median ~22.8 m), fixed-lag smoothing can degrade TW calibration (ECE 0.040 → 0.26 at L=20). Use L=0 for covariance-equipped receivers; L > 0 may help for receivers without covariance output.
 
 4. **RAIM requires ≥5 visible satellites**: Performance in urban canyons with frequent blockage is untested. ARAIM MHSS (multi-hypothesis solution separation) would be needed for multi-fault integrity guarantees.
 
 5. **Background state $p_{\text{bg}} = 0.1$** acts as Laplace smoothing; the optimal value likely depends on road network density and GNSS quality. A data-driven calibration is future work.
 
-6. **Single-city validation**: Real experiments are limited to Haikou, Hainan (152,547 edges, 7 trajectories, 16,155 epochs). External validity for different cities and receiver classes is not yet established.
+6. **Single-city validation**: Real experiments are limited to Haikou, Hainan (152,547 edges, 6 trajectories, 15,421 epochs). External validity for different cities and receiver classes is not yet established.
 
 7. **Emission model misspecification**: When the WLS solver's assumed $\sigma_{\rho}$ differs from the true pseudorange noise, ECE degrades asymmetrically — over-confidence ($\sigma_{\text{wls}} < \sigma_{\rho}^{\text{true}}$) degrades calibration more severely than over-conservatism. The RAIM-FDE module is designed to prevent severe over-confidence.
 
@@ -239,14 +239,14 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 
 | Metric | CMM | FMM |
 |--------|-----|-----|
-| Segment accuracy (real) | 96.9% | 88.1% |
-| Mean position error (real) | 5.6 m | 9.4 m |
-| ECE (TW calibration) | 0.069 | 0.107 |
-| TW separation (correct−wrong) | 0.291 | 0.085 |
-| ROC AUC (mismatch detection) | 0.600 | 0.965* |
-| Acc. at $\sigma_{\rho}=30$ m (sim) | 76.8% | 56.1% |
+| Segment accuracy (real) | 96.0% | 88.9% |
+| Mean position error (real) | 5.6 m | 8.9 m |
+| ECE (TW calibration) | 0.040 | 0.876 |
+| TW separation (correct−wrong) | 0.262 | 0.014 |
+| ROC AUC (mismatch detection) | 0.721 | 0.583 |
+| Acc. at $\sigma_{\rho}=30$ m (sim) | 90.6% | 56.2% |
 
-\*FMM's high AUC is an artifact of near-binary TW scores (s.d. 0.039) — the scores are compressed near 1.0 regardless of correctness, inflating AUC while providing poor practical discriminative power. CMM's TW drops from 0.925 (correct) to 0.633 (wrong), providing actionable separation.
+\*FMM's normalized Viterbi scores are severely under-confident (mean TW 0.015), near zero for both correct and wrong matches, leaving almost no discriminative signal. CMM's TW drops from 0.972 (correct) to 0.710 (wrong), providing actionable separation.
 
 ## UBODT System
 
@@ -307,7 +307,7 @@ The Monte Carlo simulation framework is in `monte_carlo/`, `monte_carlo_1050/`, 
 
 ### Dataset
 
-The real-vehicle dataset is `data/real_vehicle/` — 7 trajectories, 16,155 epochs, collected in Haikou, Hainan with Tersus BX50C receiver (SPP + RTK ground truth). Road network: `input/map/hainan/edges.shp` (152,547 edges). Precomputed UBODT: `input/map/hainan/hainan_ubodt_indexed.bin`.
+The real-vehicle dataset is `data/real_vehicle/` — 6 trajectories, 15,421 epochs, collected in Haikou, Hainan with Tersus BX50C receiver (SPP + RTK ground truth). Road network: `input/map/hainan/edges.shp` (152,547 edges). Precomputed UBODT: `input/map/hainan/hainan_ubodt_indexed.bin`.
 
 ## Dependencies
 

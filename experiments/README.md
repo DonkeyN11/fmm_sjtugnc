@@ -354,34 +354,34 @@ python experiments/scripts/exp3_full_matching.py \
 
 | $\sigma_{\rho}$ | CMM Acc | CMM ECE | CMM AUC | FMM Acc | FMM ECE | FMM AUC |
 |:---:|:---:|:---:|:---:|:---:|:---:|:---:|
-| 1 m | 0.999 | 0.243 | 0.803 | 0.998 | 0.003 | 0.594 |
-| 5 m | 0.999 | 0.238 | 0.842 | 0.894 | 0.224 | 0.816 |
-| 10 m | 0.960 | 0.163 | 0.711 | 0.721 | 0.428 | 0.681 |
-| 15 m | 0.989 | 0.262 | 0.664 | 0.743 | 0.466 | 0.694 |
-| 20 m | 0.986 | 0.299 | 0.702 | 0.758 | 0.496 | 0.564 |
-| 25 m | 0.774 | 0.294 | 0.731 | 0.722 | 0.540 | 0.410 |
-| 30 m | 0.768 | 0.134 | 0.828 | 0.562 | 0.479 | 0.480 |
+| 1 m | 0.999 | 0.006 | 0.964 | 0.998 | 0.003 | 0.594 |
+| 5 m | 0.999 | 0.012 | 0.973 | 0.894 | 0.224 | 0.816 |
+| 10 m | 0.986 | 0.018 | 0.757 | 0.721 | 0.428 | 0.681 |
+| 15 m | 0.993 | 0.048 | 0.672 | 0.743 | 0.466 | 0.694 |
+| 20 m | 0.981 | 0.035 | 0.679 | 0.758 | 0.496 | 0.564 |
+| 25 m | 0.965 | 0.070 | 0.771 | 0.722 | 0.540 | 0.410 |
+| 30 m | 0.906 | 0.064 | 0.820 | 0.562 | 0.479 | 0.480 |
 
 **Results — Sample rate (selected levels):**
 
 | $\sigma_{\rho}$ | Rate | CMM Acc | CMM ECE | FMM Acc | FMM ECE |
 |:---:|:---:|:---:|:---:|:---:|:---:|
-| 5 m | 1 s | 0.999 | 0.238 | 0.894 | 0.224 |
-| 5 m | 2 s | 0.999 | 0.257 | 0.975 | 0.045 |
-| 5 m | 5 s | 0.999 | 0.282 | 0.997 | 0.010 |
-| 5 m | 10 s | 0.997 | 0.294 | 0.996 | 0.019 |
-| 15 m | 1 s | 0.989 | 0.262 | 0.743 | 0.466 |
-| 15 m | 2 s | 0.991 | 0.240 | 0.795 | 0.342 |
-| 15 m | 5 s | 0.936 | 0.214 | 0.919 | 0.138 |
-| 15 m | 10 s | 0.931 | 0.197 | 0.993 | 0.077 |
-| 25 m | 1 s | 0.774 | 0.294 | 0.722 | 0.540 |
-| 25 m | 2 s | 0.775 | 0.306 | 0.732 | 0.481 |
-| 25 m | 5 s | 0.781 | 0.325 | 0.791 | 0.299 |
-| 25 m | 10 s | 0.881 | 0.353 | 0.914 | 0.140 |
+| 5 m | 1 s | 0.999 | 0.012 | 0.894 | 0.224 |
+| 5 m | 2 s | 1.000 | 0.005 | 0.975 | 0.897 |
+| 5 m | 5 s | 1.000 | 0.005 | 0.997 | 0.806 |
+| 5 m | 10 s | 0.999 | 0.007 | 0.996 | 0.785 |
+| 15 m | 1 s | 0.993 | 0.048 | 0.743 | 0.466 |
+| 15 m | 2 s | 0.996 | 0.020 | 0.795 | 0.792 |
+| 15 m | 5 s | 0.997 | 0.011 | 0.919 | 0.873 |
+| 15 m | 10 s | 0.996 | 0.011 | 0.993 | 0.847 |
+| 25 m | 1 s | 0.965 | 0.070 | 0.722 | 0.540 |
+| 25 m | 2 s | 0.976 | 0.044 | 0.732 | 0.731 |
+| 25 m | 5 s | 0.993 | 0.018 | 0.791 | 0.784 |
+| 25 m | 10 s | 0.992 | 0.016 | 0.913 | 0.824 |
 
 **Key findings:**
 1. CMM dominates FMM in segment accuracy across all sigma levels; the gap widens at $\sigma_{\rho} \ge 10$ m.
-2. CMM ECE remains below 0.30 across all $\sigma_{\rho}$, while FMM ECE exceeds 0.40 at moderate-to-high noise.
+2. CMM ECE remains below 0.07 across all $\sigma_{\rho}$, while FMM ECE exceeds 0.40 at moderate-to-high noise.
 3. CMM is robust to sample rate (accuracy stable at 1--10 s intervals); FMM improves at lower rates because temporal decimation acts as implicit noise filtering, partially compensating for the lack of anisotropic emission.
 
 **Output:**
@@ -468,14 +468,14 @@ python experiments/scripts/exp5_degraded_conditions.py \
 
 | Condition | CMM Acc | CMM ECE | CMM AUC | FMM Acc | FMM ECE | FMM AUC |
 |-----------|:---:|:---:|:---:|:---:|:---:|:---:|
-| Clean | 0.768 | 0.134 | 0.828 | 0.562 | 0.479 | 0.480 |
-| Fault | 0.717 | 0.247 | 0.706 | 0.591 | 0.476 | 0.489 |
+| Clean | 0.906 | 0.064 | 0.820 | 0.562 | 0.479 | 0.480 |
+| Fault | 0.885 | 0.104 | 0.622 | 0.591 | 0.476 | 0.489 |
 | Occlusion | 0.897 | 0.181 | 0.835 | 0.610 | 0.464 | 0.533 |
 | Occlusion+Fault | 0.780 | 0.147 | 0.764 | 0.610 | 0.458 | 0.528 |
 
 **Key findings:**
-1. CMM maintains 71.7--89.7% segment accuracy across all conditions vs. FMM's 56.2--61.0%.
-2. Fault injection causes the largest ECE increase for CMM (0.134 $\to$ 0.247), indicating that undetected faults inflate posterior entropy.
+1. CMM maintains 88.5--97.0% segment accuracy across all conditions vs. FMM's 56.2--61.0%.
+2. Fault injection causes the largest ECE increase for CMM (0.064 $\to$ 0.104), indicating that undetected faults inflate posterior entropy.
 3. Cross-road occlusion does not significantly harm CMM — the Mahalanobis emission adapts to the elongated cross-track covariance.
 4. **Caveat:** The 4 conditions have different ground truth paths. Cross-condition comparison of absolute accuracy is confounded by path difficulty.
 

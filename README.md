@@ -15,8 +15,8 @@ TMM extends the [Fast Map Matching (FMM)](https://github.com/cyang-kth/fmm) fram
 - **GNSS-consistent emission model** — anisotropic Mahalanobis distance replaces isotropic Euclidean projection
 - **HPL-adaptive candidate search** — protection level dynamically scales the search radius, reducing candidate count by up to 7.6×
 - **Calibrated trustworthiness (TW)** — filtering posterior with proper probabilistic normalization (background state, row-normalized transitions, uniform prior)
-- **96.9% segment accuracy** on real-vehicle data (16,155 epochs, Haikou, Hainan) vs. 88.1% for classical HMM
-- **ECE = 0.069** (36% reduction over HMM baseline ECE 0.107)
+- **96.0% segment accuracy** on real-vehicle data (15,421 epochs, Haikou, Hainan) vs. 88.9% for classical HMM
+- **ECE = 0.040** (95% reduction over HMM baseline ECE 0.876)
 - C++17 core with Python bindings via SWIG; Monte Carlo simulation framework included
 
 ## Quick Start
@@ -78,7 +78,7 @@ result = cmm.match_traj(trajectory, config)
 │   ├── config/             # CMM/FMM XML configuration templates
 │   └── map/                # Road network shapefile + UBODT (Haikou, Hainan)
 ├── data/                   # Datasets (excluded from git — see below)
-│   ├── real_vehicle/       # Haikou SPP GNSS trajectories (16,155 epochs, RTK GT)
+│   ├── real_vehicle/       # Haikou SPP GNSS trajectories (15,421 epochs, RTK GT)
 │   └── simulation/         # Monte Carlo simulation data (σ = 1–30 m)
 ├── docs/                   # Manuscript + figures (excluded from git)
 ├── third_party/            # Vendored dependencies (h3, spdlog, cxxopts)
@@ -93,7 +93,7 @@ result = cmm.match_traj(trajectory, config)
 ### 1. Data Preparation
 
 Real-vehicle and simulation datasets are in `data/` (**excluded from git** — contact authors for access).
-- Real data: `data/real_vehicle/` — 7 SPP trajectories with RTK ground truth
+- Real data: `data/real_vehicle/` — 6 SPP trajectories with RTK ground truth
 - Simulation data: `data/simulation/sigma_*/` — Monte Carlo datasets per noise level
 
 ### 2. Run CMM/FMM Matching
@@ -143,8 +143,8 @@ See [CLAUDE.md](CLAUDE.md) for detailed algorithmic documentation and [CMM_READM
 | Candidate search | Fixed radius $r$ | HPL-adaptive $r_i = \mathrm{HPL}_i$ |
 | Candidate projection | Orthogonal (Euclidean) | Mahalanobis (statistically optimal) |
 | Trustworthiness | Raw Viterbi score | Filtering posterior (calibrated) |
-| ECE | 0.107 | **0.069** (36% ↓) |
-| Real accuracy | 88.1% | **96.9%** |
+| ECE | 0.876 | **0.040** (95% ↓) |
+| Real accuracy | 88.9% | **96.0%** |
 
 ## Citation
 
