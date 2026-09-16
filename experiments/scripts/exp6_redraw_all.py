@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Redraw all Exp6 figures from updated aligned.csv."""
-import csv, json, math, numpy as np
+import csv, json, math, sys, numpy as np
 from pathlib import Path
 from collections import defaultdict
 import matplotlib; matplotlib.use("Agg")
@@ -18,7 +18,13 @@ plt.rcParams.update({"font.size": 8, "axes.labelsize": 9, "axes.titlesize": 10,
                      "legend.fontsize": 7, "xtick.labelsize": 7, "ytick.labelsize": 7,
                      "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight"})
 
-REV = json.load(open(PROJECT / "config/reverse_edge_map.json"))
+# Trajectories excluded from the reported population, imported from the
+# canonical evaluator so this figure cannot disagree with it about the sample.
+# See the EXCLUDE_TRAJ comment in verify_paper_numbers.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from verify_paper_numbers import EXCLUDE_TRAJ  # noqa: E402
+
+REV = json.load(open(PROJECT / "experiments/config/reverse_edge_map.json"))
 REV = {str(k): str(v) for k, v in REV.items()}
 def em(m, t):
     return str(m) == str(t) or REV.get(str(m)) == str(t)
@@ -89,6 +95,7 @@ with open(DATA / "aligned.csv", newline="") as f:
         tid = row["id"].strip()
         useq = int(row["uni_seq"])
         ts_norm = str(round(float(row["timestamp"])))
+        if tid in EXCLUDE_TRAJ: continue
         if (tid, useq) not in gt_edges: continue
         gt_eid = gt_edges[(tid, useq)]
         if gt_eid in ("0", "-1"): continue

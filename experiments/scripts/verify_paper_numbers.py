@@ -9,13 +9,35 @@ Usage:
 Outputs a comprehensive comparison of all metrics against paper claims.
 """
 
-import csv, json, math, numpy as np
+import argparse, csv, json, math, numpy as np
 from pathlib import Path
 from collections import defaultdict
 import re
 
 BASE = Path(__file__).resolve().parents[2]
 REV_MAP = json.load(open(BASE / 'experiments/config/reverse_edge_map.json'))
+
+# Trajectories excluded from every reported real-data figure.
+#
+# Trajectory 12 is not a trajectory traversal. Its 734 epochs span a 73.5 m x
+# 60.9 m box, against 8742 m x 5612 m for traj 11; it sits on one single road
+# edge for its whole length, so "segment accuracy" there is one edge counted 133
+# times; and its filtering posterior is exactly 1.0 at every one of the 734
+# epochs -- one distinct value, because there is never a competing candidate to
+# be uncertain between.
+#
+# Including it does not add a measurement, it damages the two metrics that are
+# supposed to discriminate: accuracy is handed 100 % on 133 free epochs, and AUC
+# falls toward 0.5 because a rank statistic has no score variation to rank. The
+# manuscript reports the 6-trajectory set; this constant is where that policy is
+# stated.
+#
+# It belongs here, in the evaluation layer, and NOT as an absence of rows in
+# aligned.csv. aligned.csv is the complete factual record (7 trajectories /
+# 16155 epochs). An exclusion baked into the data file is invisible from the
+# evaluator and silently changes the denominator of every metric derived from
+# it, which is exactly how the policy went unrecorded until now.
+EXCLUDE_TRAJ = {"12"}
 
 # Paper claims (from LaTeX as of 2026-09-02, fixed E/N + Traj 12 excluded)
 PAPER = {
@@ -94,7 +116,47 @@ def norm_ts(s):
     """
     return float(s)
 
+PROC = BASE / 'data/real_vehicle/hainan_06/processed'
+
+# Which CMM run to verify. The default is the current binary's output on the
+# live real-data config, input/config/cmm_real_0729.xml. A verifier that reads
+# a file the current code cannot produce is verifying nothing, so anything else
+# has to be asked for explicitly with --cmm.
+#
+# Measured 2026-09-16, all four evaluated over the same 13123 evaluable epochs
+# (6 trajectories; traj 12 excluded, see EXCLUDE_TRAJ):
+#
+#   run                       covariance    PL      acc%      ECE     AUC  failed
+#   cmm_result_0729.csv       calibrated    legacy  97.2262  0.0391  0.7592     0
+#   cmm_result_fixed_en.csv   --            ENU     96.7690  0.0412  0.7191     0
+#   (raw GST + ENU PL)        raw GST       ENU     95.4507  0.0496  0.6232   112
+#   (calibrated GST + ENU PL) calibrated    ENU     94.6582  0.0567  0.6657     0
+#
+# The first is CLAUDE.md's reproduction number. The second matches the
+# manuscript's CMM row (96.0 / 0.040 / 0.721) on ECE and AUC and is NOT
+# reproducible from the current code: it still carries an h0_lambda column and
+# was produced while the protection-level multiplier existed (r = 3.0 * HPL).
+# Removing that multiplier is what changed it -- nothing else here reproduces it.
+#
+# The last two rows are the 2026-09-15 ECEF->ENU protection-level correction,
+# and they are worse on every metric. That is an open question, not a settled
+# answer: the corrected HPL is tighter (median 10.9 m vs 22.8 m), so a search
+# radius of exactly HPL admits fewer candidates. The bounded radius fallback
+# rescues the zero-candidate epochs (0 failed), but not the accuracy.
+#
+# The input tables pair the two corrections in a way that does not help:
+# cmm_input_points.csv is calibrated GST + legacy PL, cmm_input_points_enu.csv
+# is raw GST + ENU PL. Neither is calibrated GST + ENU PL; that combination is
+# the fourth row above and was built with apply_gst_calibration.py into /tmp.
+CMM_CSV = PROC / 'cmm_result_0729.csv'
+FMM_CSV = PROC / 'fmm_result.csv'
+
+
 def main():
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument('--cmm', type=Path, default=CMM_CSV)
+    ap.add_argument('--fmm', type=Path, default=FMM_CSV)
+    args = ap.parse_args()
     # Load GT by (id, timestamp). An epoch is evaluable when it has a road edge
     # -- edge correctness compares cpath against gt_edge and needs no
     # coordinates. gt_x/gt_y are only required for the position-error metric,
@@ -104,13 +166,22 @@ def main():
     # silently changes the reported accuracy, which is what exp6_real_accuracy
     # and the paper both count as 13123.
     gt_by_ts = {}
+    n_excluded = 0
     with open(BASE/'data/real_vehicle/hainan_06/processed/aligned.csv',newline='') as f:
         for r in csv.DictReader(f,delimiter=';'):
+            if r['id'].strip() in EXCLUDE_TRAJ:
+                n_excluded += 1
+                continue
             gt_e = r['gt_edge'].strip()
             if gt_e in ('0','-1',''): continue
             try: gx=float(r['gt_x']); gy=float(r['gt_y'])
             except: gx=gy=None
             gt_by_ts[(r['id'].strip(), norm_ts(r['timestamp']))] = (gt_e, gx, gy)
+
+    print(f"Population: {len(gt_by_ts)} evaluable epochs from "
+          f"{sorted({k[0] for k in gt_by_ts})}; "
+          f"EXCLUDE_TRAJ={sorted(EXCLUDE_TRAJ)} dropped {n_excluded} raw rows "
+          f"(traj {', '.join(sorted(EXCLUDE_TRAJ))})")
 
     # Load CMM/FMM by (id, timestamp).
     #
@@ -135,8 +206,9 @@ def main():
                 )
         return d
 
-    cmm = load_mr(BASE/'data/real_vehicle/hainan_06/processed/cmm_result_fixed_en.csv')
-    fmm = load_mr(BASE/'data/real_vehicle/hainan_06/processed/fmm_result.csv')
+    cmm = load_mr(args.cmm)
+    fmm = load_mr(args.fmm)
+    print(f"CMM run: {args.cmm.name}   FMM run: {args.fmm.name}")
 
     # Evaluate
     cmm_pt = defaultdict(lambda:{'c':0,'t':0,'perr':[]})

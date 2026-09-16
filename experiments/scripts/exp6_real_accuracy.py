@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
-"""Exp6: Real-vehicle matching accuracy — CMM vs FMM on all 7 trajectories."""
-import csv, json, math, re
+"""Exp6: Real-vehicle matching accuracy — CMM vs FMM on the reported trajectories.
+
+The population is 6 trajectories, not the 7 in aligned.csv. Traj 12 is excluded; see
+EXCLUDE_TRAJ in verify_paper_numbers.py for why.
+"""
+import csv, json, math, re, sys
 import numpy as np
 from pathlib import Path
 from collections import defaultdict
@@ -17,6 +21,19 @@ ROOT=Path(__file__).resolve().parents[1]
 PROJECT = Path(__file__).resolve().parents[2]
 DATA = PROJECT / "data/real_vehicle/hainan_06/processed"
 OUT=ROOT/"output/exp6_real"; OUT.mkdir(parents=True,exist_ok=True)
+
+# Trajectories excluded from the reported population. Imported from the
+# canonical evaluator rather than redeclared, so this figure cannot disagree
+# with eval_result_csv.py about which epochs it is summarising. Traj 12 is a
+# stationary cluster on a single edge whose trustworthiness is 1.0 at all 734
+# epochs; see the EXCLUDE_TRAJ comment in verify_paper_numbers.py.
+#
+# This also fixes a crash: FMM has no result for traj 12 (fmm_result.csv covers
+# 6 trajectories), so per_traj["12"]["fmm_n"] stayed 0 and the per-trajectory
+# print divided by zero -- after the 7-trajectory aggregate had already been
+# printed.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from verify_paper_numbers import EXCLUDE_TRAJ  # noqa: E402
 
 REV=json.load(open(ROOT/"config/reverse_edge_map.json"))
 def em(m,t): return str(m)==str(t) or REV.get(str(m))==str(t)
@@ -69,6 +86,7 @@ per_traj=defaultdict(lambda:{"cmm_ok":0,"cmm_n":0,"cmm_errs":[],"fmm_ok":0,"fmm_
 with open(DATA/"aligned.csv",newline="") as f:
     for row in csv.DictReader(f,delimiter=";"):
         tid=row["id"].strip(); useq=int(row["uni_seq"]); ts_norm=str(round(float(row["timestamp"])))
+        if tid in EXCLUDE_TRAJ: continue
         if (tid,useq) not in gt_edges: continue
         gt_eid=gt_edges[(tid,useq)]
         if gt_eid in ("0","-1"): continue  # no-road or not-moved, exclude
@@ -110,7 +128,7 @@ cmm_auc_val,cmm_fpr,cmm_tpr=auc(cL,cT)
 fmm_auc_val,fmm_fpr,fmm_tpr=auc(fL,fT)
 
 print(f"{'='*60}")
-print(f"Real-Vehicle: All 7 Trajectories")
+print(f"Real-Vehicle: {len(per_traj)} Trajectories (EXCLUDE_TRAJ={sorted(EXCLUDE_TRAJ)})")
 print(f"{'='*60}")
 print(f"  Edge accuracy:  CMM={np.mean(cL)*100:.1f}%  FMM={np.mean(fL)*100:.1f}%")
 print(f"  ECE:            CMM={cmm_ece:.4f}       FMM={fmm_ece:.4f}")
@@ -170,6 +188,6 @@ ax.axhline(0.5,color="gray",lw=0.8,ls="--"); ax.axhline(0.95,color="gray",lw=0.8
 ax.set_xlabel("Position error (m)"); ax.set_ylabel("CDF"); ax.set_title("(f) Error CDF"); ax.legend(); ax.grid(alpha=0.3)
 ax.set_xlim(0,np.percentile(np.concatenate([cE,fE]),99))
 
-fig.suptitle("Real-Vehicle: CMM vs FMM (7 Trajectories, k=16)",fontsize=11,fontweight="bold")
+fig.suptitle(f"Real-Vehicle: CMM vs FMM ({len(per_traj)} Trajectories, k=16)",fontsize=11,fontweight="bold")
 fig.tight_layout(); fig.savefig(OUT/"all_traj_accuracy.png",dpi=DPI); plt.close()
 print(f"\nSaved: {OUT}/all_traj_accuracy.png")

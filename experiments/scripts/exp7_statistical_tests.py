@@ -19,9 +19,16 @@ plt.rcParams.update({"font.size": 9, "axes.labelsize": 10, "axes.titlesize": 11,
     "legend.fontsize": 8, "figure.dpi": DPI, "savefig.dpi": DPI, "savefig.bbox": "tight"})
 
 ROOT = Path(__file__).resolve().parents[2]
-DATA = ROOT / "data/real_vehicle/processed"
+DATA = ROOT / "data/real_vehicle/hainan_06/processed"
 OUT = ROOT / "experiments/output/exp7_statistical"
 OUT.mkdir(parents=True, exist_ok=True)
+
+# Trajectories excluded from the reported population, imported from the
+# canonical evaluator so this test cannot disagree with it about the sample.
+# Traj 12 is a stationary cluster on one edge with trustworthiness 1.0 at every
+# epoch; see the EXCLUDE_TRAJ comment in verify_paper_numbers.py.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from verify_paper_numbers import EXCLUDE_TRAJ  # noqa: E402
 
 # Load reverse edge map
 REV = json.load(open(ROOT / "experiments/config/reverse_edge_map.json"))
@@ -160,6 +167,7 @@ per_traj = defaultdict(lambda: {"cmm_label": [], "cmm_tw": [], "fmm_label": [], 
 with open(DATA / "aligned.csv", newline="") as f:
     for row in csv.DictReader(f, delimiter=";"):
         tid = row["id"].strip(); useq = int(row["uni_seq"])
+        if tid in EXCLUDE_TRAJ: continue
         if (tid, useq) not in gt_edges: continue
         gt_eid = gt_edges[(tid, useq)]
         if gt_eid in ("0", "-1"): continue
@@ -406,9 +414,41 @@ fmm_cis = [
 ]
 x = np.arange(len(metrics))
 w = 0.35
-bars1 = ax.bar(x - w/2, cmm_vals, w, yerr=np.array(cmm_cis).T, capsize=4,
+
+# Matplotlib rejects negative error-bar lengths, and one of them genuinely is
+# negative: the FMM AUC bootstrap CI does not contain its own point estimate
+# (measured 2026-09-16: point 0.5176, CI [0.4305, 0.4593]).
+#
+# That is not a rounding artefact and it is not fixed by clamping. The AUC used
+# here is the np.trapz form, and the FMM trustworthiness fed to it is
+# near-degenerate after `fmm_tw or 0.5` substitutes 0.5 for every missing value,
+# so the score has a large block of exact ties. trapz interpolates linearly
+# across what is really a vertical step in the ROC curve, and which way that
+# biases the result depends on the arbitrary order of the tied elements -- which
+# resampling changes. So the point estimate and the bootstrap distribution are
+# not estimating the same quantity and the CI is meaningless for this metric.
+# commit f728584 replaced this with the tie-corrected Mann-Whitney rank
+# statistic in verify_paper_numbers.py; this script was never migrated.
+#
+# Clamp so the figure renders, warn loudly, and do NOT report a zero-length bar
+# as if it were a narrow interval.
+yerr_c = np.array(cmm_cis).T
+yerr_f = np.array(fmm_cis).T
+for _name, _yerr in (("CMM", yerr_c), ("FMM", yerr_f)):
+    _bad = _yerr < 0
+    if _bad.any():
+        _lbl = [metrics[j] for j in np.unique(np.where(_bad)[1])]
+        print(f"WARNING: {_name} bootstrap CI excludes its own point estimate for "
+              f"{_lbl}; those error bars are clamped to 0 and are NOT usable. "
+              f"The AUC here is the np.trapz form, which is unstable under "
+              f"resampling when scores tie -- see f728584 and the auc() docstring "
+              f"in verify_paper_numbers.py.", file=sys.stderr)
+yerr_c = np.clip(yerr_c, 0, None)
+yerr_f = np.clip(yerr_f, 0, None)
+
+bars1 = ax.bar(x - w/2, cmm_vals, w, yerr=yerr_c, capsize=4,
                color="#2166ac", label="CMM")
-bars2 = ax.bar(x + w/2, fmm_vals, w, yerr=np.array(fmm_cis).T, capsize=4,
+bars2 = ax.bar(x + w/2, fmm_vals, w, yerr=yerr_f, capsize=4,
                color="#b2182b", label="FMM")
 ax.set_xticks(x); ax.set_xticklabels(metrics)
 ax.set_ylabel("Value"); ax.set_title("CMM vs FMM with 95% Bootstrap CI")

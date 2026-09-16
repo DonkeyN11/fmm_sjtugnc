@@ -43,17 +43,25 @@ BASE = SCRIPT_DIR.parents[1]
 GT_CSV = BASE / "data/real_vehicle/hainan_06/processed/aligned.csv"
 TW_SENTINEL = -900.0  # writer emits -999.0; anything at or below this is "no value"
 
+# Imported, not redefined: verify_paper_numbers.py is the canonical evaluator and
+# carries the rationale. One policy, one definition, so a metric computed here
+# can never disagree with the same metric computed there.
+EXCLUDE_TRAJ = v.EXCLUDE_TRAJ
+
 
 def load_gt():
     """(id, timestamp) -> gt_edge, for epochs that have a road edge.
 
     Mirrors verify_paper_numbers.main(): gt_edge in {'0','-1',''} means the
     epoch has no ground-truth road and is not evaluable, so it is dropped from
-    the denominator entirely.
+    the denominator entirely. EXCLUDE_TRAJ is applied first, on the id, so the
+    evaluated population matches the one verify_paper_numbers.py reports.
     """
     gt = {}
     with open(GT_CSV, newline="") as f:
         for r in csv.DictReader(f, delimiter=";"):
+            if r["id"].strip() in EXCLUDE_TRAJ:
+                continue
             e = r["gt_edge"].strip()
             if e in ("0", "-1", ""):
                 continue
