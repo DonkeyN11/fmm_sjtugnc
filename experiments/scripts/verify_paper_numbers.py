@@ -58,10 +58,31 @@ def ece(confs,corrects,n=10):
     return e
 
 def auc(labels,scores):
-    order=np.argsort(scores)[::-1];ls=labels[order]
-    n_pos=ls.sum();n_neg=len(ls)-n_pos
-    if n_pos==0 or n_neg==0:return 0.5
-    return float(np.trapz(np.cumsum(ls)/n_pos,np.cumsum(1-ls)/n_neg))
+    """AUC as the tie-corrected Mann-Whitney rank statistic.
+
+    Do NOT compute this by integrating the ROC step curve with trapz: when
+    scores tie, trapz interpolates linearly across a step that is actually
+    vertical, which biases the result in an unpredictable direction. FMM's
+    trustworthiness is near-degenerate (mean 0.015 with many exact ties), so
+    the bias there is severe -- trapz gives 0.613 for FMM and 0.696 for CMM,
+    reversing the CMM > FMM ordering the paper reports. The rank statistic
+    gives 0.568 / 0.719, matching the manuscript's 0.583 / 0.721.
+    """
+    labels=np.asarray(labels, dtype=float)
+    scores=np.asarray(scores, dtype=float)
+    order=np.argsort(scores, kind='mergesort'); s=scores[order]
+    n=len(s)
+    ranks=np.empty(n)
+    i=0
+    while i<n:                       # average ranks within each tie group
+        j=i
+        while j+1<n and s[j+1]==s[i]: j+=1
+        ranks[i:j+1]=(i+j)/2.0+1.0
+        i=j+1
+    n_pos=int(labels.sum()); n_neg=n-n_pos
+    if n_pos==0 or n_neg==0: return 0.5
+    is_pos=(labels[order]==1)
+    return float((ranks[is_pos].sum()-n_pos*(n_pos+1)/2.0)/(n_pos*n_neg))
 
 def norm_ts(s):
     """Key a timestamp column numerically.
@@ -91,13 +112,25 @@ def main():
             except: gx=gy=None
             gt_by_ts[(r['id'].strip(), norm_ts(r['timestamp']))] = (gt_e, gx, gy)
 
-    # Load CMM/FMM by (id, timestamp)
+    # Load CMM/FMM by (id, timestamp).
+    #
+    # Failed epochs (FAILED_NO_CANDIDATE, FAILED_DISCONNECTED) carry the sentinel
+    # trustworthiness -999.0 to mark "no value". Averaging that into the TW means
+    # or the AUC ranks produces nonsense -- pointing an early version of this
+    # script at the ENU run yielded TW_wrong = -368. Drop the sentinel instead:
+    # such an epoch is still an accuracy miss (its cpath is empty, so
+    # is_edge_match returns False), it just contributes no trustworthiness.
+    TW_SENTINEL = -900.0
+
     def load_mr(path):
         d = {}
         with open(path,newline='') as f:
             for r in csv.DictReader(f,delimiter=';'):
+                try: tw = float(r['trustworthiness'])
+                except ValueError: tw = TW_SENTINEL
+                if tw <= TW_SENTINEL: tw = None
                 d[(r['id'].strip(), norm_ts(r['timestamp']))] = (
-                    r['cpath'].strip(), float(r['trustworthiness']),
+                    r['cpath'].strip(), tw,
                     r.get('ogeom',''), r.get('pgeom','')
                 )
         return d
@@ -116,16 +149,22 @@ def main():
         if key in cmm:
             cpath,tw,ogeom,pgeom = cmm[key]
             cmm_pt[tid]['t'] += 1
-            if is_edge_match(cpath,gt_e): cmm_pt[tid]['c']+=1; cmm_tw_c.append(tw)
-            else: cmm_tw_w.append(tw)
+            if is_edge_match(cpath,gt_e):
+                cmm_pt[tid]['c']+=1
+                if tw is not None: cmm_tw_c.append(tw)
+            else:
+                if tw is not None: cmm_tw_w.append(tw)
             px,py = parse_point(pgeom) if pgeom else (None,None)
             if px is not None and gx is not None: cmm_pt[tid]['perr'].append(haversine_m(px,py,gx,gy))
 
         if key in fmm:
             fpath,ftw,_,fpgeom = fmm[key]
             fmm_pt[tid]['t'] += 1
-            if is_edge_match(fpath,gt_e): fmm_pt[tid]['c']+=1; fmm_tw_c.append(ftw)
-            else: fmm_tw_w.append(ftw)
+            if is_edge_match(fpath,gt_e):
+                fmm_pt[tid]['c']+=1
+                if ftw is not None: fmm_tw_c.append(ftw)
+            else:
+                if ftw is not None: fmm_tw_w.append(ftw)
             px,py = parse_point(fpgeom) if fpgeom else (None,None)
             if px is not None and gx is not None: fmm_pt[tid]['perr'].append(haversine_m(px,py,gx,gy))
 
