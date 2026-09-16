@@ -27,10 +27,32 @@ import numpy as np
 DEFAULT_BASE_DIR = "data/real_vehicle"
 
 
-def load_raim_pl(traj_name: str, raim_pattern: str) -> dict:
-    """Load RAIM PL values for a trajectory.
+TS_DECIMALS = 6  # matches write_cmm_pl_output's "{ts:.6f}" and the CSV's own precision
 
-    Returns dict[traj_epoch_index] = hpl_deg (float).
+
+def _ts_key(value) -> float:
+    """Normalise a timestamp so the two files' text forms compare equal.
+
+    The CMM table writes '1750306259.0'; raim_pl_<traj>.csv writes
+    '1750306259.000000'. Both parse to the same float, but rounding pins that
+    down rather than relying on it.
+    """
+    return round(float(value), TS_DECIMALS)
+
+
+def load_raim_pl(traj_name: str, raim_pattern: str) -> dict:
+    """Load RAIM PL values for a trajectory, keyed by CMM timestamp.
+
+    File format is 'epoch;cmm_timestamp;hpl_m;hpl_deg'.
+
+    The key is cmm_timestamp, NOT the epoch column. The epoch column is a RINEX
+    epoch index: the RINEX file runs at 10 Hz and the CMM table at 1 Hz over the
+    same span, so pairing the two files by index stretches a tenth of the RINEX
+    file across the whole trajectory. cmm_timestamp is the CMM table's own
+    timestamp for the epoch this PL belongs to, which is the only key that
+    survives a change of sampling rate.
+
+    Returns dict[timestamp_key] = hpl_deg (float).
     """
     fname = traj_name.replace('.', '_')
     raim_file = raim_pattern.format(traj=fname)
@@ -41,12 +63,13 @@ def load_raim_pl(traj_name: str, raim_pattern: str) -> dict:
     pl_dict = {}
     with open(raim_file, "r", encoding="utf-8") as f:
         header = f.readline().strip()
+        expected = "epoch", "cmm_timestamp", "hpl_m", "hpl_deg"
+        if tuple(header.split(";"))[:4] != expected:
+            print(f"  WARNING: {raim_file} has unexpected columns: {header!r}")
         for line in f:
             parts = line.strip().split(";")
             if len(parts) >= 4:
-                epoch_idx = int(parts[0])
-                hpl_deg = float(parts[3])
-                pl_dict[epoch_idx] = hpl_deg
+                pl_dict[_ts_key(parts[1])] = float(parts[3])
     return pl_dict
 
 
@@ -94,16 +117,24 @@ def merge_pl(base_dir: str = DEFAULT_BASE_DIR,
 
     # Process CMM file line by line
     output_lines = []
-    traj_counters = {}  # traj_id -> next epoch index
+    per_traj_total = {}   # traj_id -> rows seen
+    per_traj_repl = {}    # traj_id -> rows whose PL came from RAIM
+    used = {tid: set() for tid in all_pl}  # traj_id -> RAIM timestamps consumed
     replaced_count = 0
     kept_count = 0
 
     with open(CMM_FILE, "r", encoding="utf-8") as f:
         header = f.readline().strip()
         output_lines.append(header)
-        ncols = len(header.split(";"))
+        cols = header.split(";")
+        ncols = len(cols)
         # Column index for protection_level (last column in standard format)
         pl_col_idx = ncols - 1  # protection_level is last
+        try:
+            ts_col_idx = cols.index("timestamp")
+        except ValueError:
+            print(f"ERROR: no 'timestamp' column in {CMM_FILE}; cannot key the merge")
+            sys.exit(1)
 
         for line in f:
             line = line.strip()
@@ -118,19 +149,19 @@ def merge_pl(base_dir: str = DEFAULT_BASE_DIR,
 
             try:
                 traj_id = int(parts[0])
+                ts = _ts_key(parts[ts_col_idx])
             except ValueError:
                 output_lines.append(line)
                 continue
 
-            if traj_id not in traj_counters:
-                traj_counters[traj_id] = 0
-            epoch_idx = traj_counters[traj_id]
-            traj_counters[traj_id] += 1
+            per_traj_total[traj_id] = per_traj_total.get(traj_id, 0) + 1
 
-            if traj_id in all_pl and epoch_idx in all_pl[traj_id]:
-                new_pl = all_pl[traj_id][epoch_idx]
+            new_pl = all_pl.get(traj_id, {}).get(ts)
+            if new_pl is not None:
                 parts[pl_col_idx] = f"{new_pl:.10f}"
                 replaced_count += 1
+                used[traj_id].add(ts)
+                per_traj_repl[traj_id] = per_traj_repl.get(traj_id, 0) + 1
             else:
                 kept_count += 1
 
@@ -144,10 +175,28 @@ def merge_pl(base_dir: str = DEFAULT_BASE_DIR,
     # Print statistics
     print(f"\n=== Merge Summary ===")
     print(f"  Replaced PL: {replaced_count} epochs")
-    print(f"  Kept original PL: {kept_count} epochs (no RAIM data)")
-    for traj_id, counter in sorted(traj_counters.items()):
-        n_repl = len(all_pl.get(traj_id, {}))
-        print(f"  Traj {traj_id}: {counter} epochs total, {n_repl} PL from RAIM")
+    print(f"  Kept original PL: {kept_count} epochs (no RAIM data for that epoch)")
+    unmatched_worst = []
+    for traj_id, total in sorted(per_traj_total.items()):
+        repl = per_traj_repl.get(traj_id, 0)
+        avail = len(all_pl.get(traj_id, {}))
+        unused = avail - len(used.get(traj_id, ()))
+        print(f"  Traj {traj_id}: {total} epochs, {repl} PL from RAIM "
+              f"({avail} available, {unused} unused)")
+        # A trajectory that has RAIM data for roughly every epoch but matches
+        # almost none of them is the signature of a key mismatch, not of missing
+        # data. Report it loudly instead of letting it look like a clean merge.
+        if avail and repl < 0.5 * min(total, avail):
+            unmatched_worst.append(traj_id)
+
+    if unmatched_worst:
+        print(f"\n  *** WARNING: trajectories {unmatched_worst} matched fewer than "
+              f"half the RAIM epochs available to them.")
+        print(f"  *** The RAIM timestamps and the CMM timestamps are probably not "
+              f"in the same time base.")
+        print(f"  *** (RINEX epoch tags are GPS time; the CMM table is UTC. If "
+              f"compute_raim_pl.py ever stops propagating the CMM timestamp "
+              f"verbatim, check the leap-second offset before trusting this run.)")
 
     # Statistics of new PL values
     if replaced_count > 0:

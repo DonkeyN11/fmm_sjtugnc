@@ -80,6 +80,7 @@ class EpochObs:
     gpst: float                    # GPS time of week [s]
     sat_data: Dict[str, Dict[str, float]] = field(default_factory=dict)
     # sat_data[prn] = {"C1C": pseudorange, "L1C": phase, ...}
+    unix_utc: float = 0.0          # Unix UTC seconds, for matching against the CMM table
 
 
 @dataclass
@@ -192,7 +193,10 @@ def parse_rinex3_obs(filepath: str) -> Tuple[ObsHeader, List[EpochObs]]:
         gpst = _ymdhms_to_gpst(year, month, day, hour, minute, second,
                                  header.leap_seconds)
 
-        obs = EpochObs(gpst=gpst)
+        obs = EpochObs(gpst=gpst,
+                       unix_utc=_ymdhms_to_unix_utc(year, month, day, hour,
+                                                    minute, second,
+                                                    header.leap_seconds))
 
         for _ in range(num_sats):
             if i >= len(lines):
@@ -245,6 +249,29 @@ def _ymdhms_to_gpst(year: int, month: int, day: int, hour: int, minute: int,
     # Remove leap seconds since GPS epoch
     delta -= (leap_seconds - 19)  # 19 leap seconds at GPS epoch start
     return delta % 604800.0  # seconds of week
+
+
+def _ymdhms_to_unix_utc(year: int, month: int, day: int, hour: int, minute: int,
+                        second: float, leap_seconds: int) -> float:
+    """Unix UTC seconds for a RINEX epoch, for matching against the CMM table.
+
+    RINEX 3 epoch time tags are in GPS time, and this file's header carries no
+    TIME SYSTEM override, so the civil fields are read as GPS time and the
+    leap-second count is subtracted to land on UTC. The CMM table's `timestamp`
+    column is Unix UTC, so this is the quantity to compare against it.
+
+    If this is ever wrong by the leap-second count the match rate in
+    match_to_cmm_input collapses to zero rather than silently pairing the wrong
+    epochs, because the nearest RAIM epoch would then be ~18 s away, far outside
+    the half-sample tolerance. That is deliberate: a wrong time base should fail
+    loudly. Resolve it against a recording where the NMEA log and the RINEX file
+    both survive -- hainan_05 has both, hainan_06 does not.
+    """
+    import datetime
+    dt = datetime.datetime(year, month, day, hour, minute,
+                           int(second), int((second - int(second)) * 1e6),
+                           tzinfo=datetime.timezone.utc)
+    return dt.timestamp() - leap_seconds
 
 
 # ── RINEX 3 navigation (broadcast ephemeris) parsing ─────────────────────────
@@ -927,7 +954,10 @@ def process_trajectory(traj_name: str, base_dir: str) -> Dict[int, float]:
     ref_lla = (lat, lon, 10.0)
 
     # Process each epoch
-    pl_results: Dict[int, float] = {}
+    # epoch_idx -> (HPL [m], the epoch's Unix UTC time). The time travels with
+    # the value so that whoever consumes this can pair on time instead of on
+    # position; the two files involved are sampled at different rates.
+    pl_results: Dict[int, Tuple[float, float]] = {}
     skip_count = 0
     use_sats_count = []
 
@@ -943,7 +973,7 @@ def process_trajectory(traj_name: str, base_dir: str) -> Dict[int, float]:
         )
 
         if epoch_pl is not None:
-            pl_results[epoch_idx] = epoch_pl
+            pl_results[epoch_idx] = (epoch_pl, epoch.unix_utc)
         else:
             skip_count += 1
 
@@ -1084,11 +1114,16 @@ def _compute_epoch_pl(epoch: EpochObs,
     return k_h * sigma_major
 
 
-def match_to_cmm_input(traj_name: str, pl_results: Dict[int, float],
+def match_to_cmm_input(traj_name: str, pl_results: Dict[int, Tuple[float, float]],
                         base_dir: str) -> List[Tuple[int, float, float]]:
-    """Match RAIM PL results with CMM input epochs.
+    """Match RAIM PL results with CMM input epochs, by time.
 
-    Returns list of (epoch_index, cmm_timestamp, HPL_meters).
+    The two sources are sampled at different rates over the same span -- the
+    RINEX file is 10 Hz and the CMM table 1 Hz -- so pairing them by position
+    would stretch the first tenth of the RINEX file across the whole trajectory.
+    Each CMM epoch is instead paired with the RAIM epoch nearest in time.
+
+    Returns list of (cmm_epoch_index, cmm_timestamp, HPL_meters).
     """
     cmm_file = os.path.join(base_dir, f"cmm_traj{traj_name.replace('.', '')}.csv")
     if not os.path.exists(cmm_file):
@@ -1127,19 +1162,48 @@ def match_to_cmm_input(traj_name: str, pl_results: Dict[int, float],
         print(f"  No CMM epochs found for trajectory {traj_name}")
         return []
 
-    # FIXME: For now, simple count-based matching
-    # In a complete implementation, we'd match by GPS time
-    pl_list = sorted(pl_results.items())
-    result = []
-
+    pl_list = sorted(pl_results.items())  # by epoch index, which is time order
     n_pl = len(pl_list)
     n_cmm = len(cmm_epochs)
+    result = []
 
-    for cmm_idx in range(min(n_cmm, n_pl)):
-        pl_idx, pl_val = pl_list[cmm_idx]
-        result.append((cmm_idx, cmm_epochs[cmm_idx], pl_val))
+    if n_pl < 2:
+        print(f"  No usable RAIM epochs for trajectory {traj_name} (n={n_pl})")
+        return result
 
-    print(f"  Matched {len(result)} epochs (RAIM epochs={n_pl}, CMM epochs={n_cmm})")
+    raim_ts = np.array([ts for _, (_, ts) in pl_list])
+    raim_pl = [pl for _, (pl, _) in pl_list]
+
+    # Half the RAIM sampling interval. Measured from the data rather than read
+    # from the RINEX header, whose INTERVAL record is optional and often absent.
+    dt = float(np.median(np.diff(raim_ts)))
+    if not np.isfinite(dt) or dt <= 0.0:
+        print(f"  RAIM timestamps for {traj_name} are not increasing; skipping")
+        return result
+    tol = 0.5 * dt
+
+    residuals = []
+    for cmm_idx, cmm_ts in enumerate(cmm_epochs):
+        j = int(np.searchsorted(raim_ts, cmm_ts))
+        best = None
+        for cand in (j - 1, j):
+            if 0 <= cand < n_pl:
+                err = abs(raim_ts[cand] - cmm_ts)
+                if best is None or err < best[0]:
+                    best = (err, cand)
+        if best is not None and best[0] <= tol:
+            residuals.append(best[0])
+            result.append((cmm_idx, cmm_ts, raim_pl[best[1]]))
+
+    print(f"  Matched {len(result)} of {n_cmm} CMM epochs "
+          f"(RAIM epochs={n_pl}, interval={dt:.4f}s, tol={tol:.4f}s)")
+    if residuals:
+        print(f"    residual |dt|: max {max(residuals):.6f}s, "
+              f"mean {sum(residuals) / len(residuals):.6f}s")
+    if result and len(result) < 0.5 * min(n_cmm, n_pl):
+        print(f"    *** WARNING: matched fewer than half the available epochs. "
+              f"The RAIM and CMM timestamps are probably not in the same time "
+              f"base -- check the leap-second handling in _ymdhms_to_unix_utc.")
     return result
 
 
@@ -1206,7 +1270,7 @@ def main():
             continue
 
         # Statistics
-        pl_vals = list(pl_results.values())
+        pl_vals = [pl for pl, _ in pl_results.values()]
         print(f"  HPL stats: min={min(pl_vals):.2f}m, median={np.median(pl_vals):.2f}m, "
               f"mean={np.mean(pl_vals):.2f}m, max={max(pl_vals):.2f}m")
 
