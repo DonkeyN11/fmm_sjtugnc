@@ -88,13 +88,23 @@ def metrics(path, gt):
         n += 1
         correct = v.is_edge_match(row["cpath"].strip(), gt_e)
         ok += int(correct)
-        labels.append(1.0 if correct else 0.0)
+        # Accuracy counts every matched epoch, including a FAILED one: its cpath
+        # is empty, so it is a miss. But the calibration metrics below need
+        # (label, score) pairs, and a FAILED row carries the TW sentinel, i.e.
+        # no score. So label and score must be appended together or not at all --
+        # keeping them in separate loops silently misaligns them the first time a
+        # run contains a sentinel-TW epoch, which is exactly what happened when
+        # the protection level was corrected and 112 such epochs appeared.
+        # verify_paper_numbers.main() splits into tw_c/tw_w and appends only when
+        # tw is not None, which is the same rule expressed as two lists.
         if row["_tw"] is not None:
+            labels.append(1.0 if correct else 0.0)
             scores.append(row["_tw"])
         if row.get("status", "").startswith("FAILED"):
             n_failed += 1
     labels = np.array(labels)
     scores = np.array(scores)
+    assert len(labels) == len(scores), "label/score pairing broken"
     return {
         "run": Path(path).name,
         "rows": len(run),
