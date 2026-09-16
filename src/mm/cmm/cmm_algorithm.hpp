@@ -314,6 +314,39 @@ public:
         int input_epsg,
         bool use_omp = true);
 
+    /**
+     * Decide how to handle an epoch whose transition from the current
+     * sub-segment failed.
+     *
+     * True  -> restart: commit the current sub-segment and re-seed the HMM at
+     *          this epoch, so the epoch is matched in its own right.
+     * False -> carry: put the epoch on the gap list and retry it later as a
+     *          long jump from the last connected epoch (`skipped_indices`).
+     *
+     * The decision deliberately does NOT depend on the size of the current
+     * sub-segment. It used to require `current_sub_indices.size() >= 2`, which
+     * is not a safety property: the size cannot change while the sub-segment is
+     * stuck, so a sub-segment that failed on its very first transition -- a
+     * trajectory that starts off-network, or a restart seeded at an
+     * off-network epoch -- could never restart again. Every following epoch was
+     * then carried as a gap until the 180 s `max_interval` escape, even when
+     * those epochs connected to each other perfectly well. Measured on the
+     * Haikou set at a tight protection level, that dropped 167 epochs that the
+     * restart recovers (traj 11: 23 epochs, traj 21: 144), and it cost 1.37 pp
+     * of segment accuracy (93.21 % -> 94.58 %).
+     *
+     * Public so that tests/test_cmm_gap_restart.cpp can pin the rule; the
+     * function is pure and has no effect on its own.
+     *
+     * @param enable_gap_bridging whether the config allows splitting at all
+     * @param next_epoch_has_candidates false if the epoch has no road candidate;
+     *        an empty layer cannot seed a sub-segment, so the epoch must be
+     *        carried and retried rather than restarted at.
+     * @return true if a new sub-segment should start at this epoch
+     */
+    static bool should_restart_sub_segment(bool enable_gap_bridging,
+                                           bool next_epoch_has_candidates);
+
 protected:
     /**
      * Calculate emission probability using covariance matrix (LOG-SPACE)

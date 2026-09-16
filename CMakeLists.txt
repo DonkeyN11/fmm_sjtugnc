@@ -25,6 +25,8 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 project(fmm)
 
+enable_testing()
+
 set(CMAKE_BUILD_TYPE "Release")
 if(DEFINED ENV{CONDA_PREFIX})
   set(CMAKE_CXX_FLAGS "-isystem $ENV{CONDA_PREFIX}/include -O3 -DSPDLOG_ACTIVE_LEVEL=SPDLOG_LEVEL_TRACE -DBOOST_ALLOW_DEPRECATED_HEADERS -Wno-deprecated-declarations -Wno-nonnull -DBOOST_NO_CONCEPT_CHECKS -fpermissive")
@@ -219,6 +221,11 @@ target_link_libraries(interactive_match FMMLIB)
 
 add_executable(cmm_example example/cmm_example.cpp)
 target_link_libraries(cmm_example FMMLIB)
+
+# Tests (run with `ctest --test-dir build`)
+add_executable(test_cmm_gap_restart tests/test_cmm_gap_restart.cpp)
+target_link_libraries(test_cmm_gap_restart FMMLIB)
+add_test(NAME cmm_gap_restart COMMAND test_cmm_gap_restart)
 
 # add_executable(performance_test tmp/ubodt_performance_test.cpp)
 # target_link_libraries(performance_test FMMLIB)

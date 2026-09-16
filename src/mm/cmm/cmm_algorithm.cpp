@@ -1332,11 +1332,13 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         //  3. It was actively harmful. Appending it made a zero-candidate epoch
         //     look non-empty, so the epoch entered the Viterbi layer carrying
         //     only the background. Every (background, road) pair then fails
-        //     get_sp_dist, and the !connected branch froze last_valid_layer and
-        //     current_sub_indices -- so should_restart, which needs
-        //     current_sub_indices.size() >= 2, could never fire again. One
-        //     off-map epoch (gas station, under a bridge) cost the next ~180
-        //     epochs, until the max_interval escape.
+        //     get_sp_dist, and the !connected branch froze last_valid_layer, so
+        //     no transition could ever succeed again. One off-map epoch (gas
+        //     station, under a bridge) cost the next ~180 epochs, until the
+        //     max_interval escape. A second, independent gate --
+        //     should_restart requiring current_sub_indices.size() >= 2 -- kept
+        //     the restart path shut for the whole of that stretch; see
+        //     should_restart_sub_segment for the measurement that removed it.
         //
         // With it gone, an epoch whose search radius admits no road edge yields
         // an empty candidate list. That is the desired behaviour: the epoch is
@@ -1730,9 +1732,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config,
                             log_prob_unconsidered, tp_raw_ptr);
 
-            bool should_restart = config.enable_gap_bridging &&
-                                  !tc_raw[next_real].empty() &&
-                                  current_sub_indices.size() >= 2;
+            bool should_restart = should_restart_sub_segment(
+                config.enable_gap_bridging, !tc_raw[next_real].empty());
 
             if (!connected) {
                 if (!should_restart) {
@@ -2016,6 +2017,13 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
 }
 
 // ... update_tg_cmm remains same ...
+
+// See the declaration in cmm_algorithm.hpp for why the sub-segment size is
+// deliberately absent from this predicate.
+bool CovarianceMapMatch::should_restart_sub_segment(bool enable_gap_bridging,
+                                                   bool next_epoch_has_candidates) {
+    return enable_gap_bridging && next_epoch_has_candidates;
+}
 
 void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                                           double eu_dist, bool *connected,
