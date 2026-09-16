@@ -533,7 +533,6 @@ bool maybe_reproject_trajectories(std::vector<CMMTrajectory> *trajectories,
 // Implementation of CovarianceMapMatchConfig
 // Keep configuration construction centralized so both XML and CLI share defaults.
 CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates_arg,
-                                                   double protection_level_multiplier_arg,
                                                    double reverse_tolerance_arg,
                                                    bool use_mahalanobis_candidates_arg,
                                                    bool filtered_arg,
@@ -542,11 +541,9 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double trustworthiness_threshold_arg,
                                                    double map_error_std_arg,
                                                    double phmi_arg,
-                                                   double phmi_pl_multiplier_arg,
                                                    double cumulative_reverse_pct_arg,
                                                    bool direction_penalty_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
-      protection_level_multiplier(protection_level_multiplier_arg),
       reverse_tolerance(reverse_tolerance_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
       filtered(filtered_arg),
@@ -555,7 +552,6 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       trustworthiness_threshold(trustworthiness_threshold_arg),
       map_error_std(map_error_std_arg),
       phmi(phmi_arg),
-      phmi_pl_multiplier(phmi_pl_multiplier_arg),
       cumulative_reverse_pct(cumulative_reverse_pct_arg),
       direction_penalty(direction_penalty_arg) {
 }
@@ -563,8 +559,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
 // Dump runtime configuration for debugging or reproducibility.
 void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("CMMAlgorithmConfig");
-    SPDLOG_INFO("k {} min_candidates {} protection_level_multiplier {} reverse_tolerance {}",
-                k, min_candidates, protection_level_multiplier, reverse_tolerance);
+    SPDLOG_INFO("k {} min_candidates {} reverse_tolerance {}",
+                k, min_candidates, reverse_tolerance);
     SPDLOG_INFO("use_mahalanobis {} filtered {}",
                 use_mahalanobis_candidates, filtered);
     SPDLOG_INFO("gap_bridging {}", enable_gap_bridging);
@@ -580,7 +576,6 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     const boost::property_tree::ptree &xml_data) {
     int k = xml_data.get("config.parameters.k", 8);
     int min_candidates = xml_data.get("config.parameters.min_candidates", 3);
-    double protection_level_multiplier = xml_data.get("config.parameters.protection_level_multiplier", 1.0);
     double reverse_tolerance = xml_data.get("config.parameters.reverse_tolerance", 0.0);
     bool use_mahalanobis_candidates = xml_data.get("config.parameters.use_mahalanobis", true);
     bool filtered = xml_data.get("config.parameters.filtered", true);
@@ -595,17 +590,14 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     // Additive map noise
     double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
 
-    // PHMI integrity multiplier: decoupled from search radius
-    double phmi_pl_multiplier = xml_data.get("config.parameters.phmi_pl_multiplier", 5.0);
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
     bool direction_penalty = xml_data.get("config.parameters.direction_penalty", true);
 
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
+    return CovarianceMapMatchConfig{k, min_candidates, reverse_tolerance,
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap_bridging,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, phmi,
-                                    phmi_pl_multiplier,
                                     cumulative_reverse_pct, direction_penalty};
 }
 
@@ -614,7 +606,6 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     const cxxopts::ParseResult &arg_data) {
     int k = arg_data["candidates"].as<int>();
     int min_candidates = arg_data["min_candidates"].as<int>();
-    double protection_level_multiplier = arg_data["protection_level_multiplier"].as<double>();
     double reverse_tolerance = arg_data["reverse_tolerance"].as<double>();
     bool use_mahalanobis_candidates = arg_data["use_mahalanobis"].as<bool>();
     bool filtered = arg_data["filtered"].as<bool>();
@@ -628,16 +619,14 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
 
     // Additive map noise
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
-    double phmi_pl_multiplier = arg_data.count("phmi_pl_multiplier") ? arg_data["phmi_pl_multiplier"].as<double>() : 5.0;
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
     bool direction_penalty = arg_data.count("direction_penalty") ? arg_data["direction_penalty"].as<bool>() : true;
 
-    return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
+    return CovarianceMapMatchConfig{k, min_candidates, reverse_tolerance,
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap,
                                     max_interval, trustworthiness_threshold,
                                     map_error_std, phmi,
-                                    phmi_pl_multiplier,
                                     cumulative_reverse_pct, direction_penalty};
 }
 
@@ -648,8 +637,6 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<int>()->default_value("8"))
         ("min_candidates", "Minimum number of candidates to keep",
          cxxopts::value<int>()->default_value("3"))
-        ("protection_level_multiplier", "Multiplier for protection level",
-         cxxopts::value<double>()->default_value("2.0"))
         ("reverse_tolerance", "Ratio of reverse movement allowed",
          cxxopts::value<double>()->default_value("0.0"))
         ("use_mahalanobis", "Use Mahalanobis-based candidate search",
@@ -666,8 +653,6 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("5.0e-5"))
         ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
          cxxopts::value<double>()->default_value("1.0e-5"))
-        ("phmi_pl_multiplier", "PHMI protection level multiplier (decoupled from search radius)",
-         cxxopts::value<double>()->default_value("5.0"))
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
          cxxopts::value<double>()->default_value("0.03"))
         ("direction_penalty", "Apply direction-consistency penalty for reverse-direction candidates (true)",
@@ -678,7 +663,6 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
 void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "-k/--candidates (optional) <int>: Number of candidates (8)\n";
     oss << "--min_candidates (optional) <int>: Minimum number of candidates to keep (3)\n";
-    oss << "--protection_level_multiplier (optional) <double>: Multiplier for protection level (1.0)\n";
     oss << "--reverse_tolerance (optional) <double>: proportion of reverse movement allowed on an edge\n";
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
     oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
@@ -687,7 +671,6 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--trustworthiness_threshold (optional) <double>: trustworthiness posterior [0,1] threshold for filtering (0.0)\n";
     oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
-    oss << "--phmi_pl_multiplier (optional) <double>: PHMI protection level multiplier (5.0)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
     oss << "--direction_penalty (optional) <bool>: Apply direction-consistency penalty for reverse-direction candidates (true)\n";
 }
@@ -695,12 +678,11 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
 // Quick sanity checks to guard against invalid user supplied parameters.
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
-        protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
+        reverse_tolerance < 0 ||
         map_error_std < 0 || phmi < 0 || phmi > 1.0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
-                       "protection_level_multiplier {} reverse_tolerance {} "
-                       "map_error_std {} phmi {}",
-                       k, min_candidates, protection_level_multiplier, reverse_tolerance,
+                       "reverse_tolerance {} map_error_std {} phmi {}",
+                       k, min_candidates, reverse_tolerance,
                        map_error_std, phmi);
         return false;
     }
@@ -820,9 +802,10 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
         double protection_level = protection_levels[i];
 
-        // double uncertainty = cov.get_2d_uncertainty();
-        // double search_radius = protection_level * config.protection_level_multiplier + uncertainty;
-        double search_radius = protection_level * config.protection_level_multiplier;
+        // The paper's candidate search radius is the protection level itself,
+        // r_i = HPL_i, with no multiplier. Widening it when an epoch finds too
+        // few candidates is a separate, bounded fallback handled below.
+        double search_radius = protection_level;
 
         SPDLOG_TRACE("Point {}: protection_level={}, search_radius={}",
                      i, protection_level, search_radius);
@@ -1121,12 +1104,13 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         double one_minus_phmi = 1.0 - config.phmi;
         double phmi = config.phmi;
 
-        // Effective Protection Level for PHMI integrity check:
-        //   effective_PL = raw_PL * phmi_pl_multiplier
-        // The search multiplier controls how far to look for candidates;
-        // the PHMI multiplier controls the integrity threshold independently,
-        // allowing discrimination even when many candidates are found.
-        double phmi_effective_pl = protection_level * config.phmi_pl_multiplier;
+        // Integrity boundary for the PHMI grouping is the protection level
+        // itself: a candidate is inside PL iff it lies within PL of the fix.
+        // It must not be scaled. The search radius can grow past PL to recover
+        // from an empty candidate set, and a scaled boundary would file those
+        // recovered candidates under "inside PL" -- the exact opposite of the
+        // intent, since they are the ones least supported by the covariance.
+        double phmi_effective_pl = protection_level;
 
         // Separate raw EP sums for inside-PL and outside-PL groups
         double sum_ep_in_raw = 0.0, sum_ep_out_raw = 0.0;

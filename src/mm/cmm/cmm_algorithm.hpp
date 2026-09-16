@@ -122,11 +122,9 @@ struct CovarianceMapMatchConfig {
      * Constructor of CovarianceMapMatch configuration
      * @param k_arg the number of candidates
      * @param min_candidates_arg minimum number of candidates to keep
-     * @param protection_level_multiplier_arg multiplier for protection level
      * @param reverse_tolerance reverse movement tolerance
      */
     CovarianceMapMatchConfig(int k_arg = 8, int min_candidates_arg = 3,
-                             double protection_level_multiplier_arg = 1.0,
                            double reverse_tolerance = 0.0,
                            bool use_mahalanobis_candidates_arg = true,
                            bool filtered_arg = true,
@@ -135,14 +133,11 @@ struct CovarianceMapMatchConfig {
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double map_error_std_arg = 5.0e-6, /* in degrees */
                            double phmi_arg = 1.0e-5,
-                           double phmi_pl_multiplier_arg = 5.0,
                            double cumulative_reverse_pct_arg = 0.03,
                            bool direction_penalty_arg = true);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
-    double protection_level_multiplier; /**< Multiplier for protection level (search radius) */
-    double phmi_pl_multiplier;          /**< Multiplier for PHMI integrity check (decoupled from search) */
     double reverse_tolerance;           /**< Reverse movement tolerance */
     bool use_mahalanobis_candidates;    /**< Whether to use Mahalanobis-based candidate search */
     bool filtered;                      /**< Whether to filter out points with no candidates/disconnected transitions */

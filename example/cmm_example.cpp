@@ -45,7 +45,6 @@ int main() {
     CovarianceMapMatchConfig cmm_config(
         8,      // number of candidates
         3,      // minimum candidates
-        2.0,    // protection level multiplier
         0.1     // reverse tolerance
     );
 
