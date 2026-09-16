@@ -8,7 +8,6 @@
 #include "util/util.hpp"
 #include "util/debug.hpp"
 #include "io/gps_reader.hpp"
-#include <deque>
 #include "io/mm_writer.hpp"
 
 // #include <Eigen/Dense>
@@ -119,27 +118,6 @@ double log_sum_exp(const std::vector<double> &log_vals) {
         sum += std::exp(v - max_val);
     }
     return max_val + std::log(sum);
-}
-
-// Tempered log-sum-exp: log Σ exp(log_vals[i] / tau) over the first `count`
-// entries (in-place array form of log_sum_exp). Used by the entropy-aware
-// adaptive temperature scaling to renormalize the sharpened posterior so that
-// trustworthiness values still sum to 1.
-double log_sum_exp_tempered(const std::vector<double> &log_vals, size_t count, double tau) {
-    double max_val = -std::numeric_limits<double>::infinity();
-    for (size_t i = 0; i < count; ++i) {
-        if (log_vals[i] > max_val) max_val = log_vals[i];
-    }
-    if (max_val == -std::numeric_limits<double>::infinity()) {
-        return max_val;
-    }
-    double sum = 0.0;
-    for (size_t i = 0; i < count; ++i) {
-        if (log_vals[i] > -std::numeric_limits<double>::infinity()) {
-            sum += std::exp(log_vals[i] / tau - max_val / tau);
-        }
-    }
-    return max_val / tau + std::log(sum);
 }
 
 template <typename T>
@@ -601,11 +579,9 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double trustworthiness_threshold_arg,
                                                    double map_error_std_arg,
                                                    double phmi_arg,
-                                                   int lag_steps_arg,
                                                    double phmi_pl_multiplier_arg,
                                                    double h0_prior_log_odds_arg,
                                                    double cumulative_reverse_pct_arg,
-                                                   bool temperature_adapt_arg,
                                                    bool direction_penalty_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       protection_level_multiplier(protection_level_multiplier_arg),
@@ -620,11 +596,9 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       trustworthiness_threshold(trustworthiness_threshold_arg),
       map_error_std(map_error_std_arg),
       phmi(phmi_arg),
-      lag_steps(lag_steps_arg),
       phmi_pl_multiplier(phmi_pl_multiplier_arg),
       h0_prior_log_odds(h0_prior_log_odds_arg),
       cumulative_reverse_pct(cumulative_reverse_pct_arg),
-      temperature_adapt(temperature_adapt_arg),
       direction_penalty(direction_penalty_arg) {
 }
 
@@ -638,9 +612,9 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("gap_bridging {} max_gap_distance {}", enable_gap_bridging, max_gap_distance);
     SPDLOG_INFO("min_gps_error_degrees {} max_interval {} trustworthiness_threshold {}",
                 min_gps_error_degrees, max_interval, trustworthiness_threshold);
-    SPDLOG_INFO("map_error_std {} phmi {} lag_steps {}", map_error_std, phmi, lag_steps);
+    SPDLOG_INFO("map_error_std {} phmi {}", map_error_std, phmi);
     SPDLOG_INFO("h0_prior_log_odds {} cumulative_reverse_pct {}", h0_prior_log_odds, cumulative_reverse_pct);
-    SPDLOG_INFO("temperature_adapt {} direction_penalty {}", temperature_adapt, direction_penalty);
+    SPDLOG_INFO("direction_penalty {}", direction_penalty);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -668,14 +642,10 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     // New parameter for additive map noise
     double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
 
-    // Fixed-lag smoothing: 0 = realtime filtering, N = delay N steps
-    int lag_steps = xml_data.get("config.parameters.lag_steps", 0);
-
     // PHMI integrity multiplier: decoupled from search radius
     double phmi_pl_multiplier = xml_data.get("config.parameters.phmi_pl_multiplier", 5.0);
     double h0_prior_log_odds = xml_data.get("config.parameters.h0_prior_log_odds", 0.0);
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
-    bool temperature_adapt = xml_data.get("config.parameters.temperature_adapt", true);
     bool direction_penalty = xml_data.get("config.parameters.direction_penalty", true);
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
@@ -683,9 +653,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     filtered,
                                     enable_gap_bridging, max_gap_distance, min_gps_error_degrees,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, phmi, lag_steps,
+                                    map_error_std, phmi,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct, temperature_adapt, direction_penalty};
+                                    cumulative_reverse_pct, direction_penalty};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -712,11 +682,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
 
     // New parameter for additive map noise
     double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
-    int lag_steps = arg_data.count("lag_steps") ? arg_data["lag_steps"].as<int>() : 0;
     double phmi_pl_multiplier = arg_data.count("phmi_pl_multiplier") ? arg_data["phmi_pl_multiplier"].as<double>() : 5.0;
     double h0_prior_log_odds = arg_data.count("h0_prior_log_odds") ? arg_data["h0_prior_log_odds"].as<double>() : 0.0;
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
-    bool temperature_adapt = arg_data.count("temperature_adapt") ? arg_data["temperature_adapt"].as<bool>() : true;
     bool direction_penalty = arg_data.count("direction_penalty") ? arg_data["direction_penalty"].as<bool>() : true;
 
     return CovarianceMapMatchConfig{k, min_candidates, protection_level_multiplier, reverse_tolerance,
@@ -724,9 +692,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     filtered,
                                     enable_gap, max_gap, min_gps_error,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, phmi, lag_steps,
+                                    map_error_std, phmi,
                                     phmi_pl_multiplier, h0_prior_log_odds,
-                                    cumulative_reverse_pct, temperature_adapt, direction_penalty};
+                                    cumulative_reverse_pct, direction_penalty};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -760,16 +728,12 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("5.0e-5"))
         ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
          cxxopts::value<double>()->default_value("1.0e-5"))
-        ("lag_steps", "Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)",
-         cxxopts::value<int>()->default_value("0"))
         ("phmi_pl_multiplier", "PHMI protection level multiplier (decoupled from search radius)",
          cxxopts::value<double>()->default_value("5.0"))
         ("h0_prior_log_odds", "Log-odds of H0 prior: log(P(H0)/P(¬H0))",
          cxxopts::value<double>()->default_value("0.0"))
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
          cxxopts::value<double>()->default_value("0.03"))
-        ("temperature_adapt", "Entropy-aware adaptive temperature scaling of trustworthiness posterior (true)",
-         cxxopts::value<bool>()->default_value("true"))
         ("direction_penalty", "Apply direction-consistency penalty for reverse-direction candidates (true)",
          cxxopts::value<bool>()->default_value("true"));
 }
@@ -790,11 +754,9 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--trustworthiness_threshold (optional) <double>: trustworthiness posterior [0,1] threshold for filtering (0.0)\n";
     oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
-    oss << "--lag_steps (optional) <int>: Fixed-lag smoothing steps (0=realtime filtering, N=delay N steps)\n";
     oss << "--phmi_pl_multiplier (optional) <double>: PHMI protection level multiplier (5.0)\n";
     oss << "--h0_prior_log_odds (optional) <double>: Log-odds of H0 prior (0.0)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
-    oss << "--temperature_adapt (optional) <bool>: Entropy-aware adaptive temperature scaling of trustworthiness posterior (true)\n";
     oss << "--direction_penalty (optional) <bool>: Apply direction-consistency penalty for reverse-direction candidates (true)\n";
 }
 
@@ -803,7 +765,7 @@ bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         protection_level_multiplier <= 0 || reverse_tolerance < 0 ||
         max_gap_distance < 0 ||
-        map_error_std < 0 || phmi < 0 || phmi > 1.0 || lag_steps < 0) {
+        map_error_std < 0 || phmi < 0 || phmi > 1.0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
                        "protection_level_multiplier {} reverse_tolerance {} "
                        "max_gap_distance {} map_error_std {} phmi {}",
@@ -1647,19 +1609,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         tg_ptr->get_layers().push_back(std::move(start_layer));
         initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
 
-        // ── Fixed-lag smoothing buffer ──────────────────────────────────────
-        // Stores LagEntry (layer ptr, tp matrix, frac_inside_pl) for lag_steps+1 layers.
-        std::deque<LagEntry> lag_buffer;
-        if (config.lag_steps > 0) {
-            lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
-        }
-
-        // ── Sequential Bayesian H0 test: trajectory-global Λ accumulation ──
-        // λ_t = λ₀ · Π_{τ=0}^{t} LR_τ   (cumulative likelihood ratio)
-        // α_t = λ_t / (1 + λ_t)          (posterior P(H0 | z_{0:t}))
-        std::vector<double> h0_log_lambdas;     // log(λ_t) per original index
-        double h0_log_lambda = config.h0_prior_log_odds;  // current log(λ_t)
-
         TGLayer* last_valid_layer = &tg_ptr->get_layers()[0];
         int last_valid_real = start_real_idx;
         std::vector<int> skipped_indices;
@@ -1680,8 +1629,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             constexpr double MAX_REASONABLE_SPEED = 40.0; // 144 km/h
 
             if (config.enable_gap_bridging && (speed > MAX_REASONABLE_SPEED || time_diff > config.max_interval)) {
-                // Sub-trajectory boundary: flush smoothing buffer before finishing this segment
-                flush_lag_buffer(lag_buffer, *this, config.lag_steps);
                 process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
 
                 for (int skipped_idx : skipped_indices) {
@@ -1706,13 +1653,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 tg_ptr->get_layers().push_back(std::move(new_start_layer));
                 initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
 
-                // Restart smoothing buffer for new sub-trajectory
-                if (config.lag_steps > 0) {
-                    lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
-                }
-                // Reset H0 lambda for new sub-trajectory (FUTURE: discount framework)
-                // h0_log_lambdas.clear();
-                // h0_log_lambda = config.h0_prior_log_odds;
 
                 last_valid_layer = &tg_ptr->get_layers()[0];
                 last_valid_real = next_real;
@@ -1726,11 +1666,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             }
 
             bool connected = false;
-            std::vector<std::vector<double>> tp_raw_smoothing;
-            std::vector<std::vector<double>>* tp_raw_ptr =
-                (config.lag_steps > 0) ? &tp_raw_smoothing : nullptr;
             update_layer_cmm(last_valid_layer, &next_layer, dist, &connected, config,
-                            log_prob_unconsidered, tp_raw_ptr);
+                            log_prob_unconsidered);
 
             bool should_restart = should_restart_sub_segment(
                 config.enable_gap_bridging, !tc_raw[next_real].empty());
@@ -1741,8 +1678,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 }
 
                 if (should_restart) {
-                    // 1. Flush smoothing buffer and commit current sub-segment
-                    flush_lag_buffer(lag_buffer, *this, config.lag_steps);
+                    // 1. Commit the current sub-segment
                     process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
                     for (int skipped_idx : skipped_indices) {
                         final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
@@ -1768,13 +1704,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                     log_prob_unconsidered = -std::numeric_limits<double>::infinity();
                     initialize_first_layer(&tg_ptr->get_layers()[0], config, log_prob_unconsidered);
 
-                    // Restart smoothing buffer
-                    if (config.lag_steps > 0) {
-                        lag_buffer.push_back({&tg_ptr->get_layers()[0], {}, 1.0});
-                    }
-                    // Reset H0 lambda for new sub-trajectory (FUTURE: discount framework)
-                    // h0_log_lambdas.clear();
-                    // h0_log_lambda = config.h0_prior_log_odds;
 
                     last_valid_layer = &tg_ptr->get_layers()[0];
                     last_valid_real = next_real;
@@ -1793,61 +1722,9 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 last_valid_layer = &tg_ptr->get_layers().back();
                 last_valid_real = next_real;
 
-                // ── Accumulate global H0 lambda ──────────────────────────────────
-                // FUTURE: discount factor framework (PHMI + velocity + geometry)
-                // Currently commented out — TW uses partial path posterior instead.
-                // Will be re-enabled when α_geom + α_vel discount is implemented.
-#if 0
-                {
-                    double raw_pl = (next_real < static_cast<int>(traj.protection_levels.size()))
-                        ? traj.protection_levels[next_real] : 0.0;
-                    double effective_pl = raw_pl * config.phmi_pl_multiplier;
-                    int n_inside_pl = 0, n_total = 0;
-                    for (size_t b = 0; b < next_layer.size(); ++b) {
-                        TGNode& nb = next_layer[b];
-                        n_total++;
-                        if (nb.c->dist <= effective_pl) n_inside_pl++;
-                    }
-                    double frac_inside =
-                        (n_total > 0) ? static_cast<double>(n_inside_pl) / n_total : 1.0;
-
-                    double phmi_floor = std::max(config.phmi / 1000.0, 1.0e-10);
-                    double f_clamp = std::max(phmi_floor,
-                        std::min(1.0 - phmi_floor, frac_inside));
-                    double h0_lr = f_clamp / config.phmi;
-                    h0_log_lambda += std::log(h0_lr);
-                    h0_log_lambdas.push_back(h0_log_lambda);
-                }
-#endif
-
-                // ── Push to smoothing buffer and apply fixed-lag smoothing ──
-                if (config.lag_steps > 0) {
-                    double raw_pl = (next_real < static_cast<int>(traj.protection_levels.size()))
-                        ? traj.protection_levels[next_real] : 0.0;
-                    double effective_pl = raw_pl * config.phmi_pl_multiplier;
-                    int n_inside_pl = 0, n_total = 0;
-                    for (size_t b = 0; b < next_layer.size(); ++b) {
-                        TGNode& nb = next_layer[b];
-                        n_total++;
-                        if (nb.c->dist <= effective_pl) n_inside_pl++;
-                    }
-                    double frac_inside =
-                        (n_total > 0) ? static_cast<double>(n_inside_pl) / n_total : 1.0;
-
-                    lag_buffer.back().tp_to_next = std::move(tp_raw_smoothing);
-                    lag_buffer.back().frac_inside_pl = frac_inside;
-                    lag_buffer.push_back({last_valid_layer, {}, 1.0});
-
-                    if (lag_buffer.size() > static_cast<size_t>(config.lag_steps)) {
-                        apply_lag_smoothing(lag_buffer);
-                        lag_buffer.pop_front();
-                    }
-                }
             }
         }
 
-        // ── Trajectory end: flush remaining smoothing buffer ──
-        flush_lag_buffer(lag_buffer, *this, config.lag_steps);
 
         if (!current_sub_indices.empty()) {
             process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
@@ -2028,8 +1905,7 @@ bool CovarianceMapMatch::should_restart_sub_segment(bool enable_gap_bridging,
 void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                                           double eu_dist, bool *connected,
                                           const CovarianceMapMatchConfig &config,
-                                          double &log_prob_unconsidered,
-                                          std::vector<std::vector<double>> *tp_raw_out) {
+                                          double &log_prob_unconsidered) {
     if (!la_ptr || !lb_ptr) return;
     *connected = false;
     const size_t prev_count = la_ptr->size();
@@ -2196,39 +2072,19 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         }
         if (layer_entropy < 0.0) layer_entropy = 0.0;
 
-        // Option B: entropy-aware adaptive temperature scaling.
-        // When the posterior is nearly uniform (layer entropy > 30% of the max
-        // possible entropy log2(K)), the softmax is flattened and TW is over-smoothed.
-        // Sharpen it with temperature tau < 1:
-        //     tau = max(0.35, 1 - 0.5 * H / H_max),   H_max = log2(K)
-        // applied as a tempered softmax: p_b ∝ exp(log_norm / tau), renormalized
-        // so trustworthiness still sums to 1. Toggle via config.temperature_adapt.
-        const size_t k_valid = layer_log_probs.size();
-        double tau = 1.0;
-        if (config.temperature_adapt && k_valid > 1) {
-            double max_entropy = std::log(static_cast<double>(k_valid)) * inv_log2;
-            if (max_entropy > 0.0 && layer_entropy > 0.3 * max_entropy) {
-                double entropy_ratio = layer_entropy / max_entropy;
-                tau = 1.0 - 0.5 * entropy_ratio;
-                if (tau < 0.35) tau = 0.35;  // hard floor: never over-sharpen
-                SPDLOG_DEBUG("Adaptive temperature: H={:.4f} H_max={:.4f} ratio={:.3f} tau={:.3f}",
-                             layer_entropy, max_entropy, entropy_ratio, tau);
-            }
-        }
-
-        // Pass 2: tempered softmax with renormalization (tau == 1.0 → identity).
+        // Pass 2: softmax renormalization.
         // norm_log_probs are already log-softmax values (forward_cumu - log_sum,
-        // Σ exp = 1), so the renormalization constant is LSE_tau(norm_log_probs):
-        // for tau == 1.0 this is log(Σ exp(norm_log_probs)) ≈ 0 and the branch is
-        // the identity posterior. Do NOT use `log_sum` (the LSE of the raw
-        // forward_cumu) here — subtracting it again would double-normalize and
-        // produce trustworthiness ≫ 1 (exp(forward_cumu - 2·log_sum)).
-        double log_sum_sharp = log_sum_exp_tempered(norm_log_probs, next_count, tau);
+        // Σ exp = 1), so renormalizing them is mathematically the identity; it is
+        // kept so that floating-point drift cannot push trustworthiness above 1.
+        // Do NOT use `log_sum` (the LSE of the raw forward_cumu) here — subtracting
+        // it again would double-normalize and produce trustworthiness ≫ 1
+        // (exp(forward_cumu - 2·log_sum)).
+        double log_sum_sharp = log_sum_exp(norm_log_probs);
         for (size_t b = 0; b < next_count; ++b) {
             TGNode &node_b = (*lb_ptr)[b];
             if (norm_log_probs[b] > -std::numeric_limits<double>::infinity()) {
                 node_b.trustworthiness =
-                    std::exp(norm_log_probs[b] / tau - log_sum_sharp);  // filtering posterior
+                    std::exp(norm_log_probs[b] - log_sum_sharp);  // filtering posterior
             } else {
                 node_b.trustworthiness = 0.0;
             }
@@ -2269,150 +2125,8 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     }
 
     *connected = has_valid_candidate;
-
-    // 7. Optionally export the raw transition probability matrix for fixed-lag smoothing.
-    //    tp_raw_out[a][b] stores the linear transition probability from candidate a to b.
-    //    Used by apply_lag_smoothing() to re-evaluate earlier-layer posteriors.
-    if (tp_raw_out != nullptr && has_valid_candidate) {
-        *tp_raw_out = std::move(tp_raw_matrix);
-    }
 }
 
-// ── Fixed-lag smoothing with sequential Bayesian H0 test ─────────────────────
-// Phases:
-//   1. Viterbi-style forward pass through L-step window for future evidence.
-//   2. Softmax normalization of smoothed cumu_prob for per-candidate trust.
-//   3. Sequential Bayesian H0 test: accumulates likelihood ratios across the
-//      smoothing window and applies multiplicative discount α = P(H0|z_{1:t}),
-//      which cannot be canceled by softmax normalization.
-//
-// H0 test formulation:
-//   λ_t = λ₀ · Π_τ LR_τ,    where LR_τ = frac_inside / max(P_HMI, 1-frac_inside)
-//   α_t = λ_t / (1 + λ_t)   (posterior probability of H0)
-//   trust'[i] = α_t × trust[i]
-//
-// When all epochs consistently show candidates outside PL (frac_inside → 0),
-// λ_t decays exponentially, α_t → 0, and trustworthiness → 0 regardless of
-// the softmax-normalized ranking.  This detects map errors and off-road driving.
-
-void CovarianceMapMatch::apply_lag_smoothing(
-    std::deque<LagEntry>& lag_data) const {
-
-    size_t L = lag_data.size() - 1;
-    if (L == 0) return;
-
-    LagEntry& oldest_entry = lag_data[0];
-    TGLayer* oldest_layer = oldest_entry.layer;
-    const size_t n_old = oldest_layer->size();
-    std::vector<double> smoothed_log_probs(n_old,
-        -std::numeric_limits<double>::infinity());
-    const double neg_inf = -std::numeric_limits<double>::infinity();
-
-    // ── Part 1: Viterbi-style forward pass through L-step window ──
-    for (size_t i = 0; i < n_old; ++i) {
-        TGNode& start_node = (*oldest_layer)[i];
-        if (start_node.cumu_prob <= neg_inf) continue;
-
-        // Step 1: candidate i → layer[1]
-        const auto& tp01 = oldest_entry.tp_to_next;
-        TGLayer* l1 = lag_data[1].layer;
-        size_t n1 = l1->size();
-        std::vector<double> dp_cur(n1, neg_inf);
-
-        for (size_t j = 0; j < n1; ++j) {
-            TGNode& node_j = (*l1)[j];
-            if (node_j.cumu_prob <= neg_inf) continue;
-            if (i < tp01.size() && j < tp01[i].size() && tp01[i][j] > 0) {
-                dp_cur[j] = std::log(tp01[i][j]) + node_j.ep;
-            }
-        }
-
-        // Steps 2..L
-        for (size_t step = 2; step <= L; ++step) {
-            TGLayer* nl = lag_data[step].layer;
-            const auto& tp = lag_data[step - 1].tp_to_next;
-            size_t nn = nl->size();
-            std::vector<double> dp_next(nn, neg_inf);
-
-            for (size_t a = 0; a < dp_cur.size(); ++a) {
-                if (dp_cur[a] <= neg_inf) continue;
-                for (size_t b = 0; b < nn; ++b) {
-                    TGNode& node_b = (*nl)[b];
-                    if (node_b.cumu_prob <= neg_inf) continue;
-                    if (a < tp.size() && b < tp[a].size() && tp[a][b] > 0) {
-                        double val = dp_cur[a] + std::log(tp[a][b]) + node_b.ep;
-                        if (val > dp_next[b]) dp_next[b] = val;
-                    }
-                }
-            }
-            dp_cur = std::move(dp_next);
-        }
-
-        double best_cont = neg_inf;
-        for (double v : dp_cur) {
-            if (v > best_cont) best_cont = v;
-        }
-        if (best_cont > neg_inf) {
-            smoothed_log_probs[i] = start_node.cumu_prob + best_cont;
-        }
-    }
-
-    // ── Part 2: Softmax normalization ──
-    double log_sum = log_sum_exp(smoothed_log_probs);
-    double inv_log2 = 1.0 / std::log(2.0);
-    double layer_entropy = 0.0;
-    int valid_count = 0;
-    for (size_t i = 0; i < n_old; ++i) {
-        if (smoothed_log_probs[i] > neg_inf) valid_count++;
-    }
-
-    for (size_t i = 0; i < n_old; ++i) {
-        TGNode& node = (*oldest_layer)[i];
-        if (smoothed_log_probs[i] > neg_inf) {
-            double log_norm = smoothed_log_probs[i] - log_sum;
-            double p_norm = std::exp(log_norm);
-            node.trustworthiness = p_norm;
-            if (p_norm > 0.0) {
-                layer_entropy -= p_norm * log_norm * inv_log2;
-            }
-        } else {
-            node.trustworthiness = 0.0;
-        }
-    }
-    if (layer_entropy < 0.0) layer_entropy = 0.0;
-
-    // ── Part 3: Recompute entropy and delta ──
-    double delta_entropy_update = 0.0;
-    if (valid_count > 0) {
-        double H_prior = std::log2(static_cast<double>(valid_count));
-        delta_entropy_update = H_prior - layer_entropy;
-        if (delta_entropy_update < 0.0) delta_entropy_update = 0.0;
-    }
-    for (size_t i = 0; i < n_old; ++i) {
-        TGNode& node = (*oldest_layer)[i];
-        if (node.cumu_prob > neg_inf) {
-            node.posterior_entropy = layer_entropy;
-            node.delta_entropy = delta_entropy_update;
-        }
-    }
-
-    SPDLOG_DEBUG("Lag-smoothing: L={} valid={} entropy={:.4f} delta={:.4f}",
-                 static_cast<int>(L), valid_count, layer_entropy, delta_entropy_update);
-}
-
-// ── Smoothing-buffer flush (trajectory end / sub-trajectory boundary) ────────
-void CovarianceMapMatch::flush_lag_buffer(
-    std::deque<LagEntry>& lag_data,
-    const CovarianceMapMatch& cmm,
-    int lag_steps)
-{
-    if (lag_steps <= 0) return;
-    while (lag_data.size() > 1) {
-        cmm.apply_lag_smoothing(lag_data);
-        lag_data.pop_front();
-    }
-    lag_data.clear();
-}
 
 // Entry point used by CLI/Python binding: parse trajectories, optionally reproject them,
 // run the matcher, and write the outputs requested in result_config.

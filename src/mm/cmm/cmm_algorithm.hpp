@@ -138,11 +138,9 @@ struct CovarianceMapMatchConfig {
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double map_error_std_arg = 5.0e-6, /* in degrees */
                            double phmi_arg = 1.0e-5,
-                           int lag_steps_arg = 0,
                            double phmi_pl_multiplier_arg = 5.0,
                            double h0_prior_log_odds_arg = 0.0,
                            double cumulative_reverse_pct_arg = 0.03,
-                           bool temperature_adapt_arg = true,
                            bool direction_penalty_arg = true);
 
     int k;                          /**< Number of candidates */
@@ -166,10 +164,8 @@ struct CovarianceMapMatchConfig {
 
     // --- New Parameters for Additive Map Noise ---
     double map_error_std;               /**< Map error standard deviation in degrees (default 5e-5 ≈ 5m). Added to GPS variance. */
-    int lag_steps;                      /**< Fixed-lag smoothing steps: 0=realtime filtering, N=delay N steps for backward evidence */
     double h0_prior_log_odds;           /**< Log-odds of null hypothesis prior: log(P(H0)/P(¬H0)). Default 0 (λ₀=1). */
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
-    bool temperature_adapt;              /**< Entropy-aware adaptive temperature scaling of the trustworthiness posterior (default true). When the layer posterior entropy exceeds 30% of the max possible entropy log2(K), the posterior is sharpened with temperature tau = max(0.35, 1 - 0.5 * H/H_max). */
     bool direction_penalty;              /**< Whether to apply direction-consistency von Mises penalty for reverse-direction candidates (default true). Set to false for ablation studies isolating the contribution of direction awareness. */
 
     /**
@@ -426,44 +422,9 @@ protected:
                          double eu_dist,
                          bool *connected,
                          const CovarianceMapMatchConfig &config,
-                         double &log_prob_unconsidered,
-                         std::vector<std::vector<double>> *tp_raw_out = nullptr);
+                         double &log_prob_unconsidered);
 
 public:
-    /**
-     * Entry in the fixed-lag smoothing buffer.
-     */
-    struct LagEntry {
-        TGLayer* layer;
-        std::vector<std::vector<double>> tp_to_next;
-        double frac_inside_pl = 1.0;  // fraction of candidates within PHMI-effective PL
-    };
-
-    /**
-     * Fixed-lag smoothing: re-evaluates the posterior of an earlier layer
-     * using evidence from L future steps.
-     *
-     *   1. Viterbi forward pass through L-step window for future evidence
-     *   2. softmax normalization for per-candidate trustworthiness
-     *
-     * The sequential Bayesian H0 test is applied separately via
-     * trajectory-global cumulative λ accumulation, not within the window.
-     *
-     * @param lag_data  buffer of (L+1) LagEntry objects
-     */
-    void apply_lag_smoothing(
-        std::deque<LagEntry>& lag_data) const;
-
-    /**
-     * Flush remaining smoothing-buffer entries at sub-trajectory boundary or
-     * trajectory end. Applies smoothing with progressively decreasing
-     * look-ahead for buffered layers.
-     */
-    static void flush_lag_buffer(
-        std::deque<LagEntry>& lag_data,
-        const CovarianceMapMatch& cmm,
-        int lag_steps);
-
 protected:
     /**
      * Update probabilities in a transition graph using CMM emission probabilities
