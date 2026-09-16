@@ -227,6 +227,10 @@ add_executable(test_cmm_gap_restart tests/test_cmm_gap_restart.cpp)
 target_link_libraries(test_cmm_gap_restart FMMLIB)
 add_test(NAME cmm_gap_restart COMMAND test_cmm_gap_restart)
 
+add_executable(test_cmm_candidate_search tests/test_cmm_candidate_search.cpp)
+target_link_libraries(test_cmm_candidate_search FMMLIB)
+add_test(NAME cmm_candidate_search COMMAND test_cmm_candidate_search)
+
 # add_executable(performance_test tmp/ubodt_performance_test.cpp)
 # target_link_libraries(performance_test FMMLIB)
 

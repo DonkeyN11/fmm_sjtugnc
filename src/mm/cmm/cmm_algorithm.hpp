@@ -329,6 +329,46 @@ public:
     static bool should_restart_sub_segment(bool enable_gap_bridging,
                                            bool next_epoch_has_candidates);
 
+    /**
+     * Decide whether the candidate search radius should be doubled and retried.
+     *
+     * The search starts at the paper's radius, r_i = HPL_i. An epoch whose
+     * protection-level disk contains no road edge would otherwise be dropped
+     * from the output entirely. That is what the manuscript's pseudocode does
+     * (`continue` on an empty candidate set), but it discards epochs whose fix
+     * is merely unlucky: the covariance honestly reports that nothing is near,
+     * yet the vehicle was on a road. Doubling recovers them.
+     *
+     * This is NOT the heuristic doubling criticised in the manuscript's
+     * related-work discussion, and the differences are what keep it honest:
+     *   - it triggers only when the candidate set is short, never to top up a
+     *     set that already qualifies, so it cannot widen the disk of an epoch
+     *     that is matching fine;
+     *   - it is capped by a hard doubling limit, so the radius stays finite and
+     *     the worst case is bounded;
+     *   - every candidate it admits lies beyond the protection level, so the
+     *     PHMI grouping files it under the integrity-invalid weight. The extra
+     *     candidates are available to the HMM but are not promoted to the
+     *     high-emission group simply because we looked further.
+     *
+     * Public so that tests/test_cmm_candidate_search.cpp can pin the stop
+     * conditions; the function is pure and has no effect on its own.
+     *
+     * @param candidates_found how many candidates the last search produced
+     * @param min_candidates how many the configuration asks for; values below 1
+     *        are clamped to 1, because validate() is not on every construction
+     *        path and a zero target would make the fallback silently unreachable
+     * @param doublings_done doublings already performed for this epoch
+     * @param max_doublings hard cap on doublings for one epoch
+     * @param search_radius the radius used for the last search
+     * @return true if the caller should double the radius and search again
+     */
+    static bool should_expand_search_radius(size_t candidates_found,
+                                            int min_candidates,
+                                            int doublings_done,
+                                            int max_doublings,
+                                            double search_radius);
+
 protected:
     /**
      * Compute direction-consistency penalty for reverse-direction candidates.

@@ -38,6 +38,23 @@ using namespace FMM::MM;
 
 namespace {
 
+// Hard cap on how many times the candidate search radius may be doubled while
+// trying to meet min_candidates (see should_expand_search_radius).
+//
+// The radius is expressed in the network's own coordinate units, not in metres:
+// for the Haikou network (EPSG:4326) a protection level of 22 m is 2.0e-4
+// degrees, and eight doublings take that to 0.051 degrees, roughly 5.7 km.
+// Any statement about "how far" this cap reaches has to be read in the CRS of
+// the network being matched -- converting it as though it were metres is the
+// same mistake that silently disabled the cumulative-reverse guard on
+// degree-based networks.
+//
+// The cap exists so the fallback cannot walk the radius arbitrarily far; on the
+// Haikou set the deepest doubling observed is 2 (a 4x radius), so it is not
+// binding there. It is part of what separates this fallback from the unbounded
+// heuristic doubling criticised in the manuscript's related work.
+constexpr int MAX_SEARCH_RADIUS_DOUBLINGS = 8;
+
 // Remove leading/trailing whitespace characters to sanitize tokens read from CSV files.
 std::string trim_copy(const std::string &input) {
     const auto begin = input.find_first_not_of(" \t\r\n");
@@ -826,11 +843,13 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
         // Optionally refine the initial network search using Mahalanobis-aware projection.
         if (config.use_mahalanobis_candidates) {
-            bool radius_expanded = false;
+            // Hoisted out of the retry loop: the observation does not change
+            // between doublings, only the radius does.
+            CORE::LineString single_point_geom;
+            single_point_geom.add_point(point);
+            int radius_doublings = 0;
 
             while (true) {
-                CORE::LineString single_point_geom;
-                single_point_geom.add_point(point);
                 Traj_Candidates traj_candidates;
                 #pragma omp critical(knn_section)
                 {
@@ -973,13 +992,21 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                     raw_probabilities.push_back(log_probability);
                 }
 
-                if (selected_candidates.size() >= static_cast<size_t>(config.min_candidates) ||
-                    edges_to_consider.empty() || radius_expanded) {
+                if (!should_expand_search_radius(selected_candidates.size(),
+                                                 config.min_candidates,
+                                                 radius_doublings,
+                                                 MAX_SEARCH_RADIUS_DOUBLINGS,
+                                                 search_radius)) {
                     break;
                 }
-
+                ++radius_doublings;
                 search_radius *= 2.0;
-                radius_expanded = true;
+            }
+            if (radius_doublings > 0) {
+                SPDLOG_DEBUG("Point {}: doubled the search radius {} time(s) "
+                             "from PL {} to {} to reach {} candidate(s)",
+                             i, radius_doublings, protection_level, search_radius,
+                             selected_candidates.size());
             }
         } else {
             // Basic candidate search that directly relies on network_kNN results.
@@ -1770,6 +1797,31 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
 bool CovarianceMapMatch::should_restart_sub_segment(bool enable_gap_bridging,
                                                    bool next_epoch_has_candidates) {
     return enable_gap_bridging && next_epoch_has_candidates;
+}
+
+// See the declaration in cmm_algorithm.hpp for the reasoning, and for why this
+// is not the heuristic doubling the manuscript criticises.
+bool CovarianceMapMatch::should_expand_search_radius(size_t candidates_found,
+                                                     int min_candidates,
+                                                     int doublings_done,
+                                                     int max_doublings,
+                                                     double search_radius) {
+    // A radius that cannot grow would make the doubling a no-op and the retry
+    // loop would spin forever: 0 * 2 == 0, and NaN and inf are worse. Checked
+    // before anything else so no caller can reach the multiplication.
+    if (!(search_radius > 0.0) || !std::isfinite(search_radius)) {
+        return false;
+    }
+    if (doublings_done >= max_doublings) {
+        return false;
+    }
+    // validate() is not on every construction path -- the Python binding and
+    // example/cmm_example.cpp build a config directly -- so clamp the target.
+    // With min_candidates <= 0 the comparison below would hold immediately and
+    // the fallback would be silently unreachable.
+    const size_t wanted =
+        static_cast<size_t>(min_candidates > 1 ? min_candidates : 1);
+    return candidates_found < wanted;
 }
 
 void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
