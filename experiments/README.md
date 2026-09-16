@@ -164,9 +164,9 @@ All experiments use the same HMM and matching parameters:
   </input>
 
   <output>
-    <file>experiments/data/real_data/cmm_result.csv.csv</file>
-    <point_mode>true</point_mode>
+    <file>experiments/data/real_data/cmm_result.csv</file>
     <fields>
+      <point_mode/>
       <seq/>
       <timestamp/>
       <ogeom/>
@@ -184,7 +184,6 @@ All experiments use the same HMM and matching parameters:
       <status/>
       <delta_entropy/>
       <posterior_entropy/>
-      <!-- <h0_lambda/> -->
       <cumu_prob/>
       <!-- <error/> -->
     </fields>
@@ -193,38 +192,43 @@ All experiments use the same HMM and matching parameters:
   <parameters>
     <k>16</k>
     <min_candidates>1</min_candidates>
-    <protection_level_multiplier>10</protection_level_multiplier>
-    <reverse_tolerance>0.0</reverse_tolerance>
-    <normalized>false</normalized>
+    <reverse_tolerance>0.1</reverse_tolerance>
     <use_mahalanobis>true</use_mahalanobis>
-    <window_length>100</window_length>
-    <filtered>false</filtered>
+    <filtered>true</filtered>
     <max_interval>180.0</max_interval>
-    <trustworthiness_threshold>10.0</trustworthiness_threshold>
+    <trustworthiness_threshold>0.0</trustworthiness_threshold>
     <phmi>0.00001</phmi>
-    <lag_steps>0</lag_steps>
-    <phmi_pl_multiplier>1</phmi_pl_multiplier>
-    <h0_prior_log_odds>10</h0_prior_log_odds>
+    <cumulative_reverse_pct>0.03</cumulative_reverse_pct>
+    <direction_penalty>true</direction_penalty>
+    <enable_gap_bridging>true</enable_gap_bridging>
   </parameters>
 
   <other>
     <log_level>2</log_level>
     <use_omp>true</use_omp>
-    <step>500</step>
-    <convert_to_projected>false</convert_to_projected>
-    <margin_used_trustworthiness>false</margin_used_trustworthiness>
+    <input_epsg>4326</input_epsg>
   </other>
 </config>
 
 ```
 
+`point_mode` is a `<fields>` element, not an `<output>` one — the parser only
+looks for it inside `config.output.fields`, and it already defaults to true.
+Any key the parser does not recognise is ignored without a warning, so a
+misplaced element fails silently. The parameter list above is the complete set
+`CovarianceMapMatchConfig::load_from_xml` reads, and the field list the
+complete set `ResultConfig::load_from_xml` reads.
+
 ### FMM Configuration
 ```xml
 <k>16</k>
 <r>0.03</r>
-<pf>0</pf>
 <gps_error>0.001</gps_error>
+<reverse_tolerance>0.0</reverse_tolerance>
 ```
+
+These are the four keys `FastMapMatchConfig::load_from_xml` reads; any other
+element under `<parameters>` is silently ignored.
 
 Both use `input/map/hainan/edges.shp` (road network) and `input/map/hainan_ubodt_indexed.bin` (UBODT).
 
