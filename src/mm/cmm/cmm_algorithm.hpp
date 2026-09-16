@@ -131,7 +131,6 @@ struct CovarianceMapMatchConfig {
                            bool enable_gap_bridging_arg = true,
                            double max_interval_arg = 180.0, /* in seconds */
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
-                           double map_error_std_arg = 5.0e-6, /* in degrees */
                            double phmi_arg = 1.0e-5,
                            double cumulative_reverse_pct_arg = 0.03,
                            bool direction_penalty_arg = true);
@@ -149,8 +148,6 @@ struct CovarianceMapMatchConfig {
     double max_interval;                /**< Maximum time interval to split trajectory */
     double trustworthiness_threshold;   /**< Threshold to filter out low-confidence matches */
 
-    // --- Additive Map Noise ---
-    double map_error_std;               /**< Map error standard deviation in degrees (default 5e-5 ≈ 5m). Added to GPS variance. */
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
     bool direction_penalty;              /**< Whether to apply direction-consistency von Mises penalty for reverse-direction candidates (default true). Set to false for ablation studies isolating the contribution of direction awareness. */
 
@@ -368,6 +365,62 @@ public:
                                             int doublings_done,
                                             int max_doublings,
                                             double search_radius);
+
+    /**
+     * Test whether a covariance matrix can be used as the paper's emission
+     * model requires, i.e. whether it defines a genuine 2x2 Gaussian.
+     *
+     * This exists to replace an earlier hard-coded floor on the standard
+     * deviation. That floor did not check validity: it rescaled *every* small
+     * covariance up to a fixed minimum, so the emission model silently used a
+     * different covariance from the one the receiver reported. Measured on the
+     * Haikou set it fired on 99.98 % of epochs with a median scale factor of
+     * 7.22, i.e. it was not a guard rail, it was the model. It also propagated
+     * into the direction penalty, which is inversely proportional to the
+     * standard deviation and therefore depended on the floor rather than on the
+     * data.
+     *
+     * The rule now is: a usable covariance is used exactly as given, however
+     * small; an unusable one is replaced by a documented isotropic fallback.
+     * The two cases are mutually exclusive and there is no third path.
+     *
+     * Only sde, sdn and sdne are examined, because to_2d_matrix() uses only
+     * those. The three components are checked for finiteness, for a strictly
+     * positive standard deviation, and for positive definiteness. Note the
+     * determinant must be strictly positive: at exactly zero the matrix is
+     * singular and Matrix2d::inverse() returns the zero matrix, which would give
+     * every candidate a Mahalanobis distance of zero and make them
+     * indistinguishable.
+     *
+     * @param cov covariance as read from the input, before any adjustment
+     * @return true if cov may be used directly
+     */
+    static bool is_covariance_usable(const CovarianceMatrix &cov);
+
+    /**
+     * Build the isotropic fallback covariance used when is_covariance_usable()
+     * rejects the input.
+     *
+     * The fallback is a 5 m circle, matching the assumed SPP accuracy of the
+     * real-vehicle data. A circle is the honest shape here: an unusable
+     * covariance carries no information about the error's orientation, so
+     * inventing an anisotropy would be to fabricate exactly the quantity that
+     * was just found missing. Note this is not a floor and must not be applied
+     * to a covariance that passes is_covariance_usable() -- a valid 0.6 m
+     * covariance stays 0.6 m.
+     *
+     * Units follow the network: metric CRS gives sigma in metres, geographic
+     * CRS in degrees. In a geographic CRS one degree of longitude is shorter
+     * than a degree of latitude by cos(latitude), so a single scale for both
+     * would make the "circle" an ellipse. The correction matters: at Haikou
+     * (20 N) it is 6 %, and it grows with latitude.
+     *
+     * @param network_projected true if the network's CRS is projected (metric)
+     * @param latitude_deg observation latitude, only used for geographic CRS
+     * @return a usable isotropic covariance
+     */
+    static CovarianceMatrix fallback_covariance(bool network_projected,
+                                                double latitude_deg);
 
 protected:
     /**

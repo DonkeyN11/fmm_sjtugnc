@@ -246,7 +246,6 @@ struct CandidateWithMetric {
 // according to Mahalanobis (or Euclidean) distance along with the score used to rank it.
 std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
                                                          const CORE::Point &obs_point,
-                                                         bool valid_covariance,
                                                          const Matrix2d &cov_inv,
                                                          NodeIndex *next_candidate_index) {
     if (edge == nullptr || edge->geom.get_num_points() < 2) {
@@ -281,22 +280,17 @@ std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
         double seg_len = std::sqrt(seg_len_sq);
         double obs_minus_start_x = obs_x - sx;
         double obs_minus_start_y = obs_y - sy;
-        double t = 0.0;
-        if (valid_covariance) {
-            // Prefer anisotropic projection when a covariance matrix is available.
-            double numerator = dx * (cov_inv.m[0][0] * obs_minus_start_x + cov_inv.m[0][1] * obs_minus_start_y) +
-                               dy * (cov_inv.m[1][0] * obs_minus_start_x + cov_inv.m[1][1] * obs_minus_start_y);
-            double denominator = dx * (cov_inv.m[0][0] * dx + cov_inv.m[0][1] * dy) +
-                                 dy * (cov_inv.m[1][0] * dx + cov_inv.m[1][1] * dy);
-            if (std::abs(denominator) < 1e-12) {
-                t = (obs_minus_start_x * dx + obs_minus_start_y * dy) / seg_len_sq;
-            } else {
-                t = numerator / denominator;
-            }
-        } else {
-            // Fall back to Euclidean projection if no covariance was provided.
-            t = (obs_minus_start_x * dx + obs_minus_start_y * dy) / seg_len_sq;
-        }
+        // Anisotropic projection: the Mahalanobis metric is the one the paper
+        // defines, and a covariance is always available -- an unusable one is
+        // replaced by the isotropic fallback before we get here, so there is no
+        // Euclidean branch left to take.
+        double numerator = dx * (cov_inv.m[0][0] * obs_minus_start_x + cov_inv.m[0][1] * obs_minus_start_y) +
+                           dy * (cov_inv.m[1][0] * obs_minus_start_x + cov_inv.m[1][1] * obs_minus_start_y);
+        double denominator = dx * (cov_inv.m[0][0] * dx + cov_inv.m[0][1] * dy) +
+                             dy * (cov_inv.m[1][0] * dx + cov_inv.m[1][1] * dy);
+        double t = std::abs(denominator) < 1e-12
+                       ? (obs_minus_start_x * dx + obs_minus_start_y * dy) / seg_len_sq
+                       : numerator / denominator;
         if (t < 0.0) t = 0.0;
         if (t > 1.0) t = 1.0;
 
@@ -305,7 +299,7 @@ std::optional<CandidateWithMetric> create_edge_candidate(NETWORK::Edge *edge,
         double diff_x = obs_x - px;
         double diff_y = obs_y - py;
         double eucl_sq = compute_euclidean_sq(diff_x, diff_y);
-        double metric = valid_covariance ? compute_mahalanobis_sq(cov_inv, diff_x, diff_y) : eucl_sq;
+        double metric = compute_mahalanobis_sq(cov_inv, diff_x, diff_y);
 
         if (metric < best_metric) {
             boost::geometry::set<0>(best_point, px);
@@ -556,7 +550,6 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    bool enable_gap_bridging_arg,
                                                    double max_interval_arg,
                                                    double trustworthiness_threshold_arg,
-                                                   double map_error_std_arg,
                                                    double phmi_arg,
                                                    double cumulative_reverse_pct_arg,
                                                    bool direction_penalty_arg)
@@ -567,7 +560,6 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       enable_gap_bridging(enable_gap_bridging_arg),
       max_interval(max_interval_arg),
       trustworthiness_threshold(trustworthiness_threshold_arg),
-      map_error_std(map_error_std_arg),
       phmi(phmi_arg),
       cumulative_reverse_pct(cumulative_reverse_pct_arg),
       direction_penalty(direction_penalty_arg) {
@@ -583,7 +575,7 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("gap_bridging {}", enable_gap_bridging);
     SPDLOG_INFO("max_interval {} trustworthiness_threshold {}",
                 max_interval, trustworthiness_threshold);
-    SPDLOG_INFO("map_error_std {} phmi {}", map_error_std, phmi);
+    SPDLOG_INFO("phmi {}", phmi);
     SPDLOG_INFO("cumulative_reverse_pct {}", cumulative_reverse_pct);
     SPDLOG_INFO("direction_penalty {}", direction_penalty);
 }
@@ -604,9 +596,6 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double max_interval = xml_data.get("config.parameters.max_interval", 180.0);
     double trustworthiness_threshold = xml_data.get("config.parameters.trustworthiness_threshold", 0.0);
 
-    // Additive map noise
-    double map_error_std = xml_data.get("config.parameters.map_error_std", 5.0e-5);
-
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
     bool direction_penalty = xml_data.get("config.parameters.direction_penalty", true);
 
@@ -614,7 +603,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap_bridging,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, phmi,
+                                    phmi,
                                     cumulative_reverse_pct, direction_penalty};
 }
 
@@ -634,8 +623,6 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double max_interval = arg_data.count("max_interval") ? arg_data["max_interval"].as<double>() : 180.0;
     double trustworthiness_threshold = arg_data.count("trustworthiness_threshold") ? arg_data["trustworthiness_threshold"].as<double>() : 0.0;
 
-    // Additive map noise
-    double map_error_std = arg_data.count("map_error_std") ? arg_data["map_error_std"].as<double>() : 5.0e-5;
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
     bool direction_penalty = arg_data.count("direction_penalty") ? arg_data["direction_penalty"].as<bool>() : true;
 
@@ -643,7 +630,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap,
                                     max_interval, trustworthiness_threshold,
-                                    map_error_std, phmi,
+                                    phmi,
                                     cumulative_reverse_pct, direction_penalty};
 }
 
@@ -666,8 +653,6 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("180.0"))
         ("trustworthiness_threshold", "Threshold on trustworthiness posterior [0,1] to filter low-confidence epochs (0.0)",
          cxxopts::value<double>()->default_value("0.0"))
-        ("map_error_std", "Map error standard deviation in degrees for additive noise (default 5e-5 ≈ 5m)",
-         cxxopts::value<double>()->default_value("5.0e-5"))
         ("phmi", "Probability of Hazardously Misleading Integrity information (default 1e-5)",
          cxxopts::value<double>()->default_value("1.0e-5"))
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
@@ -686,7 +671,6 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--enable_gap_bridging (optional) <bool>: Enable trajectory gap bridging (true)\n";
     oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
     oss << "--trustworthiness_threshold (optional) <double>: trustworthiness posterior [0,1] threshold for filtering (0.0)\n";
-    oss << "--map_error_std (optional) <double>: Map error standard deviation in degrees for additive noise (5e-5 ≈ 5m)\n";
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
     oss << "--direction_penalty (optional) <bool>: Apply direction-consistency penalty for reverse-direction candidates (true)\n";
@@ -696,11 +680,11 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
 bool CovarianceMapMatchConfig::validate() const {
     if (k <= 0 || min_candidates <= 0 || min_candidates > k ||
         reverse_tolerance < 0 ||
-        map_error_std < 0 || phmi < 0 || phmi > 1.0) {
+        phmi < 0 || phmi > 1.0) {
         SPDLOG_CRITICAL("Invalid CMM parameter k {} min_candidates {} "
-                       "reverse_tolerance {} map_error_std {} phmi {}",
+                       "reverse_tolerance {} phmi {}",
                        k, min_candidates, reverse_tolerance,
-                       map_error_std, phmi);
+                       phmi);
         return false;
     }
     if (max_interval < 0) return false;
@@ -781,40 +765,17 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
     for (int i = 0; i < num_points; ++i) {
         CORE::Point point = geom.get_point(i);
-        // Create a copy to allow modification (scaling)
+        // Create a copy so that an unusable covariance can be replaced without
+        // touching the caller's data. A usable one is used exactly as given --
+        // there is no scaling branch any more. Rescaling a small covariance up
+        // to a floor is not a guard rail: it substitutes a different covariance
+        // for the one the receiver reported, and the direction penalty, which
+        // is inversely proportional to sigma, then depends on the floor rather
+        // than on the data.
         CovarianceMatrix cov = covariances[i];
-        
-        // FIX: Enforce a minimum standard deviation to prevent probability underflow
-        // while preserving anisotropy by scaling all components proportionally
-        // The input data has sigma ~ 6e-6 (0.6m) which is too small/confident.
-        // We enforce min sigma ~ 5e-5 (approx 5 meters) while maintaining the original ratio
-        constexpr double MIN_SIGMA = 5.0e-5;
-        double scale_factor = 1.0;
-
-        // Find the smaller of sde and sdn
-        double min_sigma = std::min(cov.sde, cov.sdn);
-
-        if (min_sigma < MIN_SIGMA && min_sigma > 0) {
-            // Scale factor needed to bring min_sigma to MIN_SIGMA
-            // This preserves the original anisotropy ratio between sde and sdn
-            scale_factor = MIN_SIGMA / min_sigma;
-        } else if (min_sigma <= 0) {
-            // Invalid data, set to minimum isotropic covariance
-            cov.sde = MIN_SIGMA;
-            cov.sdn = MIN_SIGMA;
-            cov.sdne = 0.0;
-        }
-
-        if (scale_factor > 1.0) {
-            // Scale all covariance components proportionally to preserve anisotropy
-            // Standard deviations scale linearly
-            cov.sde *= scale_factor;
-            cov.sdn *= scale_factor;
-            cov.sdu *= scale_factor;
-            // Covariances scale with square of scale factor (Var(aX) = a²Var(X))
-            cov.sdne *= (scale_factor * scale_factor);
-            cov.sdeu *= (scale_factor * scale_factor);
-            cov.sdun *= (scale_factor * scale_factor);
+        if (!is_covariance_usable(cov)) {
+            cov = fallback_covariance(network_.is_projected(),
+                                      boost::geometry::get<1>(point));
         }
 
         double protection_level = protection_levels[i];
@@ -827,13 +788,11 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         SPDLOG_TRACE("Point {}: protection_level={}, search_radius={}",
                      i, protection_level, search_radius);
 
+        // is_covariance_usable() above guarantees a strictly positive
+        // determinant, so the matrix is invertible without a further check.
         Matrix2d cov_mat = cov.to_2d_matrix();
         double det = cov_mat.determinant();
-        bool valid_covariance = det > 0;
-        Matrix2d cov_inv;
-        if (valid_covariance) {
-            cov_inv = cov_mat.inverse();
-        }
+        Matrix2d cov_inv = cov_mat.inverse();
 
         double obs_x = boost::geometry::get<0>(point);
         double obs_y = boost::geometry::get<1>(point);
@@ -875,7 +834,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 double search_radius_sq = search_radius * search_radius;
 
                 for (NETWORK::Edge *edge : edges_to_consider) {
-                    if (auto edge_candidate = create_edge_candidate(edge, point, valid_covariance, cov_inv, &next_candidate_index)) {
+                    if (auto edge_candidate = create_edge_candidate(edge, point, cov_inv, &next_candidate_index)) {
                         candidate_pool.push_back(*edge_candidate);
                     }
 
@@ -887,7 +846,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                         if (search_radius > 0 && eucl_sq > search_radius_sq) {
                             return;
                         }
-                        double metric = valid_covariance ? compute_mahalanobis_sq(cov_inv, dx, dy) : eucl_sq;
+                        double metric = compute_mahalanobis_sq(cov_inv, dx, dy);
                         Candidate candidate{};
                         candidate.index = next_candidate_index++;
                         candidate.edge = edge;
@@ -948,45 +907,30 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 for (const auto &entry : candidate_pool) {
                     selected_candidates.push_back(entry.candidate);
                     double log_probability = -std::numeric_limits<double>::infinity();
-                    if (valid_covariance) {
-                        double dx = obs_x - boost::geometry::get<0>(entry.candidate.point);
-                        double dy = obs_y - boost::geometry::get<1>(entry.candidate.point);
+                    double dx = obs_x - boost::geometry::get<0>(entry.candidate.point);
+                    double dy = obs_y - boost::geometry::get<1>(entry.candidate.point);
 
-                        // Apply additive map noise: add map error variance to GPS variance
-                        // This smooths the effect of small GPS errors and preserves anisotropy
-                        double map_var = config.map_error_std * config.map_error_std;
-                        double var_e_total = cov.sde * cov.sde + map_var;
-                        double var_n_total = cov.sdn * cov.sdn + map_var;
+                    // Emission is the bivariate Gaussian of the GNSS covariance
+                    // itself. No map-error variance is added: the receiver's Sigma
+                    // is the only error model the paper defines, and the same Sigma
+                    // already produced the candidate metric above.
+                    double mahal_sq = cov_inv.m[0][0] * dx * dx +
+                                      2 * cov_inv.m[0][1] * dx * dy +
+                                      cov_inv.m[1][1] * dy * dy;
+                    // Log Gaussian: -0.5 * (log(2*pi) + log|Sigma| + d^T Sigma^-1 d)
+                    log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det + 1e-12) + mahal_sq);
 
-                        // Build effective covariance matrix with additive map noise
-                        Matrix2d cov_eff;
-                        cov_eff.m[0][0] = var_e_total;
-                        cov_eff.m[1][1] = var_n_total;
-                        // Map error is assumed isotropic and independent, so covariance term remains unchanged
-                        cov_eff.m[0][1] = cov_eff.m[1][0] = cov.sdne;
-
-                        double det_eff = cov_eff.determinant();
-                        if (det_eff > 1e-30) {
-                            Matrix2d cov_inv_eff = cov_eff.inverse();
-                            double mahal_sq = cov_inv_eff.m[0][0] * dx * dx +
-                                             2 * cov_inv_eff.m[0][1] * dx * dy +
-                                             cov_inv_eff.m[1][1] * dy * dy;
-                            // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + mahal_sq)
-                            log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahal_sq);
-
-                            // Direction penalty for reverse-direction candidates
-                            if (config.direction_penalty && i > 0 && entry.candidate.edge != nullptr) {
-                                const auto &edge_geom = network_.get_edge_geom(entry.candidate.edge->id);
-                                if (edge_geom.get_num_points() >= 2) {
-                                    CORE::Point obs_prev = geom.get_point(i - 1);
-                                    double penalty = compute_direction_penalty(
-                                        obs_prev, point,
-                                        edge_geom.get_point(0),          // edge start
-                                        edge_geom.get_point(edge_geom.get_num_points() - 1), // edge end
-                                        cov);
-                                    log_probability += penalty;
-                                }
-                            }
+                    // Direction penalty for reverse-direction candidates
+                    if (config.direction_penalty && i > 0 && entry.candidate.edge != nullptr) {
+                        const auto &edge_geom = network_.get_edge_geom(entry.candidate.edge->id);
+                        if (edge_geom.get_num_points() >= 2) {
+                            CORE::Point obs_prev = geom.get_point(i - 1);
+                            double penalty = compute_direction_penalty(
+                                obs_prev, point,
+                                edge_geom.get_point(0),          // edge start
+                                edge_geom.get_point(edge_geom.get_num_points() - 1), // edge end
+                                cov);
+                            log_probability += penalty;
                         }
                     }
                     raw_probabilities.push_back(log_probability);
@@ -1029,42 +973,23 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 double dy = obs_y - cand_y;
 
                 double log_probability = -std::numeric_limits<double>::infinity();
-                if (valid_covariance) {
-                    // Apply additive map noise: add map error variance to GPS variance
-                    // This smooths the effect of small GPS errors and preserves anisotropy
-                    double map_var = config.map_error_std * config.map_error_std;
-                    double var_e_total = cov.sde * cov.sde + map_var;
-                    double var_n_total = cov.sdn * cov.sdn + map_var;
+                double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
+                                              2 * cov_inv.m[0][1] * dx * dy +
+                                              cov_inv.m[1][1] * dy * dy;
+                // Log Gaussian: -0.5 * (log(2*pi) + log|Sigma| + d^T Sigma^-1 d)
+                log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det + 1e-12) + mahalanobis_dist_sq);
 
-                    // Build effective covariance matrix with additive map noise
-                    Matrix2d cov_eff;
-                    cov_eff.m[0][0] = var_e_total;
-                    cov_eff.m[1][1] = var_n_total;
-                    // Map error is assumed isotropic and independent, so covariance term remains unchanged
-                    cov_eff.m[0][1] = cov_eff.m[1][0] = cov.sdne;
-
-                    double det_eff = cov_eff.determinant();
-                    if (det_eff > 1e-30) {
-                        Matrix2d cov_inv_eff = cov_eff.inverse();
-                        double mahalanobis_dist_sq = cov_inv_eff.m[0][0] * dx * dx +
-                                                      2 * cov_inv_eff.m[0][1] * dx * dy +
-                                                      cov_inv_eff.m[1][1] * dy * dy;
-                        // Log Gaussian: -0.5 * (log(2*pi) + log(det + eps) + mahalanobis_dist_sq)
-                        log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_eff + 1e-12) + mahalanobis_dist_sq);
-
-                        // Direction penalty for reverse-direction candidates
-                        if (config.direction_penalty && i > 0 && cand.edge != nullptr) {
-                            const auto &edge_geom = network_.get_edge_geom(cand.edge->id);
-                            if (edge_geom.get_num_points() >= 2) {
-                                CORE::Point obs_prev = geom.get_point(i - 1);
-                                double penalty = compute_direction_penalty(
-                                    obs_prev, point,
-                                    edge_geom.get_point(0),
-                                    edge_geom.get_point(edge_geom.get_num_points() - 1),
-                                    cov);
-                                log_probability += penalty;
-                            }
-                        }
+                // Direction penalty for reverse-direction candidates
+                if (config.direction_penalty && i > 0 && cand.edge != nullptr) {
+                    const auto &edge_geom = network_.get_edge_geom(cand.edge->id);
+                    if (edge_geom.get_num_points() >= 2) {
+                        CORE::Point obs_prev = geom.get_point(i - 1);
+                        double penalty = compute_direction_penalty(
+                            obs_prev, point,
+                            edge_geom.get_point(0),
+                            edge_geom.get_point(edge_geom.get_num_points() - 1),
+                            cov);
+                        log_probability += penalty;
                     }
                 }
 
@@ -1797,6 +1722,61 @@ void CovarianceMapMatch::initialize_first_layer(TGLayer *layer, const Covariance
 bool CovarianceMapMatch::should_restart_sub_segment(bool enable_gap_bridging,
                                                    bool next_epoch_has_candidates) {
     return enable_gap_bridging && next_epoch_has_candidates;
+}
+
+// See the declaration in cmm_algorithm.hpp for why this replaces a floor rather
+// than being one.
+bool CovarianceMapMatch::is_covariance_usable(const CovarianceMatrix &cov) {
+    if (!std::isfinite(cov.sde) || !std::isfinite(cov.sdn) ||
+        !std::isfinite(cov.sdne)) {
+        return false;
+    }
+    // Strictly positive, not merely non-negative: a zero standard deviation
+    // gives a singular matrix, and Matrix2d::inverse() answers a singular input
+    // with the zero matrix instead of failing.
+    if (!(cov.sde > 0.0) || !(cov.sdn > 0.0)) {
+        return false;
+    }
+    // Symmetric positive definite in 2x2: det = sde^2 * sdn^2 - sdne^2 > 0.
+    // This is also the Cauchy-Schwarz condition |sdne| < sde * sdn, so it
+    // rejects correlations that no covariance matrix could have.
+    return cov.sde * cov.sde * cov.sdn * cov.sdn - cov.sdne * cov.sdne > 0.0;
+}
+
+// See the declaration in cmm_algorithm.hpp for the choice of shape and units.
+CovarianceMatrix CovarianceMapMatch::fallback_covariance(bool network_projected,
+                                                         double latitude_deg) {
+    constexpr double FALLBACK_SIGMA_M = 5.0;
+    // Mean meridian length; the WGS84 value, not the 111320 round number, so
+    // the metric and geographic branches agree to better than 0.2 %.
+    constexpr double METERS_PER_DEGREE_LAT = 111132.0;
+    // A degree of longitude shrinks with cos(latitude) and vanishes at the
+    // pole, where no finite east-west sigma can represent 5 m. Clamping the
+    // cosine keeps the result finite and is documented rather than silent.
+    constexpr double MIN_COS_LAT = 1e-6;  // ~110 m from the pole
+
+    CovarianceMatrix fallback;
+    // Isotropic means no cross terms.
+    fallback.sdne = 0.0;
+    fallback.sdeu = 0.0;
+    fallback.sdun = 0.0;
+
+    if (network_projected) {
+        fallback.sde = FALLBACK_SIGMA_M;
+        fallback.sdn = FALLBACK_SIGMA_M;
+        fallback.sdu = FALLBACK_SIGMA_M;
+        return fallback;
+    }
+
+    const double lat_rad = latitude_deg * M_PI / 180.0;
+    const double cos_lat = std::cos(lat_rad);
+    const double safe_cos = cos_lat > MIN_COS_LAT ? cos_lat : MIN_COS_LAT;
+    fallback.sdn = FALLBACK_SIGMA_M / METERS_PER_DEGREE_LAT;
+    fallback.sde = FALLBACK_SIGMA_M / (METERS_PER_DEGREE_LAT * safe_cos);
+    // Vertical is never read by the 2D model, but keeping it in the same units
+    // as sdn costs nothing and avoids leaving an inconsistent row behind.
+    fallback.sdu = fallback.sdn;
+    return fallback;
 }
 
 // See the declaration in cmm_algorithm.hpp for the reasoning, and for why this
