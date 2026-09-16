@@ -17,7 +17,7 @@
     <point_mode>true</point_mode>
     <fields><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
       <ep/><tp/><trustworthiness/><n_best_trustworthiness/><candidates/>
-      <status/><delta_entropy/><posterior_entropy/><h0_lambda/><cumu_prob/></fields>
+      <status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
   </output>
   <parameters>
     <k>16</k>

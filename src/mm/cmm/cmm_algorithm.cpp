@@ -1268,8 +1268,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     Traj_Candidates empty_tc;
     std::vector<std::vector<double>> empty_log_eps;
 
-    auto process_sub_segment = [&](TransitionGraph* tg_ptr, const std::vector<int>& sub_indices,
-                                     std::vector<double>* h0_lambda_vec = nullptr) {
+    auto process_sub_segment = [&](TransitionGraph* tg_ptr, const std::vector<int>& sub_indices) {
         if (tg_ptr == nullptr || sub_indices.empty()) return;
         int start_real_idx = sub_indices.front();
         int end_real_idx = sub_indices.back();
@@ -1337,13 +1336,6 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             // fraction of the total probability mass.
             double trust = node->trustworthiness;
 
-            // FUTURE: H0 lambda for discount framework (PHMI + velocity + geometry)
-            double h0_lambda_val = 1.0;  // placeholder: discount disabled
-#if 0
-            double h0_lambda_val = (h0_lambda_vec != nullptr && i > 0 && i - 1 < h0_lambda_vec->size())
-                ? std::exp(std::max(-700.0, std::min(700.0, (*h0_lambda_vec)[i - 1]))) : 1.0;
-#endif
-
             // Every transition-graph node is built from tc_raw, so node->c points at
             // a real road candidate and node->c->edge is never null. The check is
             // retained as cheap defence: it was added when an off-road background
@@ -1354,7 +1346,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             // filtered_path stays empty and the FAILED_NO_CANDIDATE fallback below
             // reports it rather than crashing.
             if (node->c != nullptr && node->c->edge != nullptr) {
-                MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy, h0_lambda_val};
+                MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy};
                 matched_candidate_path.push_back(mc);
 
                 if (!config.filtered || trust >= config.trustworthiness_threshold) {
@@ -1454,7 +1446,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             constexpr double MAX_REASONABLE_SPEED = 40.0; // 144 km/h
 
             if (config.enable_gap_bridging && (speed > MAX_REASONABLE_SPEED || time_diff > config.max_interval)) {
-                process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
+                process_sub_segment(tg_ptr.get(), current_sub_indices);
 
                 for (int skipped_idx : skipped_indices) {
                     final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
@@ -1504,7 +1496,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
                 if (should_restart) {
                     // 1. Commit the current sub-segment
-                    process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
+                    process_sub_segment(tg_ptr.get(), current_sub_indices);
                     for (int skipped_idx : skipped_indices) {
                         final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
                     }
@@ -1552,7 +1544,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
 
         if (!current_sub_indices.empty()) {
-            process_sub_segment(tg_ptr.get(), current_sub_indices, /*h0*/ nullptr);  // FUTURE: &h0_log_lambdas
+            process_sub_segment(tg_ptr.get(), current_sub_indices);
         }
         for (int skipped_idx : skipped_indices) {
             final_results.push_back(create_fallback_result(skipped_idx, skipped_idx, MatchStatus::FAILED_DISCONNECTED));
