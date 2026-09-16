@@ -40,9 +40,10 @@ BASELINE = PROC / "cmm_result_fixed_en.csv"
 CANDIDATE = PROC / "cmm_result_enu.csv"
 FMM = PROC / "fmm_result.csv"
 
-# Extra ENU variants at other protection_level_multiplier settings, used to tell
-# "the covariance frame was wrong" apart from "the search radius now needs a
-# larger multiplier". Missing files are skipped.
+# Extra ENU variants produced back when the search radius still carried a
+# protection-level multiplier. That knob is gone (r_i = HPL_i), so these files
+# are historical artefacts kept only to tell "the covariance frame was wrong"
+# apart from "the old radius was too small". Missing files are skipped.
 EXTRA_VARIANTS = [("enu_m1", "cmm_result_enu_mul1.csv"),
                   ("enu_m5", "cmm_result_enu_mul5.csv"),
                   ("enu_m10", "cmm_result_enu_mul10.csv")]

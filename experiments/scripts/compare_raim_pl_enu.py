@@ -99,13 +99,13 @@ def main():
     print(f"  epochs with PL unchanged (|ratio-1| < 1e-6): "
           f"{int((np.abs(w_all / o_all - 1) < 1e-6).sum())} / {len(o_all)}")
 
-    # how does this interact with the candidate-search multiplier?
+    # The candidate-search radius IS the PL (r_i = HPL_i, no multiplier); the
+    # only enlargement is the bounded doubling fallback that fires on a
+    # zero-candidate epoch. Report the median HPL itself as the entry radius.
     print()
-    print("  Candidate search radius = protection_level_multiplier * HPL "
-          "(multiplier = 3.0 in the current real-data config):")
-    for mult in (1.0, 3.0, 10.0):
-        print(f"    x{mult:>4.1f}:  legacy median radius = {np.median(o_all) * mult:8.2f} m"
-              f"   ->   fixed median radius = {np.median(w_all) * mult:8.2f} m")
+    print("  Candidate search radius = HPL (no multiplier; r_i = HPL_i):")
+    print(f"    legacy median entry radius = {np.median(o_all):8.2f} m")
+    print(f"    fixed  median entry radius = {np.median(w_all):8.2f} m")
 
     return 0
 

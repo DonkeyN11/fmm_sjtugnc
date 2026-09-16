@@ -69,7 +69,7 @@ def main():
     cmm = load_csv(DATA_DIR / "cmm_result.csv",
                    ["id", "timestamp"],
                    ["pgeom", "cpath", "trustworthiness", "ep", "tp", "n_best_trustworthiness",
-                    "delta_entropy", "posterior_entropy", "h0_lambda", "status"])
+                    "delta_entropy", "posterior_entropy", "status"])
 
     print("Loading FMM results...")
     fmm = load_csv(DATA_DIR / "fmm_result.csv",

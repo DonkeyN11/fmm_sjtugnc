@@ -14,11 +14,10 @@ Coverage:
   - sigma mismatch: data/simulation/sigma_mismatch/prXX_wls20/
 
 Config: replicates exp3_full_matching.py build_cmm_xml EXACTLY
-(k=16, min_candidates=1, protection_level_multiplier=3, lag_steps=5,
- phmi=1e-5, phmi_pl_multiplier=1, normalized=false, use_mahalanobis=true,
- filtered=false). Unspecified params use XML defaults (background_prob=0.1,
- map_error_std=5.0e-5, cumulative_reverse_pct=0.03, temperature_adapt=true,
- direction_penalty=true).
+(k=16, min_candidates=1, reverse_tolerance=0.0, use_mahalanobis=true,
+ filtered=false, max_interval=180.0, trustworthiness_threshold=0.0,
+ phmi=1e-5, cumulative_reverse_pct=0.03, direction_penalty=true,
+ enable_gap_bridging=true). Unspecified params use the XML defaults.
 
 Usage: python experiments/scripts/rerun_cmm_fixed_en.py [--force]
 """
@@ -89,25 +88,22 @@ def build_cmm_xml(gps_csv: str, mr_out: str) -> str:
       <sdne>sdne</sdne><sdeu>sdeu</sdeu><sdun>sdun</sdun>
       <protection_level>protection_level</protection_level>
     </gps>
-    <gps_point>true</gps_point>
   </input>
   <output>
-    <file>{mr_out}</file><point_mode>true</point_mode>
-    <fields><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
+    <file>{mr_out}</file>
+    <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
       <ep/><tp/><trustworthiness/><n_best_trustworthiness/><candidates/>
-      <status/><delta_entropy/><posterior_entropy/><h0_lambda/><cumu_prob/></fields>
+      <status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
   </output>
   <parameters>
-    <k>16</k><min_candidates>1</min_candidates><protection_level_multiplier>3</protection_level_multiplier>
-    <reverse_tolerance>0.0</reverse_tolerance><normalized>false</normalized>
+    <k>16</k><min_candidates>1</min_candidates>
+    <reverse_tolerance>0.0</reverse_tolerance>
     <use_mahalanobis>true</use_mahalanobis><filtered>false</filtered>
-    <window_length>100</window_length>
     <max_interval>180.0</max_interval><trustworthiness_threshold>0.0</trustworthiness_threshold>
-    <phmi>0.00001</phmi><lag_steps>5</lag_steps>
-    <phmi_pl_multiplier>1</phmi_pl_multiplier><h0_prior_log_odds>0</h0_prior_log_odds>
+    <phmi>0.00001</phmi><cumulative_reverse_pct>0.03</cumulative_reverse_pct>
+    <direction_penalty>true</direction_penalty><enable_gap_bridging>true</enable_gap_bridging>
   </parameters>
-  <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step>
-    <convert_to_projected>false</convert_to_projected></other>
+  <other><log_level>2</log_level><use_omp>true</use_omp></other>
 </config>"""
     return xml
 

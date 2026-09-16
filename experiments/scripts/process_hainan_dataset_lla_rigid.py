@@ -871,24 +871,10 @@ Key Features:
     )
 
     parser.add_argument(
-        "--cmm-protection-level-multiplier",
-        type=float,
-        default=10.0,
-        help="CMM: protection level multiplier"
-    )
-
-    parser.add_argument(
         "--cmm-reverse-tolerance",
         type=float,
         default=0.0001,
-        help="CMM: reverse tolerance (degrees, ~0.0001 deg ≈ 10m)"
-    )
-
-    parser.add_argument(
-        "--cmm-window-length",
-        type=int,
-        default=100,
-        help="CMM: window length for trustworthiness"
+        help="CMM: reverse tolerance as a ratio of edge length (0.0001 = 0.01%)"
     )
 
     # FMM parameters (in degrees for LLA)
@@ -952,7 +938,7 @@ Key Features:
     print(f"  HPL unit: {args.hpl_unit}")
     print(f"  FMM radius: {args.fmm_radius} deg (~{args.fmm_radius * 111320:.1f}m)")
     print(f"  FMM GPS error: {args.fmm_gps_error} deg (~{args.fmm_gps_error * 111320:.1f}m)")
-    print(f"  CMM reverse tolerance: {args.cmm_reverse_tolerance} deg (~{args.cmm_reverse_tolerance * 111320:.1f}m)")
+    print(f"  CMM reverse tolerance: {args.cmm_reverse_tolerance} (ratio of edge length)")
 
     if not Path(args.network).exists():
         print(f"\nError: Network file not found: {args.network}")
@@ -996,12 +982,8 @@ Key Features:
         cmm_config = CovarianceMapMatchConfig(
             k_arg=args.cmm_k,
             min_candidates_arg=args.cmm_min_candidates,
-            protection_level_multiplier_arg=args.cmm_protection_level_multiplier,
             reverse_tolerance=args.cmm_reverse_tolerance,
-            normalized_arg=True,
-            use_mahalanobis_candidates_arg=True,
-            window_length_arg=args.cmm_window_length,
-            margin_used_trustworthiness_arg=False
+            use_mahalanobis_candidates_arg=True
         )
         cmm = CovarianceMapMatch(network, graph, ubodt)
         print("  CMM instance created\n")

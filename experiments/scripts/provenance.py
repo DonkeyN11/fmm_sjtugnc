@@ -7,7 +7,7 @@ Usage in any experiment script:
         script=__file__,
         data_sources=["data/simulation/sigma_10/no_occlusion/no_fault", ...],
         description="Sigma sweep CaMM vs HMM matching",
-        parameters={"k": 16, "phmi": 1e-5, "lag_steps": 0},
+        parameters={"k": 16, "phmi": 1e-5},
     )
 """
 import json, os, sys, hashlib

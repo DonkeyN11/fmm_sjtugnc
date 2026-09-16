@@ -54,7 +54,6 @@ def load_cmm_results(path: Path):
                 'tw': float(row.get('trustworthiness', '0')),
                 'delta_entropy': float(row.get('delta_entropy', '0')),
                 'posterior_entropy': float(row.get('posterior_entropy', '0')),
-                'h0_lambda': float(row.get('h0_lambda', '0')),
                 'cumu_prob': float(row.get('cumu_prob', '0')),
             }
             ogeom = parse_point(row.get('ogeom', ''))

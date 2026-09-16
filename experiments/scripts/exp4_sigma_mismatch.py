@@ -69,25 +69,22 @@ def build_cmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Pa
       <sdne>sdne</sdne><sdeu>sdeu</sdeu><sdun>sdun</sdun>
       <protection_level>protection_level</protection_level>
     </gps>
-    <gps_point>true</gps_point>
   </input>
   <output>
-    <file>{mr_out}</file><point_mode>true</point_mode>
-    <fields><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
+    <file>{mr_out}</file>
+    <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
       <ep/><tp/><trustworthiness/><n_best_trustworthiness/><candidates/>
-      <status/><delta_entropy/><posterior_entropy/><h0_lambda/><cumu_prob/></fields>
+      <status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
   </output>
   <parameters>
-    <k>16</k><min_candidates>1</min_candidates><protection_level_multiplier>3</protection_level_multiplier>
-    <reverse_tolerance>0.0</reverse_tolerance><normalized>false</normalized>
+    <k>16</k><min_candidates>1</min_candidates>
+    <reverse_tolerance>0.0</reverse_tolerance>
     <use_mahalanobis>true</use_mahalanobis><filtered>false</filtered>
-    <window_length>100</window_length>
     <max_interval>180.0</max_interval><trustworthiness_threshold>0.0</trustworthiness_threshold>
-    <phmi>0.00001</phmi><lag_steps>5</lag_steps>
-    <phmi_pl_multiplier>1</phmi_pl_multiplier><h0_prior_log_odds>0</h0_prior_log_odds>
+    <phmi>0.00001</phmi><cumulative_reverse_pct>0.03</cumulative_reverse_pct>
+    <direction_penalty>true</direction_penalty><enable_gap_bridging>true</enable_gap_bridging>
   </parameters>
-  <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step>
-    <convert_to_projected>false</convert_to_projected></other>
+  <other><log_level>2</log_level><use_omp>true</use_omp></other>
 </config>"""
     tmp = tempfile.NamedTemporaryFile(suffix=".xml", delete=False, mode="w")
     tmp.write(xml); tmp.close()
@@ -105,12 +102,12 @@ def build_fmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Pa
     </gps>
   </input>
   <output>
-    <file>{mr_out}</file><point_mode>true</point_mode>
-    <fields><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
+    <file>{mr_out}</file>
+    <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
       <ep/><tp/><trustworthiness/></fields>
   </output>
   <parameters>
-    <k>16</k><r>0.03</r><pf>0</pf><gps_error>0.001</gps_error>
+    <k>16</k><r>0.03</r><gps_error>0.001</gps_error>
     <reverse_tolerance>0.0</reverse_tolerance>
   </parameters>
   <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step></other>
