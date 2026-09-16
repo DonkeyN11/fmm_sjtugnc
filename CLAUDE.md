@@ -51,7 +51,7 @@ from fmm import Network, NetworkGraph, UBODT, FastMapMatch, FastMapMatchConfig
 from fmm import CovarianceMapMatch, CovarianceMapMatchConfig
 ```
 
-See [python/CMM_PYTHON_API.md](python/CMM_PYTHON_API.md) for CMM Python API details.
+SWIG renames the constructor arguments with an `_arg` suffix, so the keyword form is `CovarianceMapMatchConfig(k_arg=16, min_candidates_arg=1)` — `k=16` raises `TypeError`. See [CMM_README.md](CMM_README.md) for the CMM C++ API.
 
 ### Testing
 
@@ -110,7 +110,7 @@ $$
 \qquad
 \boldsymbol{\Sigma}_{x} = (\mathbf{H}^{\mathrm{T}}\mathbf{W}\mathbf{H})^{-1}
 $$
-The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i = \begin{bmatrix} \sigma_E^2 & \sigma_{EN} \\ \sigma_{EN} & \sigma_N^2 \end{bmatrix}$ drives the anisotropic emission model. In practice, $\boldsymbol{\Sigma}_i$ is parsed from NMEA `GST` messages or computed from RINEX observations in `python/experiments/compute_raim_pl.py`.
+The $2\times 2$ horizontal block $\boldsymbol{\Sigma}_i = \begin{bmatrix} \sigma_E^2 & \sigma_{EN} \\ \sigma_{EN} & \sigma_N^2 \end{bmatrix}$ drives the anisotropic emission model. In practice, $\boldsymbol{\Sigma}_i$ is parsed from NMEA `GST` messages (via `experiments/scripts/extract_spp_for_cmm.py`, which applies the calibration described below) or computed from RINEX observations in `experiments/scripts/compute_raim_pl.py`.
 
 **Protection Level from RAIM.** The Horizontal Protection Level (HPL) bounds position error at integrity risk $10^{-5}$:
 $$
@@ -125,7 +125,15 @@ Instead of a fixed-radius search, CMM uses an adaptive, geometry-driven search d
 $$
 \Omega_i = \{ x \in \mathbb{R}^2 \mid \| x - z_i \|_2 \le \mathrm{HPL}_i \}
 $$
-Candidate road segments are all edges intersecting $\Omega_i$. Under good satellite geometry HPL is small (~14 m at $\sigma=1$ m); under degraded geometry HPL grows proportionally. The `protection_level_multiplier` parameter allows scaling the HPL (e.g., 3.0 in simulations, 10.0 in real experiments).
+Candidate road segments are all edges intersecting $\Omega_i$. Under good satellite geometry HPL is small (~14 m at $\sigma=1$ m); under degraded geometry HPL grows proportionally. The search radius **is** the protection level — there is no multiplier parameter.
+
+**Bounded radius fallback.** The construction above presumes the network intersects $\Omega_i$ at all, which can fail (an optimistic $\mathrm{HPL}_i$, a multipath-displaced fix, or a road absent from the network). Instead of discarding the epoch, the *search radius alone* is enlarged and the query retried:
+$$
+r_i^{(m)} = 2^m \, \mathrm{HPL}_i, \qquad m = 0, 1, \dots, M
+$$
+doubling until the candidate set reaches the floor `min_candidates` (default 3; 1 in the real-data configs, where the retry therefore fires exactly on a zero-candidate epoch), and skipping the epoch only if it is still empty at $m = M$. `MAX_SEARCH_RADIUS_DOUBLINGS = 8`, so the fallback reaches at most $256\,\mathrm{HPL}_i$. The predicate is the pure static `should_expand_search_radius()` ([src/mm/cmm/cmm_algorithm.cpp](src/mm/cmm/cmm_algorithm.cpp)).
+
+This is deliberately narrower than the heuristic radius expansion criticised in the paper: it only ever *enlarges* and only until a floor is reached (never re-shrinks to hold a target count), it is bounded by a fixed $M$ rather than iterated until a count is met, and a segment admitted at $m > 0$ lies outside $\mathrm{HPL}_i$ by construction, so the PHMI-grouped normalization below gives it the integrity-risk weight $\mathrm{PHMI}$ — it enters the HMM as a candidate the covariance does *not* support.
 
 ### Level 2: Covariance-Based Emission Probability
 
@@ -139,15 +147,20 @@ Geometric interpretation via Cholesky factorization $\boldsymbol{\Sigma}_i = \ma
 $$
 p(z_i \mid x_{i,j}) = \frac{1}{2\pi \sqrt{|\boldsymbol{\Sigma}_i|}} \exp\!\left[ -\frac{1}{2} \mathbf{d}_{i,j}^{\mathrm{T}} \boldsymbol{\Sigma}_i^{-1} \mathbf{d}_{i,j} \right]
 $$
-where $\mathbf{d}_{i,j} = z_i - x_{i,j}$. This is implemented in `calculate_emission_log_prob()` in [src/mm/cmm/cmm_algorithm.hpp](src/mm/cmm/cmm_algorithm.hpp).
+where $\mathbf{d}_{i,j} = z_i - x_{i,j}$. Computed in log space as $-\tfrac{1}{2}(\log 2\pi + \log |\boldsymbol{\Sigma}_i| + \mathbf{d}_{i,j}^{\mathrm{T}}\boldsymbol{\Sigma}_i^{-1}\mathbf{d}_{i,j})$ at [src/mm/cmm/cmm_algorithm.cpp:920](src/mm/cmm/cmm_algorithm.cpp#L920), with no inflating term: there is no map-error variance and no floor on the standard deviation.
+
+**Covariance validity.** The covariance is used exactly as reported, however small. If it is not a valid $2\times2$ Gaussian — `sde`/`sdn` non-finite or non-positive, or $s_{de}^2 s_{dn}^2 - s_{dne}^2 \le 0$ — then and only then is it replaced wholesale by a documented isotropic 5 m fallback (`fallback_covariance()`), converted to degrees when the network is geographic. The test is `is_covariance_usable()`; the two cases are mutually exclusive and there is no third path. This replaced a hard-coded `MIN_SIGMA` floor that did not check validity but rescaled *every* small covariance up to a fixed minimum — it fired on 99.98 % of the Haikou epochs with a median scale factor of 7.22, so it was the model rather than a guard rail, and it propagated into the direction penalty, which is inversely proportional to the standard deviation.
+
+**Data-side calibration.** NMEA `GST` describes the receiver's *RTK* solution class, not the SPP solution actually emitted, so the raw GST covariance understates the SPP error. `experiments/scripts/extract_spp_for_cmm.py` scales it by `GST_COVARIANCE_SCALE = 3.0008` before building the CMM input table. The factor is not an $\sigma$-ratio: the model consumes only the quadratic form $\mathbf{d}^{\mathrm{T}}\boldsymbol{\Sigma}^{-1}\mathbf{d}$, and $\log|\boldsymbol{\Sigma}|$ cancels in the same-epoch softmax, so the matched-scale criterion is $k=\sqrt{\mathbb{E}[\mathbf{d}^{\mathrm{T}}\boldsymbol{\Sigma}_{\mathrm{gst}}^{-1}\mathbf{d}]/2}$ (measured 3.0008 over 15034 epochs; median $q = 5.39$). Covariance scales by $k^2$, so $\sigma$ scales by $k$ and the cross-covariance by $k^2$.
 
 ### Level 3: Trustworthiness as Calibrated Posterior
 
-**Probabilistic normalization (critical for calibration).** Two normalization steps ensure valid probabilities:
-1. **Row-normalized transitions**: $t_{a \to b} = w_{a \to b} / \sum_j w_{a \to j}$ where $w_{a \to b} = \min(1, d_{\text{gnss}} / d_{\text{road}})$, ensuring $\sum_j t_{a \to j} = 1$.
-2. **Uniform initial prior**: $\pi(i) = 1/K$ for $K$ road candidates.
+**Probabilistic normalization (critical for calibration).** Three normalization steps ensure valid probabilities:
+1. **PHMI-grouped emission normalization**: candidates are partitioned at the protection level into $\mathcal{C}^{\mathrm{in}}_i = \{j : d_{i,j} \le \mathrm{HPL}_i\}$ and its complement; each group is normalized over its own members and scaled by the probability that it contains the truth, $(1-\mathrm{PHMI})$ and $\mathrm{PHMI}$ respectively, so the layer sums to 1 when both groups are non-empty (or when only the inside group is) and to $\mathrm{PHMI}$ when only the outside group is. That last case is not exotic: with `min_candidates = 1` the radius fallback fires exactly when nothing lies inside $\mathrm{HPL}_i$, so every epoch it rescues carries emission mass $\mathrm{PHMI}$ — the epoch is kept, but it is not claimed to be explained. The per-epoch trustworthiness is a ratio at a single epoch, so this mass cancels there and acts only on the choice of path. With `phmi = 0` the grouping degenerates to a plain layer-wise softmax. This is what gives the bounded radius fallback its meaning: candidates recovered at $m>0$ are all outside $\mathrm{HPL}_i$, so they are exactly the ones that receive the $\mathrm{PHMI}$ weight.
+2. **Row-normalized transitions**: $t_{a \to b} = w_{a \to b} / \sum_j w_{a \to j}$ where $w_{a \to b} = \min(1, d_{\text{gnss}} / d_{\text{road}})$, ensuring $\sum_j t_{a \to j} = 1$.
+3. **Uniform initial prior**: $\pi(i) = 1/K$ for $K$ road candidates.
 
-An off-road **background state** $p_{\text{bg}} = 0.1$ used to be listed here as a third step. It has been removed from the code: because both the emission and the transition normalisation happen before the softmax that produces trustworthiness, the constant factor cancels, and the only place it did not cancel was layer initialisation, where it was miscounted into $K$. Measured on the Haikou set it changed the reported trustworthiness of exactly 8 of 16155 epochs — the first epoch of each trajectory and sub-segment — and no matched path. It was also actively harmful: appending it made a zero-candidate epoch look non-empty, which let an off-road epoch enter the Viterbi layer and permanently stall the sub-segment. An epoch with no road candidate is now simply skipped.
+An off-road **background state** $p_{\text{bg}} = 0.1$ used to be listed here as a further normalization step. It has been removed from the code: because both the emission and the transition normalisation happen before the softmax that produces trustworthiness, the constant factor cancels, and the only place it did not cancel was layer initialisation, where it was miscounted into $K$. Measured on the Haikou set it changed the reported trustworthiness of exactly 8 of 16155 epochs — the first epoch of each trajectory and sub-segment — and no matched path. It was also actively harmful: appending it made a zero-candidate epoch look non-empty, which let an off-road epoch enter the Viterbi layer and permanently stall the sub-segment. An epoch with no road candidate is now simply skipped.
 
 **Forward algorithm (trustworthiness computation).** The per-epoch trustworthiness is the filtering posterior of the Viterbi-optimal candidate $i^*$:
 $$
@@ -166,13 +179,18 @@ These are stored in `MatchedCandidate::posterior_entropy` and `MatchedCandidate:
 
 Note from the paper (README.md §Trustworthiness Evaluation): $\Delta H$ is information gain, not directly "matching confidence." Small $\Delta H$ + small posterior entropy → high confidence. Small $\Delta H$ + large posterior entropy → noisy GNSS, low confidence. $\Delta H$ alone cannot distinguish these cases — always use both metrics together.
 
-### Fixed-Lag Smoothing
+### Mechanisms deliberately absent
 
-When `lag_steps > 0`, CMM buffers $L+1$ transition graph layers and re-evaluates posterior probabilities using future evidence before finalizing trustworthiness scores. This is implemented in `apply_lag_smoothing()` and `flush_lag_buffer()`. However, the paper reports that on real data with tight RAIM-derived HPL, lag smoothing degrades TW calibration (ECE increases from 0.040 at $L=0$ to 0.26 at $L=20$), suggesting it is most beneficial when the receiver does NOT provide covariance outputs. For receivers providing full covariance, $L=0$ is recommended.
+The CMM implementation is a direct translation of the paper's §III formulas. The following have been removed so that no behaviour needs to be justified outside those formulas; do not reintroduce them without a corresponding paper change.
 
-### PHMI (Integrity Monitoring Mode)
-
-Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0_prior_log_odds` and cumulative likelihood ratios. The cumulative ratio $\lambda_t = \prod_{\tau=1}^t \text{LR}_\tau$ is stored in `MatchedCandidate::h0_lambda`.
+| Removed | Why |
+|---|---|
+| Adaptive softmax temperature | Was a no-op on the real data (ECE $0.0410 \to 0.0400$, AUC $0.7204 \to 0.7203$); never described in the paper. |
+| Fixed-lag smoothing (`lag_steps`, `apply_lag_smoothing`, `flush_lag_buffer`) | Never described in the paper, and the paper reports it *degrades* TW calibration on real data with tight HPL (ECE $0.040 \to 0.26$ at $L=20$). Use $L=0$ always. |
+| Protection-level multiplier (search and PHMI boundary) | $r_i = \mathrm{HPL}_i$ exactly. A multiplier on the search radius is a tuning knob the paper does not have; a separate multiplier on the PHMI boundary would have classified candidates found by radius doubling as "inside PL", which is the opposite of the intent. |
+| `MIN_SIGMA` floor / `map_error_std` / `min_gps_error_degrees` | Replaced by the covariance validity test plus the isotropic fallback above. |
+| Off-road background state | See the note under Level 3. |
+| Sequential H0 hypothesis test (`h0_prior_log_odds`) | The recursion is gone. `MatchedCandidate::h0_lambda` and the `h0_lambda` output column survive as inert plumbing that always emits 1.0 — see "Known Limitations". |
 
 ---
 
@@ -193,22 +211,23 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 
 ### CMM (CovarianceMapMatchConfig)
 
-| Parameter | Typical Value | Meaning |
-|-----------|--------------|---------|
-| `k` | 16 | Max candidates per epoch |
-| `min_candidates` | 1 | Min candidates retained |
-| `protection_level_multiplier` | 3.0 (sim) / 10.0 (real) | Scales HPL for candidate search radius |
-| `phmi_pl_multiplier` | 5.0 | Separate scaling for integrity check (decoupled from search) |
-| `reverse_tolerance` | 0.1 | **Ratio of edge length** — 0.1 = 10% max reverse travel |
-| `cumulative_reverse_pct` | 0.03 | Max cumulative reverse as fraction of edge length (one-way edges only). 3% in paper, reduced from 15% to fix Traj 22 false lock. |
-| `lag_steps` | 0 (real) / 5 (sim) | Fixed-lag smoothing steps. 0 = real-time filtering, N = N-step delay |
-| `map_error_std` | 5.0e-6 deg (~0.5 m) | Map error added in quadrature to GPS variance |
-| `min_gps_error_degrees` | 1.0e-6 (~0.1 m) | Floor on GPS error to prevent over-confidence |
-| `phmi` | 1.0e-5 | Integrity risk for PHMI mode |
-| `h0_prior_log_odds` | 0.0 | Log-odds of null hypothesis prior ($\lambda_0 = 1$) |
-| `max_gap_distance` | 2000 m | Max physical distance for gap bridging |
-| `max_interval` | 180 s | Max time interval before splitting trajectory |
-| `trustworthiness_threshold` | 0.0 | Min TW to retain (0 = keep all) |
+This is the complete set of keys `CovarianceMapMatchConfig::load_from_xml` reads ([src/mm/cmm/cmm_algorithm.cpp:584](src/mm/cmm/cmm_algorithm.cpp#L584)). Any other key under `<parameters>` is silently ignored.
+
+| Parameter | Default | Real-data value | Meaning |
+|-----------|---------|-----------------|---------|
+| `k` | 8 | 16 | Max candidates retained per epoch |
+| `min_candidates` | 3 | 1 | Candidate floor the radius fallback doubles toward. 1 ⇒ the fallback fires exactly on a zero-candidate epoch |
+| `reverse_tolerance` | 0.0 | 0.1 | **Ratio of edge length** — 0.1 = 10% extra reverse travel allowed on top of the fixed-15%-of-edge-length guard in `get_sp_dist` |
+| `use_mahalanobis` | true | true | Mahalanobis rather than Euclidean candidate projection |
+| `filtered` | true | true | Drop points whose TW falls below `trustworthiness_threshold` |
+| `enable_gap_bridging` | true | (default) | Skip invalid points to bridge gaps |
+| `phmi` | 1.0e-5 | 1.0e-5 | Integrity risk: the inside/outside weight of the grouped emission normalization. 0 disables the grouping |
+| `cumulative_reverse_pct` | 0.03 | 0.03 | Max cumulative reverse as fraction of edge length (one-way edges only). Reduced from 15% to fix Traj 22 false lock. |
+| `direction_penalty` | true | (default) | von Mises direction-consistency penalty on reversed candidates. Turning it off costs ≈2.05 pp accuracy, so it carries weight in every reported number. Its $\kappa = v^2/(s_{de} s_{dn})$ is inversely proportional to the variance, so it is *not* invariant to a change of covariance scale |
+| `max_interval` | 180 | 180 | Max time interval (s) before splitting trajectory |
+| `trustworthiness_threshold` | 0.0 | 0.0 | Min TW to retain (0 = keep all) |
+
+App-level keys outside `<parameters>`: `<input_epsg>`, `<log_level>`, `<use_omp>`, `<step>`.
 
 ### FMM (FastMapMatchConfig)
 
@@ -225,15 +244,17 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 
 2. **Cumulative reverse guard CRS sensitivity**: The guard was originally calibrated for metric coordinate systems. When applied in EPSG:4326 (degree-based), the hard cap becomes ~111,000× too large, effectively disabling the guard. Always verify the guard threshold is dimensionally consistent with the CRS.
 
-3. **Fixed-lag smoothing degrades with tight PL**: When the RAIM-derived HPL is already tight (median ~22.8 m), fixed-lag smoothing can degrade TW calibration (ECE 0.040 → 0.26 at L=20). Use L=0 for covariance-equipped receivers; L > 0 may help for receivers without covariance output.
+3. **The real-data protection level is geometry-only**: the RAIM generator's $\sigma_0$ is $10^5$ too large, so its guard trips and every epoch gets the `3.0² · (HᵀWH)⁻¹` fallback (measured: 14,620/14,620 epochs on trajectory 1.4). The `protection_level` column in the dataset is therefore a function of satellite geometry alone with a hard-coded $\sigma=3$ m, not of the actual measurement noise. Everything downstream still works — the PL is a valid bounding radius — but it cannot be read as "this epoch's observation quality". See the `compute_raim_pl.py` row in the validation pipeline.
 
-4. **RAIM requires ≥5 visible satellites**: Performance in urban canyons with frequent blockage is untested. ARAIM MHSS (multi-hypothesis solution separation) would be needed for multi-fault integrity guarantees.
+4. **`h0_lambda` is inert plumbing**: The sequential H0 recursion was removed, but `MatchedCandidate::h0_lambda`, `ResultConfig::write_h0_lambda`, the `mm_writer` column and the `<h0_lambda/>` field in `cmm_real_0729.xml` / `cmm_test_sigma_05.xml` remain. All three `process_sub_segment` call sites pass `nullptr`, so the column is constant 1.0 and `write_h0_lambda` defaults to false. Either finish the removal or delete the column from the two configs' `<fields>`.
 
-5. **Off-road epochs are skipped, not modelled**: an epoch whose search radius admits no road candidate now contributes no candidate at all, so it is excluded from the evaluation and matching continues with the remaining epochs. The alternative -- an explicit off-road state in the HMM -- would emit a row for such an epoch, at the cost of the Viterbi-layer bookkeeping that previously stalled the sub-segment. Which is preferable depends on whether the downstream consumer needs a row per input epoch.
+5. **RAIM requires ≥5 visible satellites**: Performance in urban canyons with frequent blockage is untested. ARAIM MHSS (multi-hypothesis solution separation) would be needed for multi-fault integrity guarantees.
 
-6. **Single-city validation**: Real experiments are limited to Haikou, Hainan (152,547 edges, 6 trajectories, 15,421 epochs). External validity for different cities and receiver classes is not yet established.
+6. **Off-road epochs are skipped, not modelled**: an epoch whose search radius admits no road candidate now contributes no candidate at all, so it is excluded from the evaluation and matching continues with the remaining epochs. The alternative -- an explicit off-road state in the HMM -- would emit a row for such an epoch, at the cost of the Viterbi-layer bookkeeping that previously stalled the sub-segment. Which is preferable depends on whether the downstream consumer needs a row per input epoch.
 
-7. **Emission model misspecification**: When the WLS solver's assumed $\sigma_{\rho}$ differs from the true pseudorange noise, ECE degrades asymmetrically — over-confidence ($\sigma_{\text{wls}} < \sigma_{\rho}^{\text{true}}$) degrades calibration more severely than over-conservatism. The RAIM-FDE module is designed to prevent severe over-confidence.
+7. **Single-city validation**: Real experiments are limited to Haikou, Hainan (152,547 edges, 6 trajectories, 15,421 epochs). External validity for different cities and receiver classes is not yet established.
+
+8. **Emission model misspecification**: When the WLS solver's assumed $\sigma_{\rho}$ differs from the true pseudorange noise, ECE degrades asymmetrically — over-confidence ($\sigma_{\text{wls}} < \sigma_{\rho}^{\text{true}}$) degrades calibration more severely than over-conservatism. The RAIM-FDE module is designed to prevent severe over-confidence.
 
 ## Empirical Performance Reference (from Paper)
 
@@ -247,6 +268,8 @@ Sequential Bayesian H0 hypothesis test accumulated across the trajectory via `h0
 | Acc. at $\sigma_{\rho}=30$ m (sim) | 90.6% | 56.2% |
 
 \*FMM's normalized Viterbi scores are severely under-confident (mean TW 0.015), near zero for both correct and wrong matches, leaving almost no discriminative signal. CMM's TW drops from 0.972 (correct) to 0.710 (wrong), providing actionable separation.
+
+**Reproduction status.** The ECE and AUC rows reproduce under the pruned implementation; the accuracy row does not. On `cmm_real_0729.xml` over the calibrated 15,421-epoch Haikou set the current code gives **97.23 % segment accuracy / ECE 0.0391 / AUC 0.7592** with zero failed epochs. 22 of the 29 manuscript rows reproduce; the 96.0 % CMM accuracy figure is not reproducible from the current data and code and is under investigation. Evaluate with `experiments/scripts/eval_result_csv.py`, which takes its metric definitions from `verify_paper_numbers.py`.
 
 ## UBODT System
 
@@ -266,8 +289,7 @@ Use `ubodt_converter` to convert between formats. Use `ubodt_daemon` to keep UBO
 
 ## Coordinate System Handling
 
-- Controlled by `<input_epsg>` in XML config (e.g., `4326` for WGS84)
-- **`convert_to_projected` is DEPRECATED** — always use `input_epsg`
+- Controlled by `<input_epsg>` in XML config (e.g., `4326` for WGS84). `input_epsg` is the only CRS key the CMM config reads; the `Network` constructor's `convert_to_projected` argument still exists but defaults to false and nothing sets it.
 - System reads network CRS from `.prj` file, automatically reprojects input trajectories if EPSG differs
 - Covariance matrices are rotated via Jacobian transformation during reprojection
 - Grid convergence angle is applied to covariance rotation when network is projected (e.g., UTM)
@@ -283,27 +305,24 @@ id;geom;timestamps;covariances;protection_levels
 
 Covariance JSON array per point: `[sde, sdn, sdu, sdne, sdeu, sdun]`.
 
-See [input/](input/) for example config XML files, [input_cmm_100/](input_cmm_100/) for CMM input data.
+See [input/config/](input/config/) for example config XML files. The real-vehicle CMM table lives at `data/real_vehicle/hainan_06/cmm_input_points.csv` (gitignored).
 
 ## Validation Pipeline (Python)
 
-The paper's experiments are implemented as Python scripts in `python/experiments/`. Key entry points:
+**`experiments/scripts/` is the live pipeline.** `python/experiments/` is an older copy of it: the two directories share five filenames (`compute_raim_pl.py`, `merge_raim_pl.py`, `mapbox_spp_rtk.py`, `plot_spp_error.py`, `plot_spp_per_traj.py`) and the `experiments/scripts/` versions are the maintained ones. Prefer them, and check which copy a script actually is before trusting its output.
 
 | Script | Purpose |
 |--------|---------|
-| `compute_raim_pl.py` | Compute RAIM-derived HPL from raw RINEX observations and broadcast ephemeris |
-| `merge_raim_pl.py` | Merge computed PL with trajectory data to create CMM input |
-| `exp1_lag_sweep.py` | Lag parameter sweep for fixed-lag smoothing sensitivity |
-| `exp1_reliability_diagram.py` | Generate reliability diagrams and ECE metrics |
-| `exp2_synthetic_validation.py` | Monte Carlo simulation with synthetic GNSS constellation |
-| `exp3_phmi_analysis.py` | PHMI integrity monitoring analysis |
-| `exp4_ablation_ece.py` | Ablation study: per-component ECE contribution |
-| `gen_figures.py` | Generate paper figures from experiment outputs |
-| `evaluate_match_metrics.py` | Compute accuracy, ECE, ROC AUC from matching results |
-| `analyze_spp_error.py` | SPP error distribution analysis |
-| `mapbox_spp_rtk.py` | Mapbox visualization of SPP vs RTK trajectories |
+| `extract_spp_for_cmm.py` | Build the CMM input table from raw SPP; applies `GST_COVARIANCE_SCALE` |
+| `apply_gst_calibration.py` | Apply the same scale to an existing input table, line-oriented and idempotent |
+| `compute_raim_pl.py` | Compute RAIM-derived HPL from raw RINEX observations and broadcast ephemeris. **Known defect**: the unit-weight $\sigma_0$ comes out at $1.6\times10^5$–$2.2\times10^5$ (median $1.79\times10^5$) on trajectory 1.4, so the `sigma0 > 500` guard trips and the fallback `cov = 3.0² · (HᵀWH)⁻¹` fires on **100 %** of the 14,620 epochs. The resulting `protection_level` column therefore carries no observation-noise information: it is a pure function of satellite geometry with a fixed $\sigma=3$ m, i.e. a geometry-driven HPL rather than a measurement-driven one. The ephemeris parse is *not* the cause — it is correct (line-2 field 3 parses to √A = 5153.669, A = 26,560 km, the true GPS semi-major axis). |
+| `merge_raim_pl.py` | Merge computed PL into the CMM input table, keyed on `(traj, timestamp)` — never on the RINEX epoch index, which is a 10 Hz counter against a 1 Hz table |
+| `eval_result_csv.py` | **Canonical evaluator**: accuracy, ECE, ROC AUC (tie-corrected Mann–Whitney), mean TW. Metric definitions are imported from `verify_paper_numbers.py` |
+| `verify_paper_numbers.py` | Reproduce the manuscript's reported figures |
+| `exp3_parameter_sensitivity.py`, `exp4_sigma_mismatch.py`, `exp5_degraded_conditions.py` | Paper simulation studies |
+| `fig_*.py` | Paper figures |
 
-The Monte Carlo simulation framework is in `monte_carlo/`, `monte_carlo_1050/`, and `monte_carlo_enu/` directories.
+The Monte Carlo simulation framework is in `python/experiments/monte_carlo*/` directories.
 
 ### Dataset
 

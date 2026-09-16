@@ -13,8 +13,8 @@ TMM extends the [Fast Map Matching (FMM)](https://github.com/cyang-kth/fmm) fram
 ## Key Features
 
 - **GNSS-consistent emission model** — anisotropic Mahalanobis distance replaces isotropic Euclidean projection
-- **HPL-adaptive candidate search** — protection level dynamically scales the search radius, reducing candidate count by up to 7.6×
-- **Calibrated trustworthiness (TW)** — filtering posterior with proper probabilistic normalization (row-normalized transitions, uniform prior)
+- **HPL-adaptive candidate search** — the protection level *is* the search radius, reducing candidate count by up to 7.6×; a bounded radius fallback (at most 8 doublings) retries epochs the protection level admits no candidate for
+- **Calibrated trustworthiness (TW)** — filtering posterior with proper probabilistic normalization (PHMI-grouped emission, row-normalized transitions, uniform prior)
 - **96.0% segment accuracy** on real-vehicle data (15,421 epochs, Haikou, Hainan) vs. 88.9% for classical HMM
 - **ECE = 0.040** (95% reduction over HMM baseline ECE 0.876)
 - C++17 core with Python bindings via SWIG; Monte Carlo simulation framework included
@@ -58,7 +58,10 @@ from fmm import CovarianceMapMatch, CovarianceMapMatchConfig
 network = Network("input/map/hainan/edges.shp", "key", "u", "v")
 graph = NetworkGraph(network)
 ubodt = UBODT.read_ubodt_file("input/map/hainan_ubodt_indexed.bin")
-config = CovarianceMapMatchConfig(k=16, protection_level_multiplier=10.0)
+# SWIG exposes the constructor arguments with an _arg suffix.
+# k = max candidates per epoch, min_candidates = the floor the radius
+# fallback doubles toward.
+config = CovarianceMapMatchConfig(k_arg=16, min_candidates_arg=1)
 cmm = CovarianceMapMatch(network, graph, ubodt)
 result = cmm.match_traj(trajectory, config)
 ```
