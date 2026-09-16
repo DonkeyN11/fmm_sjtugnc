@@ -731,7 +731,21 @@ void CSVMatchResultWriter::write_point_mode(
   // Handle failed matching: use MatchStatus to determine if matching succeeded
   if (result.status != FMM::MM::MatchStatus::SUCCESS && result.status != FMM::MM::MatchStatus::PARTIAL) {
     int num_points = traj.geom.get_num_points();
-    for (int i = 0; i < num_points; ++i) {
+    // A fallback result produced for a single epoch (create_fallback_result) covers
+    // only the epochs listed in original_indices. Emitting num_points rows for each
+    // such result re-writes the whole trajectory once per failed epoch, and it also
+    // attributes that epoch's own candidate list to seq 0. Write exactly the epochs
+    // the result covers; a whole-trajectory failure carries an empty index list and
+    // still falls back to every point.
+    std::vector<int> failed_indices;
+    if (!result.original_indices.empty()) {
+      failed_indices = result.original_indices;
+    } else {
+      failed_indices.reserve(num_points);
+      for (int idx = 0; idx < num_points; ++idx) failed_indices.push_back(idx);
+    }
+    for (size_t k = 0; k < failed_indices.size(); ++k) {
+      const int i = failed_indices[k];
       buf << result.id;
       buf << ";" << i; // seq field
 
@@ -858,10 +872,12 @@ void CSVMatchResultWriter::write_point_mode(
       }
 
       // candidates: output from result.candidate_details if available
+      // candidate_details is aligned with original_indices positionally, not with
+      // the absolute epoch index, so index it by k.
       if (config_.write_candidates) {
         buf << ";(";
-        if (i < static_cast<int>(result.candidate_details.size())) {
-          const auto &list = result.candidate_details[i];
+        if (k < result.candidate_details.size()) {
+          const auto &list = result.candidate_details[k];
           for (size_t j = 0; j < list.size(); ++j) {
             buf << "(" << std::fixed << std::setprecision(8) << list[j].x << "," << list[j].y << "," << list[j].ep << ")"
                 << (j + 1 < list.size() ? "," : "");

@@ -1487,7 +1487,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
         if (tg_ptr == nullptr || sub_indices.empty()) return;
         int start_real_idx = sub_indices.front();
         int end_real_idx = sub_indices.back();
-        
+
         TGOpath tg_opath = tg_ptr->backtrack();
 
         if (tg_opath.empty()) {
@@ -1559,16 +1559,27 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 ? std::exp(std::max(-700.0, std::min(700.0, (*h0_lambda_vec)[i - 1]))) : 1.0;
 #endif
 
-            MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy, h0_lambda_val};
-            matched_candidate_path.push_back(mc);
+            // The background pseudo-candidate (c==nullptr, edge==nullptr) stands for the
+            // off-road hypothesis and carries no road edge, so it can never contribute to
+            // a matched path. It is already excluded from the transition and forward
+            // updates (see update_layer_cmm) and from the n-best trustworthiness sweep
+            // above, but it can still win the Viterbi race at an epoch whose search radius
+            // admits no real road candidate — which happens as soon as the protection
+            // level is small enough. Dereferencing its null edge here segfaulted. Skip it
+            // like the other stages do: if every node of the sub-segment is background,
+            // filtered_path stays empty and the FAILED_NO_CANDIDATE fallback below fires.
+            if (node->c != nullptr && node->c->edge != nullptr) {
+                MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy, h0_lambda_val};
+                matched_candidate_path.push_back(mc);
 
-            if (!config.filtered || trust >= config.trustworthiness_threshold) {
-                filtered_path.push_back(mc);
-                filtered_tg_opath.push_back(node);
-                filtered_indices.push_back(sub_indices[i]);
-                filtered_sp_dist.push_back(sp);
-                filtered_eu_dist.push_back(eu);
-                filtered_details.push_back(all_details[i]);
+                if (!config.filtered || trust >= config.trustworthiness_threshold) {
+                    filtered_path.push_back(mc);
+                    filtered_tg_opath.push_back(node);
+                    filtered_indices.push_back(sub_indices[i]);
+                    filtered_sp_dist.push_back(sp);
+                    filtered_eu_dist.push_back(eu);
+                    filtered_details.push_back(all_details[i]);
+                }
             }
         }
 
@@ -2739,7 +2750,7 @@ std::string CovarianceMapMatch::match_gps_file(
             builder.geom.add_point(pt);
             builder.timestamps.push_back(*timestamp_opt);
             builder.covariances.push_back(CovarianceMatrix{
-                *sdn_opt, *sde_opt, *sdu_opt, *sdne_opt, *sdeu_opt, *sdun_opt
+                *sde_opt, *sdn_opt, *sdu_opt, *sdne_opt, *sdeu_opt, *sdun_opt
             });
             builder.protection_levels.push_back(*protection_opt);
         }
