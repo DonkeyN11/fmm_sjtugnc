@@ -645,7 +645,8 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
          cxxopts::value<double>()->default_value("0.0"))
         ("use_mahalanobis", "Use Mahalanobis-based candidate search",
          cxxopts::value<bool>()->default_value("true"))
-        ("filtered", "Filter out points with no candidates or disconnected transitions",
+        ("filtered", "Apply trustworthiness_threshold: keep only points whose TW reaches it. "
+                     "false bypasses the threshold and keeps every point with a candidate",
          cxxopts::value<bool>()->default_value("true"))
         ("enable_gap_bridging", "Enable trajectory gap bridging",
          cxxopts::value<bool>()->default_value("true"))
@@ -667,7 +668,7 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--min_candidates (optional) <int>: Minimum number of candidates to keep (3)\n";
     oss << "--reverse_tolerance (optional) <double>: proportion of reverse movement allowed on an edge\n";
     oss << "--use_mahalanobis (optional) <bool>: whether to use Mahalanobis-based candidate search (true)\n";
-    oss << "--filtered (optional) <bool>: whether to filter out points with no candidates or disconnected transitions (true)\n";
+    oss << "--filtered (optional) <bool>: whether to apply trustworthiness_threshold, keeping only points whose TW reaches it (true)\n";
     oss << "--enable_gap_bridging (optional) <bool>: Enable trajectory gap bridging (true)\n";
     oss << "--max_interval (optional) <double>: Maximum time interval (seconds) to split segments (180.0)\n";
     oss << "--trustworthiness_threshold (optional) <double>: trustworthiness posterior [0,1] threshold for filtering (0.0)\n";

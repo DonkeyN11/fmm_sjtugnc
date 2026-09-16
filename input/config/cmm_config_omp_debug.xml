@@ -30,8 +30,8 @@
 
   <output>
     <file>dataset-hainan-06/mr/cmm_0507_traj11_delta_entropy.csv</file>
-    <point_mode>true</point_mode>
     <fields>
+      <point_mode/>
       <seq/>
       <timestamp/>
       <ogeom/>
@@ -66,6 +66,5 @@
   <other>
     <log_level>2</log_level>
     <use_omp>true</use_omp>
-    <step>500</step>
   </other>
 </config>

@@ -107,11 +107,10 @@ struct CovarianceMatrix {
         return Matrix2d(sde * sde, sdne, sdne, sdn * sdn);
     }
 
-    // Calculate position uncertainty (2D)
-    double get_2d_uncertainty() const {
-        Matrix2d cov = to_2d_matrix();
-        return std::sqrt(cov.determinant());
-    }
+    // `get_2d_uncertainty()` used to live here, returning sqrt(det Sigma).
+    // That is sigma_1 * sigma_2, whose unit is m^2, not the "position
+    // uncertainty in meters" it claimed. The emission model needs the
+    // quadratic form d^T Sigma^-1 d instead, so the accessor was dropped.
 };
 
 /**
@@ -139,7 +138,7 @@ struct CovarianceMapMatchConfig {
     int min_candidates;             /**< Minimum number of candidates to keep */
     double reverse_tolerance;           /**< Reverse movement tolerance */
     bool use_mahalanobis_candidates;    /**< Whether to use Mahalanobis-based candidate search */
-    bool filtered;                      /**< Whether to filter out points with no candidates/disconnected transitions */
+    bool filtered;                      /**< Whether to apply trustworthiness_threshold; false bypasses it */
 
     // --- Gap Handling & Integrity Parameters ---
     bool enable_gap_bridging;           /**< Enable skipping invalid points to bridge gaps */
@@ -257,7 +256,12 @@ public:
     CovarianceMapMatch(const NETWORK::Network &network,
                       const NETWORK::NetworkGraph &graph,
                       std::shared_ptr<UBODT> ubodt)
-        : network_(network), graph_(graph), ubodt_(ubodt) {}
+        : network_(network), ubodt_(ubodt) {
+        // Kept in the signature for parity with FastMapMatch(network, graph,
+        // ubodt); CMM resolves distances through the UBODT and never walks the
+        // adjacency graph, so no member is stored.
+        (void)graph;
+    }
 
     /**
      * Match a trajectory to the road network
@@ -500,7 +504,6 @@ protected:
 
 private:
     const NETWORK::Network &network_;
-    const NETWORK::NetworkGraph &graph_;
     std::shared_ptr<UBODT> ubodt_;
 };
 

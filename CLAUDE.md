@@ -227,7 +227,9 @@ This is the complete set of keys `CovarianceMapMatchConfig::load_from_xml` reads
 | `max_interval` | 180 | 180 | Max time interval (s) before splitting trajectory |
 | `trustworthiness_threshold` | 0.0 | 0.0 | Min TW to retain (0 = keep all) |
 
-App-level keys outside `<parameters>`: `<input_epsg>`, `<log_level>`, `<use_omp>`, `<step>`.
+App-level keys outside `<parameters>`, i.e. the complete set [`CMMAppConfig::load_from_xml`](src/mm/cmm/cmm_app_config.cpp) reads from `<other>`: `<use_omp>`, `<log_level>`, `<input_epsg>`, `<network_bbox_from_gps>`, `<network_bbox_padding>`. Note that `<step>` is **not** among them — the CMM app never reads it; only `fmm_app_config.cpp` and `stmatch_app_config.cpp` do, as a fallback step distance. `<convert_to_projected>` is likewise read by no app: the CMM app takes the CRS from `<input_epsg>` instead.
+
+A key that no loader recognises is ignored without any warning, so an inert element in a config file reads as an active setting to anyone who has not checked the loader. Two such elements were removed from the configs in this repository: `<gps_point>` (the CMM app parses its input with its own per-epoch column reader and never calls `GPSConfig::get_gps_format()`, whose only caller is `src/io/gps_reader.cpp`; and the configs placed it at `config.input.gps_point`, while the loader that does read it looks at `config.input.gps.gps_point`), and `<point_mode>` directly under `<output>` (the parser reads it only inside `<fields>`, and it defaults to true).
 
 ### FMM (FastMapMatchConfig)
 

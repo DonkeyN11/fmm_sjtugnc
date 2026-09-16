@@ -12,6 +12,8 @@
 #include "io/gps_reader.hpp"
 #include "io/mm_writer.hpp"
 
+#include <algorithm>
+#include <cmath>
 #include <iostream>
 #include <vector>
 // #include <Eigen/Dense>
@@ -121,9 +123,14 @@ int main() {
     std::cout << "   [" << cov_2d.m[0][0] << ", " << cov_2d.m[0][1] << "]" << std::endl;
     std::cout << "   [" << cov_2d.m[1][0] << ", " << cov_2d.m[1][1] << "]" << std::endl;
 
-    // Calculate position uncertainty
-    double uncertainty = cov.get_2d_uncertainty();
-    std::cout << "   2D position uncertainty: " << uncertainty << " meters" << std::endl;
+    // Eigen-decompose the 2x2 block to get the error-ellipse semi-axes.
+    double trace = cov_2d.m[0][0] + cov_2d.m[1][1];
+    double det = cov_2d.determinant();
+    double disc = std::sqrt(std::max(0.0, trace * trace / 4.0 - det));
+    double semi_major = std::sqrt(trace / 2.0 + disc);
+    double semi_minor = std::sqrt(trace / 2.0 - disc);
+    std::cout << "   Error ellipse semi-axes: " << semi_major << " m x "
+              << semi_minor << " m" << std::endl;
 
     std::cout << "\n=== CMM Example completed ===" << std::endl;
     return 0;

@@ -9,11 +9,10 @@
       <sdne>sdne</sdne><sdeu>sdeu</sdeu><sdun>sdun</sdun>
       <protection_level>protection_level</protection_level>
     </gps>
-    <gps_point>true</gps_point>
   </input>
   <output>
-    <file>/tmp/cmm_result_sigma_05_test.csv</file><point_mode>true</point_mode>
-    <fields><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
+    <file>/tmp/cmm_result_sigma_05_test.csv</file>
+    <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
       <ep/><tp/><trustworthiness/><n_best_trustworthiness/><candidates/>
       <status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
   </output>
@@ -24,5 +23,5 @@
     <max_interval>180.0</max_interval><trustworthiness_threshold>0.0</trustworthiness_threshold>
     <phmi>0.00001</phmi>
   </parameters>
-  <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step></other>
+  <other><log_level>2</log_level><use_omp>true</use_omp></other>
 </config>

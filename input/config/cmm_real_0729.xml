@@ -10,12 +10,10 @@
       <sdne>sdne</sdne><sdeu>sdeu</sdeu><sdun>sdun</sdun>
       <protection_level>protection_level</protection_level>
     </gps>
-    <gps_point>true</gps_point>
   </input>
   <output>
     <file>data/real_vehicle/hainan_06/processed/cmm_result_0729.csv</file>
-    <point_mode>true</point_mode>
-    <fields><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
+    <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
       <ep/><tp/><trustworthiness/><n_best_trustworthiness/><candidates/>
       <status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
   </output>
@@ -33,7 +31,6 @@
   <other>
     <log_level>2</log_level>
     <use_omp>true</use_omp>
-    <step>500</step>
     <input_epsg>4326</input_epsg>
   </other>
 </config>
