@@ -18,15 +18,18 @@ using namespace FMM::MM;
 
 FastMapMatchConfig::FastMapMatchConfig(int k_arg, double r_arg,
                                        double gps_error,
-                                       double reverse_tolerance) :
+                                       double reverse_tolerance,
+                                       bool tw_use_viterbi_arg) :
   k(k_arg), radius(r_arg), gps_error(gps_error),
-  reverse_tolerance(reverse_tolerance) {
+  reverse_tolerance(reverse_tolerance),
+  tw_use_viterbi(tw_use_viterbi_arg) {
 };
 
 void FastMapMatchConfig::print() const {
   SPDLOG_INFO("FMMAlgorithmConfig");
   SPDLOG_INFO("k {} radius {} gps_error {} reverse_tolerance {}",
     k, radius, gps_error, reverse_tolerance);
+  SPDLOG_INFO("tw_use_viterbi {}", tw_use_viterbi);
 };
 
 FastMapMatchConfig FastMapMatchConfig::load_from_xml(
@@ -36,7 +39,10 @@ FastMapMatchConfig FastMapMatchConfig::load_from_xml(
   double gps_error = xml_data.get("config.parameters.gps_error", 50.0);
   double reverse_tolerance =
     xml_data.get("config.parameters.reverse_tolerance", 0.0);
-  return FastMapMatchConfig{k, radius, gps_error, reverse_tolerance};
+  bool tw_use_viterbi =
+    xml_data.get("config.parameters.tw_use_viterbi", false);
+  return FastMapMatchConfig{k, radius, gps_error, reverse_tolerance,
+                            tw_use_viterbi};
 };
 
 FastMapMatchConfig FastMapMatchConfig::load_from_arg(
@@ -45,7 +51,10 @@ FastMapMatchConfig FastMapMatchConfig::load_from_arg(
   double radius = arg_data["radius"].as<double>();
   double gps_error = arg_data["error"].as<double>();
   double reverse_tolerance = arg_data["reverse_tolerance"].as<double>();
-  return FastMapMatchConfig{k, radius, gps_error, reverse_tolerance};
+  bool tw_use_viterbi = arg_data.count("tw_use_viterbi")
+    ? arg_data["tw_use_viterbi"].as<bool>() : false;
+  return FastMapMatchConfig{k, radius, gps_error, reverse_tolerance,
+                            tw_use_viterbi};
 };
 
 void FastMapMatchConfig::register_arg(cxxopts::Options &options){
@@ -57,7 +66,9 @@ void FastMapMatchConfig::register_arg(cxxopts::Options &options){
     ("reverse_tolerance","Ratio of reverse movement allowed",
       cxxopts::value<double>()->default_value("0.0"))
     ("e,error","GPS error",
-    cxxopts::value<double>()->default_value("50.0"));
+    cxxopts::value<double>()->default_value("50.0"))
+    ("tw_use_viterbi","Score trustworthiness with the Viterbi score instead of the forward probability",
+    cxxopts::value<bool>()->default_value("false"));
 }
 
 void FastMapMatchConfig::register_help(std::ostringstream &oss){
@@ -68,6 +79,8 @@ void FastMapMatchConfig::register_help(std::ostringstream &oss){
     "(network data unit) (50)\n";
   oss<<"--reverse_tolerance (optional) <double>: proportion "
       "of reverse movement allowed on an edge\n";
+  oss<<"--tw_use_viterbi (optional) <bool>: score trustworthiness with the "
+       "Viterbi score instead of the forward probability (false)\n";
 };
 
 bool FastMapMatchConfig::validate() const {
@@ -161,10 +174,22 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   TransitionGraph tg(filtered_tc, config.gps_error);
   SPDLOG_DEBUG("Update cost in transition graph");
   // The network will be used internally to update transition graph
-  update_tg(&tg, filtered_traj, config.reverse_tolerance);
+  update_tg(&tg, filtered_traj, config.reverse_tolerance,
+            config.tw_use_viterbi);
   SPDLOG_DEBUG("Optimal path inference");
   TGOpath tg_opath = tg.backtrack();
   SPDLOG_DEBUG("Optimal path size {}", tg_opath.size());
+  // update_tg() stops at the first pair of consecutive points it cannot connect
+  // and leaves the later layers uninitialised, so backtrack() finds nothing and
+  // returns an empty path. That is a failure, not a match: report it as one.
+  // Without this the result came back as SUCCESS carrying an empty candidate
+  // path, which the writer renders as no rows at all -- the trajectory vanished
+  // from the output and the caller had no way to tell.
+  if (tg_opath.empty()) {
+    SPDLOG_WARN("Traj {} has no connected path; reporting FAILED_DISCONNECTED",
+                traj.id);
+    return MatchResult{traj.id, MatchStatus::FAILED_DISCONNECTED};
+  }
   MatchedCandidatePath matched_candidate_path(tg_opath.size());
   std::transform(tg_opath.begin(), tg_opath.end(),
                  matched_candidate_path.begin(),
@@ -351,7 +376,8 @@ double FastMapMatch::get_sp_dist(
 
 void FastMapMatch::update_tg(
   TransitionGraph *tg,
-  const Trajectory &traj, double reverse_tolerance) {
+  const Trajectory &traj, double reverse_tolerance,
+  bool tw_use_viterbi) {
   SPDLOG_DEBUG("Update transition graph");
   std::vector<TGLayer> &layers = tg->get_layers();
   std::vector<double> eu_dists = ALGORITHM::cal_eu_dist(traj.geom);
@@ -360,7 +386,8 @@ void FastMapMatch::update_tg(
     SPDLOG_DEBUG("Update layer {} ", i);
     bool connected = false;
     update_layer(i, &(layers[i]), &(layers[i + 1]),
-                 eu_dists[i], reverse_tolerance, &connected);
+                 eu_dists[i], reverse_tolerance, &connected,
+                 tw_use_viterbi);
     if (!connected){
       SPDLOG_WARN("Traj {} unmatched as point {} and {} not connected",
         traj.id, i, i+1);
@@ -376,7 +403,8 @@ void FastMapMatch::update_layer(int level,
                                 TGLayer *lb_ptr,
                                 double eu_dist,
                                 double reverse_tolerance,
-                                bool *connected) {
+                                bool *connected,
+                                bool tw_use_viterbi) {
   // SPDLOG_TRACE("Update layer");
   TGLayer &lb = *lb_ptr;
   bool layer_connected = false;
@@ -432,7 +460,8 @@ void FastMapMatch::update_layer(int level,
       node.forward_cumu = neg_inf;
     }
     if (node.forward_cumu > neg_inf)
-      layer_fwd.push_back(node.forward_cumu);
+      layer_fwd.push_back(tw_use_viterbi ? node.cumu_prob
+                                         : node.forward_cumu);
   }
 
   // Per-layer softmax → filtering posterior, then partial path posterior TW
@@ -445,8 +474,14 @@ void FastMapMatch::update_layer(int level,
 
     for (auto &node : lb) {
       if (node.forward_cumu > neg_inf && node.cumu_prob > neg_inf) {
-        // TW = δ_t(j*) / Σ_k α_t(k) = exp(cumu_prob - log_Z)
-        double log_tw = node.cumu_prob - log_Z;
+        // TW = α_t(j*) / Σ_k α_t(k) = exp(forward_cumu - log_Z), the filtering
+        // posterior of the Viterbi-optimal candidate -- the quantity the paper
+        // defines in Eq. (filtering_posterior_tw) and the one CaMM reports, so
+        // the two baselines score the same estimand. It was previously
+        // exp(cumu_prob - log_Z): Viterbi δ over a forward Σα denominator.
+        // Since δ ≤ α always, that numerator systematically understated TW.
+        double log_tw = (tw_use_viterbi ? node.cumu_prob
+                                        : node.forward_cumu) - log_Z;
         node.trustworthiness = (log_tw < -745.0) ? 0.0 : std::exp(log_tw);
       } else {
         node.trustworthiness = 0.0;

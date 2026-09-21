@@ -39,11 +39,22 @@ struct FastMapMatchConfig{
    *
    */
   FastMapMatchConfig(int k_arg = 8, double r_arg = 300, double gps_error = 50,
-    double reverse_tolerance = 0.0);
+    double reverse_tolerance = 0.0, bool tw_use_viterbi_arg = false);
   int k; /**< Number of candidates */
   double radius; /**< Search radius*/
   double gps_error; /**< GPS error */
   double reverse_tolerance;
+  /**
+   * Which recursion supplies the trustworthiness numerator. false (default)
+   * uses the forward probability, giving the filtering posterior
+   * alpha_t(i*)/sum_j alpha_t(j) -- the same estimand CaMM reports, so the two
+   * can be compared as calibration. true uses the Viterbi score, giving
+   * delta_t(i*)/sum_j delta_t(j): the confidence implied by the best-path
+   * recursion, which never sees the mass of the competing paths and is
+   * therefore the baseline's own native score. The two coincide at the first
+   * epoch of a trajectory and differ from the second onward.
+   */
+  bool tw_use_viterbi;
   /**
    * Check if the configuration is valid or not
    * @return true if valid
@@ -143,7 +154,8 @@ class FastMapMatch {
    */
   void update_tg(TransitionGraph *tg,
                  const CORE::Trajectory &traj,
-                 double reverse_tolerance = 0);
+                 double reverse_tolerance = 0,
+                 bool tw_use_viterbi = false);
   /**
    * Update probabilities between two layers a and b in the transition graph
    * @param level   the index of layer a
@@ -155,7 +167,7 @@ class FastMapMatch {
    */
   void update_layer(int level, TGLayer *la_ptr, TGLayer *lb_ptr,
                     double eu_dist, double reverse_tolerance,
-                    bool *connected);
+                    bool *connected, bool tw_use_viterbi = false);
   /**
    * Preprocess trajectory and candidates: filter out points without candidates
    * @param traj original trajectory
