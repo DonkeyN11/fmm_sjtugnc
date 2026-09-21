@@ -92,6 +92,24 @@ def build_cmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Pa
 
 
 def build_fmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Path:
+    """FMM baseline config — MUST match exp3/exp5's build_fmm_xml.
+
+    This function previously read <r>0.03</r> with <reverse_tolerance>0.0</reverse_tolerance>
+    and no <tw_use_viterbi>. In a degree-based network r = 0.03 deg is ~3,340 m, which is a
+    10x metres-for-degrees error against the 300 m the paper states for every simulation, so
+    the Table IX baseline was searched with an ~11x wider disk than every other table's.
+    <reverse_tolerance>0.0 also disables the reverse guard, and the missing
+    <tw_use_viterbi> made that column a forward-posterior ECE rather than the native
+    Viterbi-score ECE that the real-data baseline and exp3/exp5 both use.
+
+    Evidence the radius was live: matched-point-to-observation distance in
+    data/simulation/sigma_mismatch/pr10_wls20/fmm_result.csv reached 1,996.5 m with 826
+    epochs beyond 300 m, against a maximum of 169.5 m and zero beyond 300 m in the
+    sigma-sweep corpus. A 300 m disk cannot emit a point 2 km away.
+
+    The three parameters below are byte-identical to exp3_full_matching.py and
+    exp5_degraded_conditions.py. Do not "simplify" them back.
+    """
     xml = f"""<?xml version="1.0" encoding="UTF-8"?>
 <config>
   <input>
@@ -107,8 +125,9 @@ def build_fmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Pa
       <ep/><tp/><trustworthiness/></fields>
   </output>
   <parameters>
-    <k>16</k><r>0.03</r><gps_error>0.001</gps_error>
-    <reverse_tolerance>0.0</reverse_tolerance>
+    <k>16</k><r>0.0026949335</r><gps_error>0.001</gps_error>
+    <reverse_tolerance>0.1</reverse_tolerance>
+    <tw_use_viterbi>true</tw_use_viterbi>
   </parameters>
   <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step></other>
 </config>"""
