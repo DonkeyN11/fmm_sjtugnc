@@ -39,19 +39,31 @@ REV_MAP = json.load(open(BASE / 'experiments/config/reverse_edge_map.json'))
 # it, which is exactly how the policy went unrecorded until now.
 EXCLUDE_TRAJ = {"12"}
 
-# Paper claims (from LaTeX as of 2026-09-02, fixed E/N + Traj 12 excluded)
+# Paper claims — the SUBMITTED manuscript's Tables V and VI (revision of 2026-09-22),
+# over the 13,123 evaluable epochs (6 trajectories; traj 12 excluded).
+#
+# These were the 2026-09-02 numbers until 2026-09-22, when §V was regenerated at one
+# configuration. The old set was not merely stale, it pointed the WRONG WAY on the
+# paper's own headline result: it asserted CaMM AUC 0.721 > FMM 0.583, whereas the
+# submitted tables report 0.649 < 0.859. A claim-checker that reverses the direction
+# of the paper's central negative finding is worse than none, so update this dict
+# whenever §V moves, and never let it drift a revision behind the .tex again.
+#
+# Values are the manuscript's ROUNDED figures, so check()'s tolerances do the work.
 PAPER = {
     'accuracy': {
-        '11': (2439, 92.3, 87.4), '13': (1908, 97.6, 94.2),
-        '14': (352, 100, 79.5), '21': (3581, 97.5, 92.0), '22': (2123, 91.6, 83.8),
-        '23': (2720, 99.3, 87.8), 'ALL': (13123, 96.0, 88.9),
+        '11': (2439, 94.8, 82.7), '13': (1908, 98.7, 96.8),
+        '14': (352, 100, 67.3), '21': (3581, 98.4, 99.8), '22': (2123, 91.8, 99.0),
+        '23': (2720, 99.3, 99.0), 'ALL': (13123, 96.9, 95.0),
     },
-    'tw_sep': {'cmm_corr': 0.972, 'cmm_wrong': 0.710, 'cmm_sep': 0.262,
-               'fmm_corr': 0.015, 'fmm_wrong': 0.001, 'fmm_sep': 0.014, 'ratio': 18.7},
-    'ece': {'cmm': 0.040, 'fmm': 0.876},
-    'auc': {'cmm': 0.721, 'fmm': 0.583},
-    'pos_err': {'cmm_mean': 5.6, 'cmm_p95': 13.6, 'fmm_mean': 8.9, 'fmm_p95': 36.1},
-    'fmr': {'cmm': 3.1, 'fmm': 12.0},
+    'tw_sep': {'cmm_corr': 0.981, 'cmm_wrong': 0.904, 'cmm_sep': 0.077,
+               'fmm_corr': 0.781, 'fmm_wrong': 0.350, 'fmm_sep': 0.431, 'ratio': 0.18},
+    'ece': {'cmm': 0.044, 'fmm': 0.190},
+    'auc': {'cmm': 0.649, 'fmm': 0.859},
+    'pos_err': {'cmm_mean': 5.5, 'cmm_p95': 13.5, 'fmm_mean': 6.0, 'fmm_p95': 15.0},
+    # The submitted manuscript reports no false-match rate. The script still measures
+    # one; None means "print it, do not score it against a claim that does not exist".
+    'fmr': {'cmm': None, 'fmm': None},
 }
 
 def is_edge_match(m, g):
@@ -176,24 +188,28 @@ PROC = BASE / 'data/real_vehicle/hainan_06/processed'
 #   (raw GST + ENU PL)        raw GST       ENU     95.4507  0.0496  0.6232   112
 #   (calibrated GST + ENU PL) calibrated    ENU     94.6582  0.0567  0.6657     0
 #
-# The first is CLAUDE.md's reproduction number. The second matches the
-# manuscript's CMM row (96.0 / 0.040 / 0.721) on ECE and AUC and is NOT
-# reproducible from the current code: it still carries an h0_lambda column and
-# was produced while the protection-level multiplier existed (r = 3.0 * HPL).
-# Removing that multiplier is what changed it -- nothing else here reproduces it.
+# The SUBMITTED manuscript's runs, and therefore the defaults. They were produced
+# on 2026-09-21/22 and live under data/archive_20260922/ (gitignored), not in
+# processed/: `git grep 95.0316` returns zero tracked hits, so nothing under version
+# control reproduces Table V. See data/archive_20260922/PROVENANCE.md for the mapping
+# from each table to its file and config.
 #
-# The last two rows are the 2026-09-15 ECEF->ENU protection-level correction,
-# and they are worse on every metric. That is an open question, not a settled
-# answer: the corrected HPL is tighter (median 10.9 m vs 22.8 m), so a search
-# radius of exactly HPL admits fewer candidates. The bounded radius fallback
-# rescues the zero-candidate epochs (0 failed), but not the accuracy.
+#   real_final/cmm_final.csv   CaMM  96.8986 / 0.0437 / 0.6493   (Tables V, VI, VIII row 7)
+#   real_final/fmm_final.csv   FMM   95.0316 / 0.1903 / 0.8589   (Tables V, VI, VIII row 1)
+#       configs: cmm_final <- newdelta/real_d13p5.xml ; fmm_final <- real_final/fmm2.xml
 #
-# The input tables pair the two corrections in a way that does not help:
-# cmm_input_points.csv is calibrated GST + legacy PL, cmm_input_points_enu.csv
-# is raw GST + ENU PL. Neither is calibrated GST + ENU PL; that combination is
-# the fourth row above and was built with apply_gst_calibration.py into /tmp.
-CMM_CSV = PROC / 'cmm_result_0729.csv'
-FMM_CSV = PROC / 'fmm_result.csv'
+# Neither matched a `processed/` file, which is why this script previously verified
+# a superseded revision. The residents are older configurations and give different
+# answers: cmm_result_0729.csv is 97.2262 / 0.0391 / 0.7592 (calibrated GST + legacy
+# PL) and fmm_result.csv is 88.9888 / 0.8766 / 0.5682 (r = 0.03 deg, a 3.3 km radius,
+# where 300 m was intended). Point --cmm/--fmm at those to reproduce the 2026-09-02
+# revision, not this one.
+#
+# The 2026-09-15 ECEF->ENU protection-level correction is a separate open question:
+# the corrected HPL is tighter (median 10.9 m vs 22.8 m) and every metric is worse,
+# because a search radius of exactly HPL admits fewer candidates.
+CMM_CSV = BASE / 'data/archive_20260922/real_final/cmm_final.csv'
+FMM_CSV = BASE / 'data/archive_20260922/real_final/fmm_final.csv'
 
 
 def main():
@@ -210,24 +226,51 @@ def main():
     # silently changes the reported accuracy, which is what exp6_real_accuracy
     # and the paper both count as 13123.
     gt_by_ts = {}
+    # (id, uni_seq) -> timestamp, over EVERY aligned.csv row including those with no
+    # usable ground truth. Needed to resolve FMM's seq column; see load_mr.
+    ts_by_seq = {}
     n_excluded = 0
     with open(BASE/'data/real_vehicle/hainan_06/processed/aligned.csv',newline='') as f:
         for r in csv.DictReader(f,delimiter=';'):
-            if r['id'].strip() in EXCLUDE_TRAJ:
+            tid = r['id'].strip()
+            # Populate ts_by_seq for EVERY row, before the exclusion test. It is a
+            # mechanical seq -> timestamp lookup, not an evaluation-layer decision,
+            # and the matcher result files still contain the excluded trajectory's
+            # rows (fmm_final.csv carries all 734 of traj 12's). Excluding here
+            # instead would leave those rows unresolvable and silently demote the
+            # whole FMM file to a timestamp join -- which is the failure this map
+            # exists to prevent.
+            ts_by_seq[(tid, r['uni_seq'].strip())] = norm_ts(r['timestamp'])
+            if tid in EXCLUDE_TRAJ:
                 n_excluded += 1
                 continue
             gt_e = r['gt_edge'].strip()
             if gt_e in ('0','-1',''): continue
             try: gx=float(r['gt_x']); gy=float(r['gt_y'])
             except: gx=gy=None
-            gt_by_ts[(r['id'].strip(), norm_ts(r['timestamp']))] = (gt_e, gx, gy)
+            gt_by_ts[(tid, norm_ts(r['timestamp']))] = (gt_e, gx, gy)
 
     print(f"Population: {len(gt_by_ts)} evaluable epochs from "
           f"{sorted({k[0] for k in gt_by_ts})}; "
           f"EXCLUDE_TRAJ={sorted(EXCLUDE_TRAJ)} dropped {n_excluded} raw rows "
           f"(traj {', '.join(sorted(EXCLUDE_TRAJ))})")
 
-    # Load CMM/FMM by (id, timestamp).
+    # Load a matcher result into the (id, timestamp) key space.
+    #
+    # The join key is NOT the same for both matchers, and getting this wrong fails
+    # silently rather than loudly. FMM writes a `timestamp` column that is NOT a
+    # per-epoch timestamp: in real_final/fmm_final.csv trajectory 11 has 2,696 rows
+    # but only 25 distinct timestamp values, so a (id, timestamp) join collapses
+    # ~108 epochs onto one key and matches roughly 150 of the 13,123 evaluable
+    # epochs while still printing a plausible-looking table. FMM's `seq` is instead
+    # a unique 0-based row index into aligned.csv's `uni_seq` (verified: ranges and
+    # counts correspond exactly, 0..2695 vs 0..2695 for traj 11), so resolve
+    # seq -> timestamp through ts_by_seq.
+    #
+    # CaMM is the opposite: its timestamp is unique per epoch but its `seq` is not,
+    # because the matcher splits trajectories and seq restarts at 0 while the
+    # timestamps keep running. So: use seq when it is unique per id AND resolves
+    # through aligned.csv, and the literal timestamp otherwise.
     #
     # Failed epochs (FAILED_NO_CANDIDATE, FAILED_DISCONNECTED) carry the sentinel
     # trustworthiness -999.0 to mark "no value". Averaging that into the TW means
@@ -238,16 +281,35 @@ def main():
     TW_SENTINEL = -900.0
 
     def load_mr(path):
+        rows = list(csv.DictReader(open(path,newline=''), delimiter=';'))
+        has_seq = bool(rows) and 'seq' in rows[0]
+        use_seq = False
+        if has_seq:
+            per_id = defaultdict(set)
+            for r in rows:
+                per_id[r['id'].strip()].add(r['seq'].strip())
+            # unique seq per id, and every one resolves through aligned.csv
+            use_seq = all(len(v) == sum(1 for r in rows if r['id'].strip() == k)
+                          for k, v in per_id.items())
+            if use_seq:
+                use_seq = all((r['id'].strip(), r['seq'].strip()) in ts_by_seq
+                              for r in rows)
+        if has_seq and not use_seq:
+            print(f"  note: {path.name} has a non-unique `seq`; joining on timestamp")
+        elif use_seq:
+            print(f"  note: {path.name} joined on (id, seq) -> aligned.csv uni_seq")
+
         d = {}
-        with open(path,newline='') as f:
-            for r in csv.DictReader(f,delimiter=';'):
-                try: tw = float(r['trustworthiness'])
-                except ValueError: tw = TW_SENTINEL
-                if tw <= TW_SENTINEL: tw = None
-                d[(r['id'].strip(), norm_ts(r['timestamp']))] = (
-                    r['cpath'].strip(), tw,
-                    r.get('ogeom',''), r.get('pgeom','')
-                )
+        for r in rows:
+            tid = r['id'].strip()
+            if use_seq:
+                key = (tid, ts_by_seq[(tid, r['seq'].strip())])
+            else:
+                key = (tid, norm_ts(r['timestamp']))
+            try: tw = float(r['trustworthiness'])
+            except ValueError: tw = TW_SENTINEL
+            if tw <= TW_SENTINEL: tw = None
+            d[key] = (r['cpath'].strip(), tw, r.get('ogeom',''), r.get('pgeom',''))
         return d
 
     cmm = load_mr(args.cmm)
@@ -338,9 +400,25 @@ def main():
     check("CMM FMR (%)", PAPER['fmr']['cmm'], fmr_c)
 
 def check(name, paper_v, comp_v):
+    """Compare a computed metric against the manuscript's claim.
+
+    Tolerances are RELATIVE, not absolute. The manuscript rounds to three
+    significant figures -- 96.8986 is printed as 96.9, 95.0316 as 95.0, 5.4739 as
+    5.5 -- so a fixed 0.02 band flags correct percentage values as ⚠️ REVIEW and a
+    checker that cries wolf is a checker nobody reads. Scale the bands to the
+    magnitude of the claim, with a floor for the near-zero metrics (ECE, AUC
+    margins) where a relative band would collapse to nothing.
+    """
+    # paper_v is None when the manuscript reports no such claim. Print the computed
+    # value and mark it unscored rather than inventing a target to compare against.
+    if paper_v is None:
+        print(f"{name:<40} {'(not reported)':>12} {comp_v:>12.4f} {'--':>10} {'n/a':>10}")
+        return
     delta = comp_v - paper_v
-    if abs(delta) < 0.005: status = "✅ EXACT"
-    elif abs(delta) < 0.02: status = "✅ OK"
+    tol_exact = max(0.005, 0.001 * abs(paper_v))
+    tol_ok = max(0.02, 0.005 * abs(paper_v))
+    if abs(delta) <= tol_exact: status = "✅ EXACT"
+    elif abs(delta) <= tol_ok: status = "✅ OK"
     elif abs(delta) < 0.5: status = "⚠️ REVIEW"
     else: status = "❌ UPDATE"
     print(f"{name:<40} {paper_v:>12.4f} {comp_v:>12.4f} {delta:>+10.4f} {status:>10}")
