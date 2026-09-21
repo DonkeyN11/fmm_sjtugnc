@@ -10,11 +10,22 @@ FMM (Fast Map Matching) is an open-source C++17 framework for matching noisy GPS
 
 ### Conda Environment (Required)
 
-The build expects a conda environment providing GDAL, Boost, SWIG, and other dependencies:
+The build takes GDAL and Boost from the conda **base** environment:
 
 ```bash
-conda activate fmm_env   # or the project-specific conda env
+conda activate base      # /home/ncz/anaconda3 — this is the one that has GDAL
 ```
+
+There is no `fmm_env`. This file named one until 2026-09-22; the name does not
+resolve, and `conda activate fmm_env` fails before the build starts. The four other
+envs on this machine (`ox`, `sam_road`, `sam_road2`, `sat2graph`) have neither GDAL
+nor Boost, so base is not a preference among options — it is the only one that
+provides the dependencies. The existing `build/CMakeCache.txt` records
+`CONDA_PREFIX=/home/ncz/anaconda3`, `GDAL_LIBRARY=/home/ncz/anaconda3/lib/libgdal.so`,
+confirming which environment the checked-in build was made against.
+
+**SWIG does not come from conda here.** It is the system package at `/usr/bin/swig`
+(4.0.2), so the Python bindings build without any conda env contribution.
 
 CMakeLists.txt detects `CONDA_PREFIX` and uses conda-provided headers/libraries with `-isystem`.
 

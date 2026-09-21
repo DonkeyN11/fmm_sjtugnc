@@ -33,7 +33,8 @@ TMM extends the [Fast Map Matching (FMM)](https://github.com/cyang-kth/fmm) fram
 ### Build
 
 ```bash
-conda activate fmm_env   # or your conda environment with GDAL/Boost/SWIG
+conda activate base      # the environment that provides GDAL and Boost
+# SWIG is the system package (/usr/bin/swig), not a conda dependency
 
 mkdir -p build && cd build
 cmake .. -DCMAKE_BUILD_TYPE=Release
