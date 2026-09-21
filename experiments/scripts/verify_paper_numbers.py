@@ -117,6 +117,39 @@ def auc(labels,scores):
     is_pos=(labels[order]==1)
     return float((ranks[is_pos].sum()-n_pos*(n_pos+1)/2.0)/(n_pos*n_neg))
 
+def roc_curve_and_auc(labels,scores):
+    """ROC step curve for plotting, plus the tie-corrected rank AUC of auc().
+
+    Returns (fpr, tpr, auc_value).
+
+    The curve and the scalar are computed by different means on purpose, and the
+    split is the point of this function. Plotting needs the empirical step curve;
+    the *reported number* must not be its trapezoidal area, because trapz
+    interpolates linearly across vertical steps and the simulation corpora carry
+    large blocks of exact ties (an epoch with no ground-truth edge scores 0.5; a
+    saturated posterior ties at 1.0). So return the curve for the figure and take
+    the scalar from auc(), which is the convention commit f728584 adopted and
+    which eval_sim_corpus.py, eval_result_csv.py, inventory_real_metrics.py and
+    fig_roc_real.py already use.
+
+    Callers that previously integrated their own step curve with np.trapz got a
+    different number from this on the same labels -- on the sigma-sweep corpus at
+    sigma=1 m, 0.4813 (trapz) against 0.6955 (rank), which is the difference
+    between reporting chance and reporting real discrimination. Migrate by
+    delegating here rather than by copying the integration.
+    """
+    labels=np.asarray(labels, dtype=float)
+    scores=np.asarray(scores, dtype=float)
+    order=np.argsort(scores, kind='mergesort')[::-1]
+    labels_sorted=labels[order]
+    n_pos=int(np.sum(labels_sorted)); n_neg=len(labels_sorted)-n_pos
+    if n_pos==0 or n_neg==0:
+        return np.array([0.0,1.0]), np.array([0.0,1.0]), 0.5
+    tpr=np.cumsum(labels_sorted)/n_pos
+    fpr=np.cumsum(1-labels_sorted)/n_neg
+    tpr=np.concatenate([[0.0], tpr]); fpr=np.concatenate([[0.0], fpr])
+    return fpr, tpr, auc(labels, scores)
+
 def norm_ts(s):
     """Key a timestamp column numerically.
 

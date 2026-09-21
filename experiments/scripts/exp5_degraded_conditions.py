@@ -298,13 +298,16 @@ def compute_ece(confidences, labels, n_bins=10):
 
 
 def compute_roc_auc(labels, scores):
-    order = np.argsort(scores)[::-1]
-    ls = labels[order]
-    n_pos = np.sum(ls); n_neg = len(ls) - n_pos
-    if n_pos == 0 or n_neg == 0: return 0.5, None, None
-    tpr = np.cumsum(ls) / n_pos; fpr = np.cumsum(1 - ls) / n_neg
-    tpr = np.concatenate([[0], tpr]); fpr = np.concatenate([[0], fpr])
-    return float(np.trapz(tpr, fpr)), fpr, tpr
+    """Delegates to verify_paper_numbers.roc_curve_and_auc — see its docstring.
+
+    Replaces a local np.trapz integration, for the reason given there and in
+    verify_paper_numbers.auc: trapz is biased across the vertical steps that
+    tied scores produce. Table VII's AUC column must use the same estimator as
+    every other table.
+    """
+    from verify_paper_numbers import roc_curve_and_auc
+    fpr, tpr, auc_value = roc_curve_and_auc(labels, scores)
+    return auc_value, fpr, tpr
 
 
 def compute_metrics(data_dir, mr_csv, gt_points_by_seq, gt_edges_by_seq,

@@ -14,11 +14,18 @@ from __future__ import annotations
 import json
 import math
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import pandas as pd
+
+# Sibling-module imports (verify_paper_numbers, exp3_full_matching, ...) resolve the
+# same way they do for the other drivers in this directory.
+_HERE = str(Path(__file__).resolve().parent)
+if _HERE not in sys.path:
+    sys.path.insert(0, _HERE)
 
 import matplotlib
 matplotlib.use("Agg")
@@ -238,20 +245,14 @@ def compute_roc_auc(labels: np.ndarray, scores: np.ndarray) -> Tuple[np.ndarray,
     """Compute ROC curve and AUC. Higher scores → more likely positive.
 
     Returns (fpr, tpr, auc).
+
+    Delegates to verify_paper_numbers.roc_curve_and_auc — see its docstring. This
+    used to integrate the step curve with np.trapezoid, which disagrees with the
+    tie-corrected rank statistic the paper quotes, so any figure built from this
+    helper was on a different estimator from the tables it illustrated. It also
+    crashed outright on numpy 1.x, where np.trapezoid does not exist (this
+    environment runs 1.26.4).
     """
-    order = np.argsort(scores)[::-1]
-    labels_sorted = labels[order]
-    n_pos = np.sum(labels_sorted)
-    n_neg = len(labels_sorted) - n_pos
-    if n_pos == 0 or n_neg == 0:
-        return np.array([0, 1]), np.array([0, 1]), 0.5
-
-    tpr = np.cumsum(labels_sorted) / n_pos
-    fpr = np.cumsum(1 - labels_sorted) / n_neg
-
-    # Prepend (0,0)
-    tpr = np.concatenate([[0], tpr])
-    fpr = np.concatenate([[0], fpr])
-
-    auc = float(np.trapezoid(tpr, fpr))
-    return fpr, tpr, auc
+    from verify_paper_numbers import roc_curve_and_auc
+    fpr, tpr, auc_value = roc_curve_and_auc(labels, scores)
+    return fpr, tpr, auc_value

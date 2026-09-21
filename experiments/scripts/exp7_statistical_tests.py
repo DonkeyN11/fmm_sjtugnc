@@ -55,14 +55,17 @@ def ece(confs, labels, n=10):
     return e
 
 def auc_score(labels, scores):
-    order = np.argsort(scores)[::-1]
-    ls = np.array(labels)[order]
-    n_pos = np.sum(ls); n_neg = len(ls) - n_pos
-    if n_pos == 0 or n_neg == 0: return 0.5
-    tpr = np.cumsum(ls) / n_pos
-    fpr = np.cumsum(1 - ls) / n_neg
-    tpr = np.concatenate([[0], tpr]); fpr = np.concatenate([[0], fpr])
-    return float(np.trapz(tpr, fpr))
+    """Tie-corrected rank AUC — see verify_paper_numbers.roc_curve_and_auc.
+
+    This is the migration the figure-level warning at the bootstrap section below
+    says was never done: it reported a point estimate whose bootstrap distribution
+    was not the same quantity, because the trapz form is biased across the ties a
+    near-degenerate score produces. The earlier note recorded an FMM bootstrap CI
+    that excluded its own point estimate (0.5176 against [0.4305, 0.4593]); that is
+    the symptom this fixes, so the clamp-and-warn below should now be dead code.
+    """
+    from verify_paper_numbers import auc as _rank_auc
+    return _rank_auc(np.asarray(labels, dtype=float), np.asarray(scores, dtype=float))
 
 def bootstrap_ci(data, stat_fn, n_bootstrap=10000, alpha=0.05):
     """Compute bootstrap (1-alpha) CI for a statistic."""

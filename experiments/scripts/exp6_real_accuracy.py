@@ -58,12 +58,14 @@ def ece(confs,labels,n=10):
     return e,m,bins
 
 def auc(labels,scores):
-    order=np.argsort(scores)[::-1]; ls=labels[order]
-    n_pos=np.sum(ls); n_neg=len(ls)-n_pos
-    if n_pos==0 or n_neg==0: return 0.5,None,None
-    tpr=np.cumsum(ls)/n_pos; fpr=np.cumsum(1-ls)/n_neg
-    tpr=np.concatenate([[0],tpr]); fpr=np.concatenate([[0],fpr])
-    return float(np.trapz(tpr,fpr)),fpr,tpr
+    """Delegates to verify_paper_numbers.roc_curve_and_auc — see its docstring.
+
+    Replaces a local np.trapz integration so the real-data figures use the same
+    estimator as the real-data tables.
+    """
+    from verify_paper_numbers import roc_curve_and_auc
+    fpr,tpr,a=roc_curve_and_auc(np.asarray(labels,dtype=float),np.asarray(scores,dtype=float))
+    return a,fpr,tpr
 
 # Load GT
 gt_edges={}

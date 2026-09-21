@@ -6,13 +6,15 @@ protection levels (cov[:2,:2] taken from the ECEF x-y block). The candidate
 column uses cmm_result_enu.csv, produced with the ENU East-North block — see
 compute_raim_pl.py and compare_raim_pl_enu.py for how those PL values differ.
 
-The metric definitions are copied verbatim from verify_paper_numbers.py so the
-two columns are directly comparable:
+The metric definitions are taken from verify_paper_numbers.py so the two columns
+are directly comparable:
   * ground truth from processed/aligned.csv, keyed by (id, timestamp)
   * reverse edge map applied via is_edge_match()
   * epochs with gt_edge in {0, -1, ''} are dropped
   * ECE over 10 equal-width confidence bins
-  * ROC AUC by the trapezoidal rule on the TPR/FPR curve
+  * ROC AUC as the tie-corrected Mann-Whitney rank statistic (verify_paper_numbers.auc),
+    not the trapezoidal rule on the TPR/FPR curve -- the two disagree on tied
+    scores, and the rank statistic is the convention every table uses
 
 Trajectory 12 is excluded explicitly.
 
@@ -80,15 +82,15 @@ def ece(confs, corrects, n=10):
 
 
 def auc(labels, scores):
-    order = np.argsort(scores)[::-1]
-    ls = labels[order]
-    n_pos = ls.sum()
-    n_neg = len(ls) - n_pos
-    if n_pos == 0 or n_neg == 0:
-        return 0.5, None, None
-    tpr = np.concatenate([[0], np.cumsum(ls) / n_pos])
-    fpr = np.concatenate([[0], np.cumsum(1 - ls) / n_neg])
-    return float(np.trapz(tpr, fpr)), fpr, tpr
+    """Delegates to verify_paper_numbers.roc_curve_and_auc — see its docstring.
+
+    Replaces a local np.trapz integration so this comparison uses the same
+    estimator as the tables it is compared against.
+    """
+    from verify_paper_numbers import roc_curve_and_auc
+    fpr, tpr, a = roc_curve_and_auc(np.asarray(labels, dtype=float),
+                                    np.asarray(scores, dtype=float))
+    return a, fpr, tpr
 
 
 def parse_point(wkt):
