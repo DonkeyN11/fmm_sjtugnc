@@ -227,13 +227,13 @@ add_executable(test_cmm_gap_restart tests/test_cmm_gap_restart.cpp)
 target_link_libraries(test_cmm_gap_restart FMMLIB)
 add_test(NAME cmm_gap_restart COMMAND test_cmm_gap_restart)
 
-add_executable(test_cmm_candidate_search tests/test_cmm_candidate_search.cpp)
-target_link_libraries(test_cmm_candidate_search FMMLIB)
-add_test(NAME cmm_candidate_search COMMAND test_cmm_candidate_search)
-
 add_executable(test_cmm_covariance_validity tests/test_cmm_covariance_validity.cpp)
 target_link_libraries(test_cmm_covariance_validity FMMLIB)
 add_test(NAME cmm_covariance_validity COMMAND test_cmm_covariance_validity)
+
+add_executable(test_cmm_ablation_knobs tests/test_cmm_ablation_knobs.cpp)
+target_link_libraries(test_cmm_ablation_knobs FMMLIB)
+add_test(NAME cmm_ablation_knobs COMMAND test_cmm_ablation_knobs)
 
 # add_executable(performance_test tmp/ubodt_performance_test.cpp)
 # target_link_libraries(performance_test FMMLIB)

@@ -38,23 +38,6 @@ using namespace FMM::MM;
 
 namespace {
 
-// Hard cap on how many times the candidate search radius may be doubled while
-// trying to meet min_candidates (see should_expand_search_radius).
-//
-// The radius is expressed in the network's own coordinate units, not in metres:
-// for the Haikou network (EPSG:4326) a protection level of 22 m is 2.0e-4
-// degrees, and eight doublings take that to 0.051 degrees, roughly 5.7 km.
-// Any statement about "how far" this cap reaches has to be read in the CRS of
-// the network being matched -- converting it as though it were metres is the
-// same mistake that silently disabled the cumulative-reverse guard on
-// degree-based networks.
-//
-// The cap exists so the fallback cannot walk the radius arbitrarily far; on the
-// Haikou set the deepest doubling observed is 2 (a 4x radius), so it is not
-// binding there. It is part of what separates this fallback from the unbounded
-// heuristic doubling criticised in the manuscript's related work.
-constexpr int MAX_SEARCH_RADIUS_DOUBLINGS = 8;
-
 // Remove leading/trailing whitespace characters to sanitize tokens read from CSV files.
 std::string trim_copy(const std::string &input) {
     const auto begin = input.find_first_not_of(" \t\r\n");
@@ -552,7 +535,11 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double trustworthiness_threshold_arg,
                                                    double phmi_arg,
                                                    double cumulative_reverse_pct_arg,
-                                                   bool direction_penalty_arg)
+                                                   bool direction_penalty_arg,
+                                                   double k_search_arg,
+                                                   double delta_road_arg,
+                                                   double isotropic_emission_scale_arg,
+                                                   bool tw_use_viterbi_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       reverse_tolerance(reverse_tolerance_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
@@ -562,7 +549,20 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       trustworthiness_threshold(trustworthiness_threshold_arg),
       phmi(phmi_arg),
       cumulative_reverse_pct(cumulative_reverse_pct_arg),
-      direction_penalty(direction_penalty_arg) {
+      direction_penalty(direction_penalty_arg),
+      k_search(k_search_arg),
+      delta_road(delta_road_arg),
+      isotropic_emission_scale(isotropic_emission_scale_arg),
+      tw_use_viterbi(tw_use_viterbi_arg) {
+    // The isotropic knob is ablation apparatus, not a model parameter. Announce
+    // it loudly whenever it is not at its neutral value so that a run which does
+    // not implement the paper cannot be mistaken for one that does.
+    if (isotropic_emission_scale > 0.0) {
+        SPDLOG_WARN("ABLATION-ONLY: isotropic_emission_scale = {} makes the "
+                    "emission isotropic, sigma = scale * sqrt((sde^2+sdn^2)/2). "
+                    "Not part of the paper's model.",
+                    isotropic_emission_scale);
+    }
 }
 
 // Dump runtime configuration for debugging or reproducibility.
@@ -578,6 +578,11 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("phmi {}", phmi);
     SPDLOG_INFO("cumulative_reverse_pct {}", cumulative_reverse_pct);
     SPDLOG_INFO("direction_penalty {}", direction_penalty);
+    SPDLOG_INFO("k_search {} delta_road {} (radius = k_search * HPL + delta_road)",
+                k_search, delta_road);
+    SPDLOG_INFO("isotropic_emission_scale {} (ablation-only, 0 = off)",
+                isotropic_emission_scale);
+    SPDLOG_INFO("tw_use_viterbi {} (ablation-only)", tw_use_viterbi);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -599,12 +604,22 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double cumulative_reverse_pct = xml_data.get("config.parameters.cumulative_reverse_pct", 0.03);
     bool direction_penalty = xml_data.get("config.parameters.direction_penalty", true);
 
+    // Candidate search radius, r_i = k_search * HPL_i + delta_road.
+    double k_search = xml_data.get("config.parameters.k_search", 1.0);
+    double delta_road = xml_data.get("config.parameters.delta_road", 0.0);
+
+    // Ablation-only; see the member comments in the header. 0.0 = off.
+    double isotropic_emission_scale = xml_data.get("config.parameters.isotropic_emission_scale", 0.0);
+    bool tw_use_viterbi = xml_data.get("config.parameters.tw_use_viterbi", false);
+
     return CovarianceMapMatchConfig{k, min_candidates, reverse_tolerance,
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap_bridging,
                                     max_interval, trustworthiness_threshold,
                                     phmi,
-                                    cumulative_reverse_pct, direction_penalty};
+                                    cumulative_reverse_pct, direction_penalty,
+                                    k_search, delta_road,
+                                    isotropic_emission_scale, tw_use_viterbi};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -626,12 +641,22 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double cumulative_reverse_pct = arg_data.count("cumulative_reverse_pct") ? arg_data["cumulative_reverse_pct"].as<double>() : 0.03;
     bool direction_penalty = arg_data.count("direction_penalty") ? arg_data["direction_penalty"].as<bool>() : true;
 
+    // Candidate search radius, r_i = k_search * HPL_i + delta_road.
+    double k_search = arg_data.count("k_search") ? arg_data["k_search"].as<double>() : 1.0;
+    double delta_road = arg_data.count("delta_road") ? arg_data["delta_road"].as<double>() : 0.0;
+
+    // Ablation-only; see the member comments in the header. 0.0 = off.
+    double isotropic_emission_scale = arg_data.count("isotropic_emission_scale") ? arg_data["isotropic_emission_scale"].as<double>() : 0.0;
+    bool tw_use_viterbi = arg_data.count("tw_use_viterbi") ? arg_data["tw_use_viterbi"].as<bool>() : false;
+
     return CovarianceMapMatchConfig{k, min_candidates, reverse_tolerance,
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap,
                                     max_interval, trustworthiness_threshold,
                                     phmi,
-                                    cumulative_reverse_pct, direction_penalty};
+                                    cumulative_reverse_pct, direction_penalty,
+                                    k_search, delta_road,
+                                    isotropic_emission_scale};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -659,7 +684,15 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("cumulative_reverse_pct", "Max cumulative reverse travel as fraction of edge length before blocking (0.03 = 3%)",
          cxxopts::value<double>()->default_value("0.03"))
         ("direction_penalty", "Apply direction-consistency penalty for reverse-direction candidates (true)",
-         cxxopts::value<bool>()->default_value("true"));
+         cxxopts::value<bool>()->default_value("true"))
+        ("k_search", "Scale on the protection level in the search radius r_i = k_search * HPL_i + delta_road (1.0)",
+         cxxopts::value<double>()->default_value("1.0"))
+        ("delta_road", "Fixed lateral allowance added to the scaled protection level, in network units (0.0)",
+         cxxopts::value<double>()->default_value("0.0"))
+        ("isotropic_emission_scale", "ABLATION-ONLY, not in the paper: > 0 makes the emission isotropic with sigma = scale * sqrt((sde^2+sdn^2)/2), keeping the reported covariance for the projection (0.0)",
+         cxxopts::value<double>()->default_value("0.0"))
+        ("tw_use_viterbi", "ABLATION-ONLY, not in the paper: score trustworthiness with the Viterbi score instead of the forward probability (false)",
+         cxxopts::value<bool>()->default_value("false"));
 }
 
 // Append a short textual description for the Python binding documentation.
@@ -675,6 +708,10 @@ void CovarianceMapMatchConfig::register_help(std::ostringstream &oss) {
     oss << "--phmi (optional) <double>: Probability of Hazardously Misleading Integrity information (1e-5)\n";
     oss << "--cumulative_reverse_pct (optional) <double>: Max cumulative reverse travel as fraction of edge length (0.03 = 3%)\n";
     oss << "--direction_penalty (optional) <bool>: Apply direction-consistency penalty for reverse-direction candidates (true)\n";
+    oss << "--k_search (optional) <double>: Scale on the protection level in the search radius r_i = k_search * HPL_i + delta_road (1.0)\n";
+    oss << "--delta_road (optional) <double>: Fixed lateral allowance added to the scaled protection level, in network units (0.0)\n";
+    oss << "--isotropic_emission_scale (optional) <double>: ABLATION-ONLY, not in the paper. > 0 makes the emission isotropic, sigma = scale * sqrt((sde^2+sdn^2)/2) (0.0 = off)\n";
+    oss << "--tw_use_viterbi (optional) <bool>: ABLATION-ONLY, not in the paper. Score trustworthiness with the Viterbi score instead of the forward probability (false)\n";
 }
 
 // Quick sanity checks to guard against invalid user supplied parameters.
@@ -689,6 +726,17 @@ bool CovarianceMapMatchConfig::validate() const {
         return false;
     }
     if (max_interval < 0) return false;
+    // Negated comparisons so that NaN is rejected as well as negatives: NaN < 0
+    // is false, so a plain `< 0` test lets a NaN through to
+    // effective_search_radius, which would then return a NaN radius and search
+    // nowhere without saying so.
+    if (!(k_search >= 0.0) || !(delta_road >= 0.0) ||
+        !(isotropic_emission_scale >= 0.0)) {
+        SPDLOG_CRITICAL("Invalid radius or ablation parameter "
+                        "k_search {} delta_road {} isotropic_emission_scale {}",
+                        k_search, delta_road, isotropic_emission_scale);
+        return false;
+    }
     return true;
 }
 
@@ -781,10 +829,11 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
         double protection_level = protection_levels[i];
 
-        // The paper's candidate search radius is the protection level itself,
-        // r_i = HPL_i, with no multiplier. Widening it when an epoch finds too
-        // few candidates is a separate, bounded fallback handled below.
-        double search_radius = protection_level;
+        // The paper's candidate search radius, r_i = k_search * HPL_i +
+        // delta_road. There is no fallback: an epoch whose disk admits no road
+        // segment is dropped below, not retried with a larger radius.
+        double search_radius = effective_search_radius(
+            protection_level, config.k_search, config.delta_road);
 
         SPDLOG_TRACE("Point {}: protection_level={}, search_radius={}",
                      i, protection_level, search_radius);
@@ -795,6 +844,36 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
         double det = cov_mat.determinant();
         Matrix2d cov_inv = cov_mat.inverse();
 
+        // The covariance the EMISSION and the direction penalty use. It is the
+        // reported one unless the ablation asks for an isotropic emission, in
+        // which case it is replaced by a circle of the same total variance.
+        //
+        // This is kept separate from cov_inv on purpose. cov_inv is what the
+        // Mahalanobis projection scores candidates with, and the same matrix
+        // drives both, so obtaining the isotropic arm by rewriting the input
+        // table -- zeroing sdne and equalising sde with sdn -- would rotate the
+        // projection metric to Euclidean at the same time and confound the
+        // emission factor with the projection factor. The direction penalty
+        // follows cov_emis rather than cov because its concentration
+        // kappa = speed^2 / (sde * sdn) is inversely proportional to variance:
+        // leaving it on the anisotropic covariance would make the isotropic arm
+        // differ in two mechanisms at once.
+        CovarianceMatrix cov_emis = cov;
+        double det_emis = det;
+        Matrix2d cov_emis_inv = cov_inv;
+        {
+            const double sigma_iso = isotropic_sigma(
+                cov, config.isotropic_emission_scale);
+            if (sigma_iso > 0.0) {
+                cov_emis.sde = sigma_iso;
+                cov_emis.sdn = sigma_iso;
+                cov_emis.sdne = 0.0;
+                Matrix2d cov_emis_mat = cov_emis.to_2d_matrix();
+                det_emis = cov_emis_mat.determinant();
+                cov_emis_inv = cov_emis_mat.inverse();
+            }
+        }
+
         double obs_x = boost::geometry::get<0>(point);
         double obs_y = boost::geometry::get<1>(point);
 
@@ -803,155 +882,136 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
 
         // Optionally refine the initial network search using Mahalanobis-aware projection.
         if (config.use_mahalanobis_candidates) {
-            // Hoisted out of the retry loop: the observation does not change
-            // between doublings, only the radius does.
             CORE::LineString single_point_geom;
             single_point_geom.add_point(point);
-            int radius_doublings = 0;
 
-            while (true) {
-                Traj_Candidates traj_candidates;
-                #pragma omp critical(knn_section)
-                {
-                    traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
-                }
-                Point_Candidates base_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
-
-                std::vector<NETWORK::Edge *> edges_to_consider;
-                edges_to_consider.reserve(base_candidates.size());
-                std::unordered_set<NETWORK::EdgeIndex> seen_edges;
-                for (const Candidate &seed : base_candidates) {
-                    if (seed.edge == nullptr) {
-                        continue;
-                    }
-                    NETWORK::EdgeIndex edge_idx = seed.edge->index;
-                    if (seen_edges.insert(edge_idx).second) {
-                        edges_to_consider.push_back(seed.edge);
-                    }
-                }
-
-                std::vector<CandidateWithMetric> candidate_pool;
-                candidate_pool.reserve(edges_to_consider.size() * 3);
-                double search_radius_sq = search_radius * search_radius;
-
-                for (NETWORK::Edge *edge : edges_to_consider) {
-                    if (auto edge_candidate = create_edge_candidate(edge, point, cov_inv, &next_candidate_index)) {
-                        candidate_pool.push_back(*edge_candidate);
-                    }
-
-                    auto process_node = [&](NETWORK::NodeIndex node_idx, bool use_target) {
-                        const CORE::Point &node_point = network_.get_vertex_point(node_idx);
-                        double dx = obs_x - boost::geometry::get<0>(node_point);
-                        double dy = obs_y - boost::geometry::get<1>(node_point);
-                        double eucl_sq = compute_euclidean_sq(dx, dy);
-                        if (search_radius > 0 && eucl_sq > search_radius_sq) {
-                            return;
-                        }
-                        double metric = compute_mahalanobis_sq(cov_inv, dx, dy);
-                        Candidate candidate{};
-                        candidate.index = next_candidate_index++;
-                        candidate.edge = edge;
-                        candidate.offset = use_target ? edge->length : 0.0;
-                        candidate.dist = std::sqrt(eucl_sq);
-                        candidate.point = node_point;
-                        candidate_pool.push_back(CandidateWithMetric{candidate, metric});
-                    };
-
-                    process_node(edge->source, false);
-                    process_node(edge->target, true);
-                }
-
-                // ── Deduplicate: keep only the best-metric candidate per edge ──
-                // Without this, each edge generates up to 3 candidates (Mahalanobis
-                // projection + source node + target node), inflating the effective k
-                // and compressing softmax trust to ~1/K_effective ≈ 0.5.
-                // Rule: one candidate per edge → keep best Mahalanobis metric.
-                {
-                    std::map<NETWORK::EdgeIndex, size_t> best_per_edge;
-                    for (size_t i = 0; i < candidate_pool.size(); ++i) {
-                        const auto &c = candidate_pool[i];
-                        if (c.candidate.edge == nullptr) continue;
-                        NETWORK::EdgeIndex eidx = c.candidate.edge->index;
-                        auto it = best_per_edge.find(eidx);
-                        if (it == best_per_edge.end()) {
-                            best_per_edge[eidx] = i;
-                        } else if (c.metric < candidate_pool[it->second].metric) {
-                            best_per_edge[eidx] = i;
-                        }
-                    }
-                    if (best_per_edge.size() < candidate_pool.size()) {
-                        std::vector<CandidateWithMetric> deduped;
-                        deduped.reserve(best_per_edge.size());
-                        for (const auto &kv : best_per_edge) {
-                            deduped.push_back(std::move(candidate_pool[kv.second]));
-                        }
-                        candidate_pool.swap(deduped);
-                    }
-                }
-
-                const size_t desired_candidates = std::max(config.k, config.min_candidates);
-                if (!candidate_pool.empty()) {
-                    std::sort(candidate_pool.begin(), candidate_pool.end(),
-                              [](const CandidateWithMetric &lhs, const CandidateWithMetric &rhs) {
-                                  return lhs.metric < rhs.metric;
-                              });
-                    if (candidate_pool.size() > desired_candidates) {
-                        candidate_pool.resize(desired_candidates);
-                    }
-                }
-
-                selected_candidates.clear();
-                raw_probabilities.clear();
-                selected_candidates.reserve(candidate_pool.size());
-                raw_probabilities.reserve(candidate_pool.size());
-
-                for (const auto &entry : candidate_pool) {
-                    selected_candidates.push_back(entry.candidate);
-                    double log_probability = -std::numeric_limits<double>::infinity();
-                    double dx = obs_x - boost::geometry::get<0>(entry.candidate.point);
-                    double dy = obs_y - boost::geometry::get<1>(entry.candidate.point);
-
-                    // Emission is the bivariate Gaussian of the GNSS covariance
-                    // itself. No map-error variance is added: the receiver's Sigma
-                    // is the only error model the paper defines, and the same Sigma
-                    // already produced the candidate metric above.
-                    double mahal_sq = cov_inv.m[0][0] * dx * dx +
-                                      2 * cov_inv.m[0][1] * dx * dy +
-                                      cov_inv.m[1][1] * dy * dy;
-                    // Log Gaussian: -0.5 * (log(2*pi) + log|Sigma| + d^T Sigma^-1 d)
-                    log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det + 1e-12) + mahal_sq);
-
-                    // Direction penalty for reverse-direction candidates
-                    if (config.direction_penalty && i > 0 && entry.candidate.edge != nullptr) {
-                        const auto &edge_geom = network_.get_edge_geom(entry.candidate.edge->id);
-                        if (edge_geom.get_num_points() >= 2) {
-                            CORE::Point obs_prev = geom.get_point(i - 1);
-                            double penalty = compute_direction_penalty(
-                                obs_prev, point,
-                                edge_geom.get_point(0),          // edge start
-                                edge_geom.get_point(edge_geom.get_num_points() - 1), // edge end
-                                cov);
-                            log_probability += penalty;
-                        }
-                    }
-                    raw_probabilities.push_back(log_probability);
-                }
-
-                if (!should_expand_search_radius(selected_candidates.size(),
-                                                 config.min_candidates,
-                                                 radius_doublings,
-                                                 MAX_SEARCH_RADIUS_DOUBLINGS,
-                                                 search_radius)) {
-                    break;
-                }
-                ++radius_doublings;
-                search_radius *= 2.0;
+            Traj_Candidates traj_candidates;
+            #pragma omp critical(knn_section)
+            {
+                traj_candidates = network_.search_tr_cs_knn(single_point_geom, config.k, search_radius);
             }
-            if (radius_doublings > 0) {
-                SPDLOG_DEBUG("Point {}: doubled the search radius {} time(s) "
-                             "from PL {} to {} to reach {} candidate(s)",
-                             i, radius_doublings, protection_level, search_radius,
-                             selected_candidates.size());
+            Point_Candidates base_candidates = traj_candidates.empty() ? Point_Candidates() : traj_candidates[0];
+
+            std::vector<NETWORK::Edge *> edges_to_consider;
+            edges_to_consider.reserve(base_candidates.size());
+            std::unordered_set<NETWORK::EdgeIndex> seen_edges;
+            for (const Candidate &seed : base_candidates) {
+                if (seed.edge == nullptr) {
+                    continue;
+                }
+                NETWORK::EdgeIndex edge_idx = seed.edge->index;
+                if (seen_edges.insert(edge_idx).second) {
+                    edges_to_consider.push_back(seed.edge);
+                }
+            }
+
+            std::vector<CandidateWithMetric> candidate_pool;
+            candidate_pool.reserve(edges_to_consider.size() * 3);
+            double search_radius_sq = search_radius * search_radius;
+
+            for (NETWORK::Edge *edge : edges_to_consider) {
+                if (auto edge_candidate = create_edge_candidate(edge, point, cov_inv, &next_candidate_index)) {
+                    candidate_pool.push_back(*edge_candidate);
+                }
+
+                auto process_node = [&](NETWORK::NodeIndex node_idx, bool use_target) {
+                    const CORE::Point &node_point = network_.get_vertex_point(node_idx);
+                    double dx = obs_x - boost::geometry::get<0>(node_point);
+                    double dy = obs_y - boost::geometry::get<1>(node_point);
+                    double eucl_sq = compute_euclidean_sq(dx, dy);
+                    if (search_radius > 0 && eucl_sq > search_radius_sq) {
+                        return;
+                    }
+                    double metric = compute_mahalanobis_sq(cov_inv, dx, dy);
+                    Candidate candidate{};
+                    candidate.index = next_candidate_index++;
+                    candidate.edge = edge;
+                    candidate.offset = use_target ? edge->length : 0.0;
+                    candidate.dist = std::sqrt(eucl_sq);
+                    candidate.point = node_point;
+                    candidate_pool.push_back(CandidateWithMetric{candidate, metric});
+                };
+
+                process_node(edge->source, false);
+                process_node(edge->target, true);
+            }
+
+            // ── Deduplicate: keep only the best-metric candidate per edge ──
+            // Without this, each edge generates up to 3 candidates (Mahalanobis
+            // projection + source node + target node), inflating the effective k
+            // and compressing softmax trust to ~1/K_effective ≈ 0.5.
+            // Rule: one candidate per edge → keep best Mahalanobis metric.
+            {
+                std::map<NETWORK::EdgeIndex, size_t> best_per_edge;
+                for (size_t i = 0; i < candidate_pool.size(); ++i) {
+                    const auto &c = candidate_pool[i];
+                    if (c.candidate.edge == nullptr) continue;
+                    NETWORK::EdgeIndex eidx = c.candidate.edge->index;
+                    auto it = best_per_edge.find(eidx);
+                    if (it == best_per_edge.end()) {
+                        best_per_edge[eidx] = i;
+                    } else if (c.metric < candidate_pool[it->second].metric) {
+                        best_per_edge[eidx] = i;
+                    }
+                }
+                if (best_per_edge.size() < candidate_pool.size()) {
+                    std::vector<CandidateWithMetric> deduped;
+                    deduped.reserve(best_per_edge.size());
+                    for (const auto &kv : best_per_edge) {
+                        deduped.push_back(std::move(candidate_pool[kv.second]));
+                    }
+                    candidate_pool.swap(deduped);
+                }
+            }
+
+            const size_t desired_candidates = std::max(config.k, config.min_candidates);
+            if (!candidate_pool.empty()) {
+                std::sort(candidate_pool.begin(), candidate_pool.end(),
+                          [](const CandidateWithMetric &lhs, const CandidateWithMetric &rhs) {
+                              return lhs.metric < rhs.metric;
+                          });
+                if (candidate_pool.size() > desired_candidates) {
+                    candidate_pool.resize(desired_candidates);
+                }
+            }
+
+            selected_candidates.clear();
+            raw_probabilities.clear();
+            selected_candidates.reserve(candidate_pool.size());
+            raw_probabilities.reserve(candidate_pool.size());
+
+            for (const auto &entry : candidate_pool) {
+                selected_candidates.push_back(entry.candidate);
+                double log_probability = -std::numeric_limits<double>::infinity();
+                double dx = obs_x - boost::geometry::get<0>(entry.candidate.point);
+                double dy = obs_y - boost::geometry::get<1>(entry.candidate.point);
+
+                // Emission is the bivariate Gaussian of the GNSS covariance
+                // itself. No map-error variance is added: the receiver's Sigma
+                // is the only error model the paper defines, and the same Sigma
+                // already produced the candidate metric above.
+                // cov_emis equals cov unless the ablation asks for an
+                // isotropic emission; see where it is built.
+                double mahal_sq = cov_emis_inv.m[0][0] * dx * dx +
+                                  2 * cov_emis_inv.m[0][1] * dx * dy +
+                                  cov_emis_inv.m[1][1] * dy * dy;
+                // Log Gaussian: -0.5 * (log(2*pi) + log|Sigma| + d^T Sigma^-1 d)
+                log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_emis + 1e-12) + mahal_sq);
+
+                // Direction penalty for reverse-direction candidates
+                if (config.direction_penalty && i > 0 && entry.candidate.edge != nullptr) {
+                    const auto &edge_geom = network_.get_edge_geom(entry.candidate.edge->id);
+                    if (edge_geom.get_num_points() >= 2) {
+                        CORE::Point obs_prev = geom.get_point(i - 1);
+                        double penalty = compute_direction_penalty(
+                            obs_prev, point,
+                            edge_geom.get_point(0),          // edge start
+                            edge_geom.get_point(edge_geom.get_num_points() - 1), // edge end
+                            cov_emis);
+                        log_probability += penalty;
+                    }
+                }
+                raw_probabilities.push_back(log_probability);
             }
         } else {
             // Basic candidate search that directly relies on network_kNN results.
@@ -974,11 +1034,13 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 double dy = obs_y - cand_y;
 
                 double log_probability = -std::numeric_limits<double>::infinity();
-                double mahalanobis_dist_sq = cov_inv.m[0][0] * dx * dx +
-                                              2 * cov_inv.m[0][1] * dx * dy +
-                                              cov_inv.m[1][1] * dy * dy;
+                // cov_emis equals cov unless the ablation asks for an isotropic
+                // emission; see where it is built.
+                double mahalanobis_dist_sq = cov_emis_inv.m[0][0] * dx * dx +
+                                              2 * cov_emis_inv.m[0][1] * dx * dy +
+                                              cov_emis_inv.m[1][1] * dy * dy;
                 // Log Gaussian: -0.5 * (log(2*pi) + log|Sigma| + d^T Sigma^-1 d)
-                log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det + 1e-12) + mahalanobis_dist_sq);
+                log_probability = -0.5 * (std::log(2.0 * M_PI) + std::log(det_emis + 1e-12) + mahalanobis_dist_sq);
 
                 // Direction penalty for reverse-direction candidates
                 if (config.direction_penalty && i > 0 && cand.edge != nullptr) {
@@ -989,7 +1051,7 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                             obs_prev, point,
                             edge_geom.get_point(0),
                             edge_geom.get_point(edge_geom.get_num_points() - 1),
-                            cov);
+                            cov_emis);
                         log_probability += penalty;
                     }
                 }
@@ -1772,29 +1834,40 @@ CovarianceMatrix CovarianceMapMatch::fallback_covariance(bool network_projected,
     return fallback;
 }
 
-// See the declaration in cmm_algorithm.hpp for the reasoning, and for why this
-// is not the heuristic doubling the manuscript criticises.
-bool CovarianceMapMatch::should_expand_search_radius(size_t candidates_found,
-                                                     int min_candidates,
-                                                     int doublings_done,
-                                                     int max_doublings,
-                                                     double search_radius) {
-    // A radius that cannot grow would make the doubling a no-op and the retry
-    // loop would spin forever: 0 * 2 == 0, and NaN and inf are worse. Checked
-    // before anything else so no caller can reach the multiplication.
-    if (!(search_radius > 0.0) || !std::isfinite(search_radius)) {
-        return false;
+// See the declaration in cmm_algorithm.hpp for the reasoning. This is
+// ablation apparatus: with the knob off it returns the protection level, which
+// is the paper's r_i = HPL_i and the production behaviour.
+double CovarianceMapMatch::effective_search_radius(double protection_level,
+                                                   double k_search,
+                                                   double delta_road) {
+    return k_search * protection_level + delta_road;
+}
+
+// See the declaration in cmm_algorithm.hpp. Equal total variance, so that the
+// isotropic and anisotropic arms of the ablation differ in shape and not size.
+double CovarianceMapMatch::isotropic_sigma(const CovarianceMatrix &cov,
+                                           double scale) {
+    if (!(scale > 0.0)) {
+        return -1.0;  // knob off; the caller keeps the reported covariance
     }
-    if (doublings_done >= max_doublings) {
-        return false;
+    // A non-positive standard deviation is not a covariance, so there is no
+    // total variance to preserve. Upstream, is_covariance_usable() has already
+    // replaced such input with the documented fallback, so arriving here means
+    // the caller bypassed it -- the Python binding and example/cmm_example.cpp
+    // do not call validate(). Declining keeps that bug visible instead of
+    // returning a plausible-looking sigma assembled from an invalid input,
+    // which is exactly the failure the covariance floor used to cause.
+    // The negated comparisons also reject NaN.
+    if (!(cov.sde > 0.0) || !(cov.sdn > 0.0)) {
+        return -1.0;
     }
-    // validate() is not on every construction path -- the Python binding and
-    // example/cmm_example.cpp build a config directly -- so clamp the target.
-    // With min_candidates <= 0 the comparison below would hold immediately and
-    // the fallback would be silently unreachable.
-    const size_t wanted =
-        static_cast<size_t>(min_candidates > 1 ? min_candidates : 1);
-    return candidates_found < wanted;
+    // 2 * sigma^2 is sde^2 + sdn^2: the isotropic circle has the same total
+    // variance as the reported ellipse.
+    const double total = cov.sde * cov.sde + cov.sdn * cov.sdn;
+    if (!(total > 0.0) || !std::isfinite(total)) {
+        return -1.0;
+    }
+    return scale * std::sqrt(total / 2.0);
 }
 
 void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
@@ -1938,11 +2011,30 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
     }
 
     // 5. 收集当前历元所有有效候选点的对数概率，计算局部信息熵
+    //
+    // The numerator of the trustworthiness ratio. By default it is the forward
+    // probability alpha_t, which makes trustworthiness the filtering posterior
+    // of the paper's Eq. (filtering_posterior_tw) -- the probability that the
+    // matched edge is correct given every observation so far, which is the
+    // quantity the paper evaluates. The ablation alternative is the Viterbi
+    // score delta_t: the confidence the best-path recursion implies, which never
+    // sees the mass of the competing paths and is therefore systematically
+    // sharper. It is offered so the baseline's native score can be compared
+    // against the posterior estimator on the same pipeline.
+    //
+    // Only this site needs the switch. The first epoch of a sub-segment sets
+    // cumu_prob and forward_cumu from the same expression above, so the two
+    // coincide there by construction.
+    const bool tw_use_viterbi = config.tw_use_viterbi;
+    auto tw_logp = [tw_use_viterbi](const TGNode &n) {
+        return tw_use_viterbi ? n.cumu_prob : n.forward_cumu;
+    };
+
     std::vector<double> layer_log_probs;
     for (size_t b = 0; b < next_count; ++b) {
         TGNode &node_b = (*lb_ptr)[b];
         if (node_b.forward_cumu > -std::numeric_limits<double>::infinity()) {
-            layer_log_probs.push_back(node_b.forward_cumu);
+            layer_log_probs.push_back(tw_logp(node_b));
         }
     }
 
@@ -1957,7 +2049,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         for (size_t b = 0; b < next_count; ++b) {
             TGNode &node_b = (*lb_ptr)[b];
             if (node_b.forward_cumu > -std::numeric_limits<double>::infinity()) {
-                double log_norm = node_b.forward_cumu - log_sum;
+                double log_norm = tw_logp(node_b) - log_sum;
                 norm_log_probs[b] = log_norm;
                 double p_norm = std::exp(log_norm);
                 if (p_norm > 0.0) {

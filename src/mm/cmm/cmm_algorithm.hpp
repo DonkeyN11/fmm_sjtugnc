@@ -132,7 +132,11 @@ struct CovarianceMapMatchConfig {
                            double trustworthiness_threshold_arg = 0.0, /* linear prob */
                            double phmi_arg = 1.0e-5,
                            double cumulative_reverse_pct_arg = 0.03,
-                           bool direction_penalty_arg = true);
+                           bool direction_penalty_arg = true,
+                           double k_search_arg = 1.0,
+                           double delta_road_arg = 0.0,
+                           double isotropic_emission_scale_arg = 0.0,
+                           bool tw_use_viterbi_arg = false);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -149,6 +153,40 @@ struct CovarianceMapMatchConfig {
 
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
     bool direction_penalty;              /**< Whether to apply direction-consistency von Mises penalty for reverse-direction candidates (default true). Set to false for ablation studies isolating the contribution of direction awareness. */
+
+    // --- Search radius -------------------------------------------------------
+    // The paper's candidate search radius is
+    //     r_i = k_search * HPL_i + delta_road,
+    // in the network's own units (degrees on this dataset). k_search scales the
+    // integrity bound and is 1 in the paper.
+    //
+    // delta_road is a fixed lateral allowance, and it exists because the two
+    // quantities are not the same size. A protection level bounds the distance
+    // from the fix to the *true* position; the candidate attached to a segment
+    // is a point on that segment's centreline, so the distance the search has to
+    // cover is from the fix to a centreline, which exceeds the positioning
+    // error by the vehicle's lateral offset within the carriageway. On this
+    // dataset that offset is larger than the positioning error itself, so
+    // delta_road = 0 discards epochs whose road is unambiguously within reach.
+    //
+    // An epoch whose disk still admits no segment is dropped rather than
+    // retried: its candidate set is empty, it contributes no HMM state, and
+    // matching continues with the epochs that remain.
+    double k_search;      /**< Scale on the protection level (default 1.0) */
+    double delta_road;    /**< Fixed lateral allowance added to the scaled protection level, in network units (default 0.0) */
+
+    // --- Ablation-only knob --------------------------------------------------
+    // Not part of the paper's Section III model; the manuscript never describes
+    // it. It exists so that the component ablation
+    // (experiments/scripts/ablate_cmm_factors.py) can vary the emission shape
+    // on its own and attribute the calibration result. It defaults to 0.0,
+    // which selects the modelled behaviour, and is declared at the END of the
+    // constructor's parameter list so that the positional constructions in
+    // example/cmm_example.cpp and CMM_README.md keep their meaning.
+
+    double isotropic_emission_scale; /**< > 0 makes the emission claim an isotropic covariance with the SAME TOTAL VARIANCE as the reported one: sigma_i = scale * sqrt((sde_i^2 + sdn_i^2) / 2). scale = 1 is the variance-matched operating point. The projection keeps using the reported covariance, so emission shape and projection metric stay separable factors. */
+
+    bool tw_use_viterbi; /**< Ablation-only. false (default) scores trustworthiness with the forward probability, giving the filtering posterior of the paper's Eq. (filtering_posterior_tw). true scores it with the Viterbi score instead: the confidence implied by the best-path recursion, which never sees the mass of the competing paths and is therefore the natural "native" score of a Viterbi-only matcher. The two differ only from the second epoch of a sub-segment onward; at the first they are the same quantity by construction. */
 
     /**
      * Check if the configuration is valid or not
@@ -331,46 +369,6 @@ public:
                                            bool next_epoch_has_candidates);
 
     /**
-     * Decide whether the candidate search radius should be doubled and retried.
-     *
-     * The search starts at the paper's radius, r_i = HPL_i. An epoch whose
-     * protection-level disk contains no road edge would otherwise be dropped
-     * from the output entirely. That is what the manuscript's pseudocode does
-     * (`continue` on an empty candidate set), but it discards epochs whose fix
-     * is merely unlucky: the covariance honestly reports that nothing is near,
-     * yet the vehicle was on a road. Doubling recovers them.
-     *
-     * This is NOT the heuristic doubling criticised in the manuscript's
-     * related-work discussion, and the differences are what keep it honest:
-     *   - it triggers only when the candidate set is short, never to top up a
-     *     set that already qualifies, so it cannot widen the disk of an epoch
-     *     that is matching fine;
-     *   - it is capped by a hard doubling limit, so the radius stays finite and
-     *     the worst case is bounded;
-     *   - every candidate it admits lies beyond the protection level, so the
-     *     PHMI grouping files it under the integrity-invalid weight. The extra
-     *     candidates are available to the HMM but are not promoted to the
-     *     high-emission group simply because we looked further.
-     *
-     * Public so that tests/test_cmm_candidate_search.cpp can pin the stop
-     * conditions; the function is pure and has no effect on its own.
-     *
-     * @param candidates_found how many candidates the last search produced
-     * @param min_candidates how many the configuration asks for; values below 1
-     *        are clamped to 1, because validate() is not on every construction
-     *        path and a zero target would make the fallback silently unreachable
-     * @param doublings_done doublings already performed for this epoch
-     * @param max_doublings hard cap on doublings for one epoch
-     * @param search_radius the radius used for the last search
-     * @return true if the caller should double the radius and search again
-     */
-    static bool should_expand_search_radius(size_t candidates_found,
-                                            int min_candidates,
-                                            int doublings_done,
-                                            int max_doublings,
-                                            double search_radius);
-
-    /**
      * Test whether a covariance matrix can be used as the paper's emission
      * model requires, i.e. whether it defines a genuine 2x2 Gaussian.
      *
@@ -425,6 +423,63 @@ public:
      */
     static CovarianceMatrix fallback_covariance(bool network_projected,
                                                 double latitude_deg);
+
+    /**
+     * The candidate search radius at one epoch: r_i = k_search * HPL_i + delta_road.
+     *
+     * There is deliberately no fallback here. An epoch whose disk admits no
+     * road segment is dropped, not retried with a larger radius: retrying until
+     * every epoch finds a candidate would guarantee a match for every epoch at
+     * the price of matching epochs the observation does not support. The
+     * allowance that keeps legitimately reachable epochs in the set is
+     * delta_road, and it is fixed once for the whole evaluation rather than
+     * grown per epoch.
+     *
+     * This is the one place the radius is computed, in either the Mahalanobis
+     * or the Euclidean candidate branch, so the two cannot drift apart.
+     *
+     * Public so that tests/test_cmm_ablation_knobs.cpp can pin the arithmetic;
+     * the function is pure and has no effect on its own.
+     *
+     * @param protection_level the epoch's HPL, in network units
+     * @param k_search scale on the protection level (1.0 in the paper)
+     * @param delta_road fixed lateral allowance, in network units
+     * @return the radius to search with
+     */
+    static double effective_search_radius(double protection_level,
+                                          double k_search,
+                                          double delta_road);
+
+    /**
+     * The standard deviation of the isotropic covariance used by the emission
+     * when isotropic_emission_scale is set.
+     *
+     * The scale is defined to preserve the TOTAL VARIANCE of the reported
+     * covariance: sde^2 + sdn^2, so that an isotropic arm and an anisotropic arm
+     * of the ablation differ in the shape of the error ellipse and not in its
+     * size. That makes the two levels of the emission factor comparable, which
+     * is the whole point of fixing an operating point.
+     *
+     * This is applied to the emission only. The projection keeps using the
+     * reported covariance: it is tempting to produce the isotropic arm by
+     * rewriting the input table instead, but the same matrix drives the
+     * Mahalanobis projection, so zeroing its off-diagonal and equalising its
+     * diagonal would change the projection metric at the same time and confound
+     * two factors.
+     *
+     * Because sqrt((a+b)/2) >= sqrt(ab) for positive a, b, the isotropic sigma
+     * is at least the geometric mean of sde and sdn. The direction penalty uses
+     * kappa = speed^2 / (sde * sdn), so the isotropic arm also gets a weaker
+     * penalty whenever the reported ellipse is elongated -- correctly, since
+     * the penalty is meant to follow the covariance the model believes.
+     *
+     * @param cov the reported covariance
+     * @param scale multiplier; <= 0 means "not set"
+     * @return the isotropic sigma, or <= 0 to mean "keep the reported
+     *         covariance" -- either because the knob is off, or because the
+     *         input is not a covariance and has no variance to preserve
+     */
+    static double isotropic_sigma(const CovarianceMatrix &cov, double scale);
 
 protected:
     /**
