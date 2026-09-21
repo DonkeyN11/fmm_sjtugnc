@@ -34,7 +34,7 @@ Example: For a point (121, 31) with covariance values [2.3751, 2.4249, 6.4817, 0
 
 ## Protection Level
 
-Protection level is the bound on horizontal position error at the integrity risk `PHMI` (default 10⁻⁵), computed by RAIM as `HPL = K · σ_major` with `K ≈ 5.33`. It is the search radius for candidate selection, verbatim — there is no multiplier. Note the units follow the network CRS: with an EPSG:4326 network the values are degrees, not metres, and the same number means something ~111,320× smaller.
+Protection level is the bound on horizontal position error at the integrity risk `PHMI` (default 10⁻⁵), computed by RAIM as `HPL = K · σ_major`. HPL is a *horizontal* containment radius, so `K` is the two-degree-of-freedom factor: `K = 4.7985` at 10⁻⁵ ($\chi^2_2$). (The frequently quoted `K ≈ 5.33` is the 1-D two-sided factor for 10⁻⁷, not for 10⁻⁵ — see the table in `CLAUDE.md` §GNSS Stochastic Model.) It is the search radius for candidate selection, verbatim — there is no multiplier. Note the units follow the network CRS: with an EPSG:4326 network the values are degrees, not metres, and the same number means something ~111,320× smaller.
 
 ## Implementation Structure
 
