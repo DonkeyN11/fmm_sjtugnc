@@ -61,8 +61,16 @@ def auc_score(labels, scores):
     says was never done: it reported a point estimate whose bootstrap distribution
     was not the same quantity, because the trapz form is biased across the ties a
     near-degenerate score produces. The earlier note recorded an FMM bootstrap CI
-    that excluded its own point estimate (0.5176 against [0.4305, 0.4593]); that is
-    the symptom this fixes, so the clamp-and-warn below should now be dead code.
+    that excluded its own point estimate (0.5176 against [0.4305, 0.4593]).
+
+    NOT VERIFIED: that this change makes the clamp-and-warn below unreachable. On a
+    synthetic tie-heavy score (97 % tied, 13 % positives) the rank interval is
+    ~4x narrower than the trapz one (width 0.017 vs 0.063) and both contain their
+    point estimate, so the stability improvement is real but the specific failure
+    does not reproduce without the actual FMM score distribution. Re-running this
+    script on the real corpus is what would settle it -- and it is a figure script,
+    so it regenerates PNGs under experiments/output/ when run. Do not claim the
+    warning is dead until someone has done that and seen it not fire.
     """
     from verify_paper_numbers import auc as _rank_auc
     return _rank_auc(np.asarray(labels, dtype=float), np.asarray(scores, dtype=float))
