@@ -690,7 +690,16 @@ void CSVMatchResultWriter::write_result(
     }
   }
   buf << '\n';
-  // Ensure that fstream is called corrected in OpenMP
+  flush_buffer(buf);
+}
+
+void CSVMatchResultWriter::flush_buffer(std::stringstream &buf) {
+  // An empty buffer must not reach the stream: inserting a streambuf that
+  // yields no characters sets failbit, and every later write is then silently
+  // dropped. tellp() is the put position, i.e. the number of characters
+  // formatted, and costs nothing.
+  if (buf.tellp() <= std::streampos(0)) return;
+  // Ensure that fstream is called correctly in OpenMP
   #pragma omp critical
   m_fstream << buf.rdbuf();
 }
@@ -878,8 +887,7 @@ void CSVMatchResultWriter::write_point_mode(
 
       buf << "\n";
     }
-    #pragma omp critical
-    m_fstream << buf.rdbuf();
+    flush_buffer(buf);
     return;
   }
 
@@ -1079,8 +1087,7 @@ void CSVMatchResultWriter::write_point_mode(
 
     buf << "\n";
   }
-  #pragma omp critical
-  m_fstream << buf.rdbuf();
+  flush_buffer(buf);
 }
 
 void CSVMatchResultWriter::write_results(

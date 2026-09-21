@@ -20,6 +20,7 @@
 
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <vector>
 #include <utility>
 #include <algorithm>
@@ -83,6 +84,18 @@ public:
    * @param results Vector of pairs containing trajectory and result
    */
   void write_results(const std::vector<std::pair<FMM::CORE::Trajectory, FMM::MM::MatchResult>> &results);
+  /**
+   * Append a formatted line buffer to the result file.
+   *
+   * Every row-producing function formats into a local stringstream and hands it
+   * here. It must go through this helper rather than `m_fstream << buf.rdbuf()`
+   * directly: inserting an empty streambuf sets failbit on the ostream
+   * ([ostream.inserters] -- "if the function inserts no characters, it calls
+   * setstate(failbit)"), and a failed stream silently discards every later
+   * write while the process still exits 0. One trajectory with nothing to
+   * report would therefore truncate the whole file at that point.
+   */
+  void flush_buffer(std::stringstream &buf);
 private:
   std::ofstream m_fstream;
   const CONFIG::OutputConfig &config_;
