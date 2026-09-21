@@ -1,5 +1,28 @@
 #!/usr/bin/env python3
-"""Fig.9: Covariance Model Validation at sigma_rho=10m — 4-panel statistical check."""
+"""DO NOT RUN — DO NOT RE-USE. This script fabricates its own figure.
+
+It was written to *illustrate* what a covariance-model consistency check looks
+like, and it does so by construction rather than by measurement: it reads no
+data file at all, draws `np.random.seed(42)` samples, adds a deliberate
+`0.15 * chi2(3)` misspecification term, and prints the literal string
+`"KS p = 0.12"` that no test ever produced (the real KS p-value of its own
+sample against chi2(2) is 2.1e-39, because the misspecification is deliberate).
+
+That was acceptable as a mock-up and became a defect when the figure it wrote,
+`figs/consistency_overview.png`, was placed in the manuscript under a caption
+describing the WLS covariance validation over 10,000 simulated epochs. Archived
+on 2026-09-22, when the paper was re-pointed at the genuine measurement:
+
+    experiments/output/1_covariance_validation/validation_sigma_10.png
+    produced by experiments/scripts/exp1_covariance_validation.py
+    (n = 10,000 epochs, KS 0.0084 against 0.1326 for an isotropic model,
+     E[D^2] = 2.03 against the theoretical 2)
+
+See the row for this file in README.md, and section "Covariance Model
+Validation" in the manuscript's appendix.
+
+--- original docstring ---
+Fig.9: Covariance Model Validation at sigma_rho=10m — 4-panel statistical check."""
 from pathlib import Path
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt

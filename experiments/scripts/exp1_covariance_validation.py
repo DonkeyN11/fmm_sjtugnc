@@ -169,11 +169,20 @@ def analyze_single_dataset(dataset_path: Path, output_dir: Path) -> dict:
     ax_white.grid(True, alpha=0.3)
 
     # (d) Rayleigh CDF
-    r_sorted = np.sort(radial)
+    # `x`/`y` in this corpus are geographic degrees, so `radial`, `sigma_eq` and
+    # `sigma_iso` are all in degrees while the axis is labelled in metres.
+    # Convert both the empirical radial error and the two Rayleigh scale
+    # parameters, so the comparison itself is unchanged (only the ratio enters
+    # the CDF) and the label becomes true. 111320 m/deg is the convention used
+    # everywhere else in this repository. `d2_iso` above is unaffected: it is a
+    # ratio of two degree-valued quantities and is already dimensionless.
+    M_PER_DEG = 111320.0
+    r_sorted = np.sort(radial * M_PER_DEG)
     emp_cdf_r = np.arange(1, r_sorted.size + 1) / r_sorted.size
-    r_grid = np.linspace(0, np.percentile(radial, 99.5), 300)
-    cov_cdf = _rayleigh_cdf(r_grid[:, None], sigma_eq[None, :]).mean(axis=1)
-    iso_cdf_vals = _rayleigh_cdf(r_grid, np.full_like(r_grid, sigma_iso))
+    r_grid = np.linspace(0, np.percentile(radial * M_PER_DEG, 99.5), 300)
+    cov_cdf = _rayleigh_cdf(r_grid[:, None],
+                            (sigma_eq * M_PER_DEG)[None, :]).mean(axis=1)
+    iso_cdf_vals = _rayleigh_cdf(r_grid, np.full_like(r_grid, sigma_iso * M_PER_DEG))
     ax_rad.step(r_sorted, emp_cdf_r, where="post", color=COLOR_CMM, lw=1.2, label="MC radial CDF")
     ax_rad.plot(r_grid, cov_cdf, color=COLOR_CMM, lw=1.0, linestyle="--", label="Rayleigh (cov)")
     ax_rad.plot(r_grid, iso_cdf_vals, color=COLOR_FMM, lw=1.0, linestyle="--", label="Rayleigh (iso)")

@@ -28,8 +28,8 @@ FIGURES = [
      "Anisotropic Gaussian emission → isotropic Euclidean via Cholesky whitening"),
     ("trustworthiness",     "Fig. 8 — Trustworthiness Across Road Geometries",
      "2x2: highway (high TW), junction (low), urban grid (medium-high), dual carriageway"),
-    ("consistency_overview","Fig. 9 — Covariance Model Consistency Validation",
-     "4-panel: chi-squared fit, P-P plot, whitened errors, radial CDF vs Rayleigh"),
+    ("covariance_validation_sigma10","Fig. 9 — Covariance Model Validation",
+     "4-panel: chi-squared fit, P-P plot, whitened errors, radial CDF vs Rayleigh (n=10,000)"),
     ("dataset_overview",    "Fig. 16 — Hainan-06 Dataset Overview",
      "Haikou road network (152K edges) with 7 colored SPP trajectories + location inset"),
 ]

@@ -539,7 +539,7 @@ python experiments/scripts/exp5_degraded_conditions.py \
 
 # Step 3: Copy figures to paper directory (optional)
 cp experiments/output/1_covariance_validation/validation_sigma_10.png \
-   "docs/../figs/fig2_consistency_overview.png"
+   "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/covariance_validation_sigma10.png"
 cp experiments/output/3_full_matching/comparison_overview.png \
    "docs/../figs/sigma_sweep.png"
 # ... (see Copy experiment output figures section above)
