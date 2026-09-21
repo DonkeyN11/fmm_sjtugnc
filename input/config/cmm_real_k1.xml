@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copy of input/config/cmm_real_0729.xml with the input table switched to the
+     k = 1 (raw GST, uncalibrated) covariance and a matching output path.
+     No matching parameter differs from cmm_real_0729.xml. -->
+<config>
+  <input>
+    <network><file>input/map/hainan/edges.shp</file><id>key</id><source>u</source><target>v</target></network>
+    <ubodt><file>input/map/hainan_ubodt_indexed.bin</file></ubodt>
+    <gps>
+      <file>data/real_vehicle/hainan_06/cmm_input_points_k1.csv</file>
+      <id>id</id><x>x</x><y>y</y><timestamp>timestamp</timestamp>
+      <sde>sde</sde><sdn>sdn</sdn><sdu>sdu</sdu>
+      <sdne>sdne</sdne><sdeu>sdeu</sdeu><sdun>sdun</sdun>
+      <protection_level>protection_level</protection_level>
+    </gps>
+  </input>
+  <output>
+    <file>data/real_vehicle/hainan_06/processed/cmm_result_k1.csv</file>
+    <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
+      <ep/><tp/><trustworthiness/><n_best_trustworthiness/><candidates/>
+      <status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
+  </output>
+  <parameters>
+    <k>16</k>
+    <min_candidates>1</min_candidates>
+    <reverse_tolerance>0.1</reverse_tolerance>
+    <use_mahalanobis>true</use_mahalanobis>
+    <filtered>true</filtered>
+    <max_interval>180.0</max_interval>
+    <trustworthiness_threshold>0.0</trustworthiness_threshold>
+    <phmi>0.00001</phmi>
+    <cumulative_reverse_pct>0.03</cumulative_reverse_pct>
+  </parameters>
+  <other>
+    <log_level>2</log_level>
+    <use_omp>true</use_omp>
+    <input_epsg>4326</input_epsg>
+  </other>
+</config>
