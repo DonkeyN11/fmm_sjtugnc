@@ -230,12 +230,39 @@ def main() -> int:
     ap.add_argument("--cross-check", action="store_true",
                     help="Re-derive every dataset's labels through exp3's "
                          "independent timestamp-based loader and assert equality.")
-    ap.add_argument("--out", type=Path, default=None)
+    ap.add_argument("--out", type=Path, default=None,
+                    help="Where to write the JSON summary. Defaults to "
+                         "<root>/metrics_summary.json, which OVERWRITES an existing "
+                         "file from an earlier corpus; prefer --out into /tmp.")
+    ap.add_argument("--no-write", action="store_true",
+                    help="Evaluate and print without writing any JSON summary.")
+    ap.add_argument("--force", action="store_true",
+                    help="Allow overwriting an existing <root>/metrics_summary.json. "
+                         "Without this, a run that would clobber one stops and asks "
+                         "for --out or --force instead.")
     args = ap.parse_args()
 
     root = (BASE / args.root).resolve()
     broot = (BASE / args.baseline_root).resolve() if args.baseline_root else root
     dirs = sorted(p.parent for p in root.rglob("observations.csv"))
+
+    # Decide the write target BEFORE the (slow) evaluation, so a run that is going
+    # to refuse does not first spend minutes recomputing. This guard exists because
+    # an evaluation run without --out silently overwrote data/simulation/
+    # metrics_summary.json, which is untracked and gitignored, so neither git nor a
+    # backup could restore it. Nothing else in the repository reads that file -- it
+    # is a write-only run log -- but "nothing reads it" is not a property the script
+    # was entitled to assume.
+    out = None
+    if not args.no_write:
+        out = args.out or (root / "metrics_summary.json")
+        if out.exists() and not args.force and args.out is None:
+            print(f"refusing to overwrite {out}\n"
+                  f"  it holds an earlier corpus's evaluation and is not under version "
+                  f"control.\n"
+                  f"  pass --out /tmp/… to write elsewhere, --force to overwrite, or "
+                  f"--no-write to skip.\n", file=sys.stderr)
+            return 2
 
     rows = []
     print(f"corpus: {root}   ({len(dirs)} datasets)\n")
@@ -283,9 +310,11 @@ def main() -> int:
                   f"{base['mean_tw']:7.4f}   Δ {rec['delta']['seg_accuracy']:+.4f}pp "
                   f"{rec['delta']['ece']:+.4f} {rec['delta']['auc']:+.4f}")
 
-    out = args.out or (root / "metrics_summary.json")
-    out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
-    print(f"\nwrote {out}")
+    if out is None:
+        print("\n--no-write: no summary written")
+    else:
+        out.write_text(json.dumps(rows, indent=2), encoding="utf-8")
+        print(f"\nwrote {out}")
     return 0
 
 
