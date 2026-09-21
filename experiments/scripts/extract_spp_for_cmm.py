@@ -7,30 +7,59 @@ import os
 import math
 from datetime import datetime, timezone, date
 
-# --- Receiver calibration of the NMEA GST covariance ------------------------
+# --- NMEA GST covariance scale ----------------------------------------------
 # The Tersus BX50C reports a GST 1-sigma ellipse describing its *RTK* solution
-# class, not the SPP solution it is actually emitting here. Measured 2026-09-16
-# against the RTK ground truth in processed/aligned.csv, over the 15034 epochs
-# that carry both an SPP fix, an RTK fix and a GST record:
+# class, not the SPP solution it is actually emitting here.
+#
+# HISTORY. Measured 2026-09-16 against the RTK ground truth in
+# processed/aligned.csv, over the 15034 epochs that carry both an SPP fix, an
+# RTK fix and a GST record (traj 12 already excluded):
 #
 #     E[d^T Sigma_gst^-1 d] = 18.0097,   median = 5.39
 #
 # A correctly scaled bivariate Gaussian has E[d^T Sigma^-1 d] = 2, so the GST
-# covariance is short by a factor of sqrt(18.0097 / 2) = 3.0008 in sigma, or
-# 9.0049 in variance. This is the single scalar that reproduces the observed
-# quadratic form; the per-epoch GST *shape* is left untouched.
+# covariance appeared short by sqrt(18.0097 / 2) = 3.0008 in sigma, or 9.0049
+# in variance, and GST_COVARIANCE_SCALE was set to that value.
+#
+# That 3.0008 turned out to be a *compensation*, not a calibration: it was
+# correcting defects on the ground-truth side and an unmodelled geometric bias,
+# not the GST. Stripped in stages over the same population:
+#
+#     3.0008   the value originally measured
+#     1.8683   after removing the two ground-truth defects in
+#              build_real_data_gt.py -- the +-1 s RTK substitution (152 rows of
+#              the calibration population, which alone supply 57.7 % of E[q])
+#              and the 11.3 % of "RTK truth" rows that are not fixed solutions
+#     0.9430   after also removing the antenna lever arm (the SPP and RTK
+#              antenna phase centres are not co-located on this vehicle) and a
+#              1.0-2.7 m fixed-azimuth SPP bias
+#
+# What is left is ~1, and an independent route agrees: raw GST median
+# sigma_major 0.815 m against a post-removal residual sigma of ~0.707 m gives a
+# ratio of 0.87. The raw NMEA GST covariance is already right -- slightly
+# conservative, not 3x too small.
+#
+# Donkey.Ning's 2026-09-16 ruling: use k = 1, i.e. write the raw GST covariance
+# through unscaled. The constant is kept, and still imported by
+# experiments/scripts/apply_gst_calibration.py as the single definition of the
+# factor, but it is now the identity.
 #
 # The scale is applied to the covariance, so sigma scales by
 # GST_COVARIANCE_SCALE and the cross-covariance by its square. The
 # protection_level computed below is derived from the same covariance and so
-# inherits the scale -- it is a 6-sigma ellipse of the calibrated covariance,
-# not of the raw GST one.
+# inherits the scale -- at k = 1 it is a 6-sigma ellipse of the raw GST
+# covariance.
 #
-# experiments/scripts/apply_gst_calibration.py applies the same constant to an
-# existing cmm_input_points.csv, which is the path that was actually taken:
-# the hainan_06 raw receiver logs are no longer on disk, so the CSV cannot be
-# regenerated from scratch. That script also records the per-trajectory spread.
-GST_COVARIANCE_SCALE = 3.0008
+# experiments/scripts/apply_gst_calibration.py rescales an existing CSV by the
+# same constant (at k = 1 that is the identity). The hainan_06 raw receiver
+# logs are on disk -- spp_solution.txt, rtk_solution.txt,
+# rtk_solution_clean.txt and GNSS原始观测/ all exist for all 7 trajectories --
+# so the CSV is regenerable from scratch. Note that this script's own main()
+# does not currently find them: its glob,
+# "data/real_vehicle/*/实时定位结果/spp_solution.txt", is one directory level
+# too shallow for the on-disk layout
+# "data/real_vehicle/hainan_06/<traj>/实时定位结果/spp_solution.txt".
+GST_COVARIANCE_SCALE = 1.0
 
 
 def dm_to_dd(dm_str):
@@ -191,9 +220,11 @@ def process_spp_file(file_path, transformer):
         smaj, smin, orient = rec['smaj'], rec['smin'], rec['orient']
         alt_sd = rec.get('alt_sd', 1.0)
         
-        # 1. Covariance in meters (Local North-East frame), receiver-calibrated.
-        # Scaling by a scalar commutes with the Jacobian below, so applying it
-        # here and applying it to cov_deg give the same matrix.
+        # 1. Covariance in meters (Local North-East frame), raw NMEA GST.
+        # GST_COVARIANCE_SCALE is 1.0 (see the header), so this is the
+        # reported ellipse as-is. Scaling by a scalar commutes with the
+        # Jacobian below, so applying it here and applying it to cov_deg give
+        # the same matrix.
         cov_m = GST_COVARIANCE_SCALE ** 2 * ellipse_to_cov_m(smaj, smin, orient)
         
         # 2. Jacobian transformation

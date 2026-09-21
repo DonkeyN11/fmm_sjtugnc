@@ -16,7 +16,7 @@ Metrics per dataset:
 
 Config per experiments/README.md:
   CMM: k=16, PL_mult=3, window_length=100, tw_threshold=0.0, phmi_pl_mult=1, lag=5
-  FMM: k=16, r=0.03, pf=0, gps_error=0.001
+  FMM: k=16, r=0.0027 (300 m), gps_error=0.001 (111 m), rt=0.1, native Viterbi score
 
 Usage:
   python experiments/scripts/exp3_full_matching.py \
@@ -89,6 +89,7 @@ def build_cmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Pa
     <max_interval>180.0</max_interval><trustworthiness_threshold>0.0</trustworthiness_threshold>
     <phmi>0.00001</phmi><cumulative_reverse_pct>0.03</cumulative_reverse_pct>
     <direction_penalty>true</direction_penalty><enable_gap_bridging>true</enable_gap_bridging>
+    <k_search>1.0</k_search><delta_road>0.0000314409</delta_road>
   </parameters>
   <other><log_level>2</log_level><use_omp>true</use_omp></other>
 </config>"""
@@ -114,8 +115,9 @@ def build_fmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Pa
       <ep/><tp/><trustworthiness/></fields>
   </output>
   <parameters>
-    <k>16</k><r>0.03</r><gps_error>0.001</gps_error>
-    <reverse_tolerance>0.0</reverse_tolerance>
+    <k>16</k><r>0.0026949335</r><gps_error>0.001</gps_error>
+    <reverse_tolerance>0.1</reverse_tolerance>
+    <tw_use_viterbi>true</tw_use_viterbi>
   </parameters>
   <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step></other>
 </config>"""
@@ -204,7 +206,13 @@ def match_dataset(data_dir: Path, cmm_bin: Path, fmm_bin: Path,
     if not (data_dir / fmm_name).exists():
         traj_name = f"fmm_trajectory{suffix}.csv"
         traj_csv = data_dir / traj_name
-        if not traj_csv.exists():
+        # Regenerate the trajectory input whenever the observations it derives
+        # from are newer. Reusing it merely because the file exists is what left
+        # FMM matching a trajectory from a previous corpus generation: the file
+        # was there, so it was kept, and every epoch then failed to resolve
+        # against the regenerated ground truth.
+        if (not traj_csv.exists()
+                or traj_csv.stat().st_mtime < obs_csv.stat().st_mtime):
             convert_to_fmm_trajectory(obs_csv, traj_csv)
         xml = build_fmm_xml(str(traj_csv.resolve()), fmm_out, network_shp, ubodt)
         if run_matcher(fmm_bin, xml, project_root):
@@ -306,6 +314,10 @@ def compute_metrics(data_dir: Path, mr_csv: Path,
     errors = []
     trusts = []
     eps_list = []
+    # Correctness labels for the subset of epochs that carry BOTH a label and a
+    # trustworthiness. ECE and ROC are defined on (score, label) pairs, so these
+    # are built together with the scores, below.
+    scored_corr = []
     edge_correct = []
     n_total = 0
 
@@ -319,8 +331,11 @@ def compute_metrics(data_dir: Path, mr_csv: Path,
             ep = to_float(row.get("ep", "0"))
 
             n_total += 1
-            if trust is not None: trusts.append(trust)
-            if ep is not None: eps_list.append(ep)
+            # trust and ep are appended below, next to the correctness label
+            # they belong to. Collecting scores over every row while collecting
+            # labels only over matched rows leaves the two lists different
+            # lengths, which is what made compute_ece index past the end of the
+            # label array whenever an epoch produced a row without a label.
 
             # Timestamp-based matching (CMM rounds to int, GT has fractional)
             ts = None
@@ -358,7 +373,12 @@ def compute_metrics(data_dir: Path, mr_csv: Path,
                 if orig_seq is not None:
                     edge_key = (tid, orig_seq)
                     if edge_key in gt_edges_by_seq:
-                        edge_correct.append(edge_match(str(cpath), str(gt_edges_by_seq[edge_key])))
+                        correct = edge_match(str(cpath), str(gt_edges_by_seq[edge_key]))
+                        edge_correct.append(correct)
+                        if trust is not None:
+                            scored_corr.append(correct)
+                            trusts.append(trust)
+                            eps_list.append(ep if ep is not None else 0.5)
 
     if n_total == 0:
         return {"label": label, "error": "empty", "n": 0}
@@ -367,16 +387,20 @@ def compute_metrics(data_dir: Path, mr_csv: Path,
     trust_arr = np.array(trusts) if trusts else np.array([0.5])
     eps_arr = np.array(eps_list) if eps_list else np.array([0.5])
     edge_corr = np.array(edge_correct, dtype=float)
+    scored = np.array(scored_corr, dtype=float)
+    # Accuracy keeps its own denominator; only ECE and AUC use the paired subset.
+    assert not trusts or len(trust_arr) == len(scored), (
+        f"{label}: {len(trust_arr)} scores against {len(scored)} labels")
 
     seg_acc = float(np.mean(edge_corr)) if len(edge_corr) > 0 else None
 
-    if len(edge_corr) > 0:
-        ece_tw, mce_tw, ece_bins = compute_ece(trust_arr, edge_corr)
+    if len(scored) > 0:
+        ece_tw, mce_tw, ece_bins = compute_ece(trust_arr, scored)
     else:
         ece_tw, mce_tw, ece_bins = 1.0, 1.0, []
 
-    if len(edge_corr) > 0 and len(trusts) > 0:
-        auc, fpr, tpr = compute_roc_auc(edge_corr, trust_arr)
+    if len(scored) > 0:
+        auc, fpr, tpr = compute_roc_auc(scored, trust_arr)
     else:
         auc, fpr, tpr = 0.5, None, None
 
@@ -393,7 +417,7 @@ def compute_metrics(data_dir: Path, mr_csv: Path,
         "ece_tw": ece_tw,
         "mce_tw": mce_tw,
         "ece_tw_bins": ece_bins,
-        "ece_ep": compute_ece(eps_arr, edge_corr)[0] if len(edge_corr) > 0 else 1.0,
+        "ece_ep": compute_ece(eps_arr, scored)[0] if len(scored) > 0 else 1.0,
         "roc_auc": auc,
         "fpr": fpr.tolist() if fpr is not None else None,
         "tpr": tpr.tolist() if tpr is not None else None,

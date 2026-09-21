@@ -122,8 +122,9 @@ def build_fmm_xml(gps_csv: str, mr_out: str, network_shp: str, ubodt: str) -> Pa
       <ep/><tp/><trustworthiness/></fields>
   </output>
   <parameters>
-    <k>16</k><r>0.03</r><gps_error>0.001</gps_error>
-    <reverse_tolerance>0.0</reverse_tolerance>
+    <k>16</k><r>0.0026949335</r><gps_error>0.001</gps_error>
+    <reverse_tolerance>0.1</reverse_tolerance>
+    <tw_use_viterbi>true</tw_use_viterbi>
   </parameters>
   <other><log_level>2</log_level><use_omp>true</use_omp><step>500</step></other>
 </config>"""
@@ -182,7 +183,13 @@ def match_condition(data_dir: Path, cmm_bin: Path, fmm_bin: Path,
     fmm_out = str((data_dir / "fmm_result.csv").resolve())
     if not (data_dir / "fmm_result.csv").exists():
         traj_csv = data_dir / "fmm_trajectory.csv"
-        if not traj_csv.exists():
+        # Regenerate the trajectory input whenever the observations it derives
+        # from are newer. Reusing it merely because the file exists is what left
+        # FMM matching a trajectory from a previous corpus generation: the file
+        # was there, so it was kept, and every epoch then failed to resolve
+        # against the regenerated ground truth.
+        if (not traj_csv.exists()
+                or traj_csv.stat().st_mtime < obs_csv.stat().st_mtime):
             convert_to_fmm_trajectory(obs_csv, traj_csv)
         xml = build_fmm_xml(str(traj_csv.resolve()), fmm_out, network_shp, ubodt)
         if run_matcher(fmm_bin, xml, project_root):

@@ -65,7 +65,12 @@ except ImportError as exc:  # pragma: no cover - import guard
 # Configuration constants
 # --------------------------------------------------------------------------- #
 WGS84_CRS = CRS.from_epsg(4326)
-CHI_SQUARE_QUANTILE_9999_DF2 = 23.025850929940457  # chi2.ppf(0.9999, df=2)
+# Horizontal containment factor for a 1e-5 integrity risk with 2 dof:
+#   chi2.ppf(1 - 1e-5, df=2) = -2 ln(1e-5) = 23.0259  ->  K = 4.7985
+# The old name said 9999 and the old comment said chi2.ppf(0.9999, df=2),
+# but that quantile is 18.4207 (K = 4.2919). The value was always the
+# 1e-5 one, under a name that advertised 1e-4.
+CHI2_QUANTILE_1E5_DF2 = 23.025850929940457
 # MIN_SIGMA_M = 10.0            # metres (horizontal)
 # MAX_SIGMA_M = 50.0           # metres (horizontal)
 # MIN_SIGMA_UP = 10.0           # metres (vertical)
@@ -343,7 +348,7 @@ def _interpolate_along(coords: np.ndarray, target_dist_m: float,
 def _compute_protection_level_from_cov(cov_h: np.ndarray) -> float:
     eigenvalues = np.linalg.eigvalsh(cov_h)
     max_eig = float(np.max(eigenvalues))
-    return math.sqrt(max_eig * CHI_SQUARE_QUANTILE_9999_DF2)
+    return math.sqrt(max_eig * CHI2_QUANTILE_1E5_DF2)
 
 
 def _chi2_inv_approx(prob: float, dof: int) -> float:
@@ -787,7 +792,6 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             )
         else:
             sats_unit = _base_sats  # reuse pre-generated base geometry
-        sat_positions = sats_unit * ORBIT_RADIUS_M
 
         sample_distances = np.linspace(0.0, required_length, num=config.num_points, dtype=float)
 
@@ -800,6 +804,17 @@ def _generate_single(config: TrajectoryConfig) -> TrajectoryResult:
             base_x, base_y, seg_idx = _interpolate_along(chosen_coords, float(dist_m), cumulative, seg_lengths)
             truth_coords.append((base_x, base_y))
             truth_pos = np.array([base_x, base_y, 0.0], dtype=float)
+            # Anchor the constellation at the vehicle: sats_unit holds local ENU
+            # unit vectors, so `sats_unit * ORBIT_RADIUS_M` alone put every
+            # satellite on a sphere about the UTM origin — ~2251 km from the
+            # vehicle at the Haikou start point. _wls_position takes the line of
+            # sight from truth_pos to these points, so the LOS actually used then
+            # deviated from the sampled az/el by a median of 6.1 deg (P95 6.4
+            # deg; bound |p|/R = 6.385), rotating the generated error ellipse by a
+            # median of 9 deg (P95 44 deg) and scaling sigma_major to 0.82-1.32x.
+            # The drawn constellation stays fixed for the whole trajectory; only
+            # this translation varies.
+            sat_positions = truth_pos + sats_unit * ORBIT_RADIUS_M
             sigma_wls = config.sigma_pr_wls if config.sigma_pr_wls > 0 else config.sigma_pr
             est_pos, clock_bias, cov_xyz, H, fault_meta = _wls_position(
                 truth_pos, sat_positions, config.sigma_pr,
@@ -972,6 +987,34 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
 # Output writers
 # --------------------------------------------------------------------------- #
 
+def _get_jacobian_inv(lon: float, lat: float, transformer) -> np.ndarray:
+    """Return J_inv = d(lon, lat) / d(x, y) at (lon, lat).
+
+    Mirrors `get_jacobian_inv` in extract_spp_for_cmm.py (1e-6 degree forward
+    finite difference, 2x2 inversion of J = d(x,y)/d(lon,lat), spherical
+    fallback) so that both producers of CMM input tables agree.
+    """
+    eps = 1e-6  # degrees
+    try:
+        x0, y0 = transformer.transform(lon, lat)
+        x1, y1 = transformer.transform(lon + eps, lat)
+        x2, y2 = transformer.transform(lon, lat + eps)
+
+        # J = [dx/dlon dx/dlat; dy/dlon dy/dlat]
+        jac = np.array([
+            [(x1 - x0) / eps, (x2 - x0) / eps],
+            [(y1 - y0) / eps, (y2 - y0) / eps],
+        ])
+
+        return np.linalg.inv(jac)
+    except Exception:
+        # Fallback to simple spherical approximation
+        r_earth = 6378137.0
+        dlon_dx = 180.0 / (math.pi * r_earth * math.cos(math.radians(lat)))
+        dlat_dy = 180.0 / (math.pi * r_earth)
+        return np.array([[dlon_dx, 0.0], [0.0, dlat_dy]])
+
+
 def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -> None:
     """Write observations in CMM point-mode format (WGS84 lon/lat degrees).
 
@@ -982,7 +1025,9 @@ def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -
     import pyproj
     utm_epsg = 32649  # UTM zone 49N
     transformer = pyproj.Transformer.from_crs(f"EPSG:{utm_epsg}", "EPSG:4326", always_xy=True)
-    METERS_PER_DEG_LAT = 111320.0
+    # Forward direction — the one the C++ reader applies to this CSV when it
+    # reprojects into the (projected) network CRS.
+    forward_transformer = pyproj.Transformer.from_crs("EPSG:4326", f"EPSG:{utm_epsg}", always_xy=True)
 
     header = [
         "id", "seq", "timestamp", "x", "y",
@@ -997,20 +1042,64 @@ def _write_observation_csv(results: List[TrajectoryResult], destination: Path) -
             for obs in traj.observations:
                 # Reproject UTM → WGS84
                 lon, lat = transformer.transform(obs.x, obs.y)
-                cos_lat = math.cos(math.radians(lat))
-                jx = 1.0 / (METERS_PER_DEG_LAT * cos_lat)  # meter→degree at this lat
-                jy = 1.0 / METERS_PER_DEG_LAT
 
-                # Transform covariance from meters to degrees via Jacobian
-                sde_deg = abs(jx) * obs.sde
-                sdn_deg = abs(jy) * obs.sdn
-                sdu_deg = abs(jy) * obs.sdu  # rough approximation for vertical
-                sdne_deg = jx * jy * obs.sdne
+                # Full inverse Jacobian J_inv = d(lon,lat)/d(x_utm,y_utm), taken
+                # at the exact (lon, lat) written below. The covariance is born in
+                # UTM metres and this CSV is consumed in degrees (the network is
+                # EPSG:4326 and the XML pins input_epsg=4326), so expressing it in
+                # the degree frame needs the full congruence transform. The
+                # diagonal approximation this replaced dropped the off-diagonal
+                # term entirely, i.e. it ignored the meridian convergence angle:
+                # against the true J_inv the composition was
+                # [[1.000039, 0.003973], [-0.003997, 0.994122]] at the Haikou start
+                # point — a -0.229 deg rotation plus a -0.587% shrink of the north
+                # axis (the spherical 111320 m/deg sits 0.56% above the
+                # ellipsoidal meridian arc 110704 m/deg at lat 20).
+                #
+                # Note this is NOT justified as inverting a C++ reprojection:
+                # maybe_reproject_trajectories (cmm_algorithm.cpp:455-462) returns
+                # early whenever input_epsg == network_epsg, which holds for every
+                # config and every network in this repo (all three edges.prj are
+                # GEOGCS WGS84), so :510-518 never executes here.
+                j_inv = _get_jacobian_inv(lon, lat, forward_transformer)
+
+                # Sigma_deg = J_inv @ Sigma_m @ J_inv.T  (full congruence transform)
+                cov_m = np.array(
+                    [[obs.sde * obs.sde, obs.sdne], [obs.sdne, obs.sdn * obs.sdn]],
+                    dtype=float,
+                )
+                cov_deg = j_inv @ cov_m @ j_inv.T
+                sde_deg = math.sqrt(max(float(cov_deg[0, 0]), 0.0))
+                sdn_deg = math.sqrt(max(float(cov_deg[1, 1]), 0.0))
+                sdne_deg = float(cov_deg[0, 1])
+
+                # The up / up-mixed terms are never reprojected by the C++ reader
+                # (maybe_reproject_trajectories rewrites sde/sdn/sdne only), so
+                # they keep the same rough diagonal approximation as before, now
+                # taken from the Jacobian diagonal instead of the spherical
+                # constants (at lat 20 the old jy was 8.9831e-6 deg/m against a
+                # true 9.0361e-6).
+                jx = float(j_inv[0, 0])  # d(lon)/d(x)
+                jy = float(j_inv[1, 1])  # d(lat)/d(y)
+                sdu_deg = abs(jy) * obs.sdu
                 sdeu_deg = jx * jy * obs.sdeu
                 sdun_deg = jy * jy * obs.sdun
 
-                # Transform protection level meters → degrees
-                pl_deg = obs.protection_level * max(abs(jx), abs(jy))
+                # Protection level, metres → degrees. The PL is a scalar BOUND and
+                # the matcher uses it verbatim as the search radius
+                # (cmm_algorithm.cpp:787 `double search_radius = protection_level;`)
+                # with no metric conversion of its own, so the degree-space radius
+                # must cover the metric radius in EVERY direction. A degree step in
+                # longitude covers |d(x,y)/dlon| metres and one in latitude
+                # |d(x,y)/dlat| — 104623 vs 110667 m/deg at lat 20. Covering all
+                # directions therefore means dividing by the SMALLER of the two,
+                # i.e. multiplying by the largest degrees-per-metre. Dividing by
+                # the larger scale instead (which the previous revision did) leaves
+                # the east-west radius 5.8% short of the metric bound.
+                j_fwd = np.linalg.inv(j_inv)
+                scale_lon = math.hypot(float(j_fwd[0, 0]), float(j_fwd[1, 0]))
+                scale_lat = math.hypot(float(j_fwd[0, 1]), float(j_fwd[1, 1]))
+                pl_deg = obs.protection_level / min(scale_lon, scale_lat)
 
                 writer.writerow(
                     [

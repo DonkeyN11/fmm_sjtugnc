@@ -151,8 +151,8 @@ def main():
             "--points", "1000",
             "--fault-probability", "0.3",
             "--fault-magnitude-min", "100",
-            "--fault-magnitude-max", "500",
-        ], "sigma=30m, fault P=0.3, magnitude U(100,500)m", jobs=args.jobs)
+            "--fault-magnitude-max", "200",
+        ], "sigma=30m, fault P=0.3, magnitude U(100,200)m", jobs=args.jobs)
 
     # ── Step 4: sigma=30 with both occlusion and fault ──────────────────────
     if "occlusion_fault" in steps:
@@ -166,8 +166,8 @@ def main():
             "--occlusion-elevation-cutoff", "30",
             "--fault-probability", "0.3",
             "--fault-magnitude-min", "100",
-            "--fault-magnitude-max", "500",
-        ], "sigma=30m, occlusion=45°, fault P=0.3, magnitude U(100,500)m", jobs=args.jobs)
+            "--fault-magnitude-max", "200",
+        ], "sigma=30m, occlusion=45°, fault P=0.3, magnitude U(100,200)m", jobs=args.jobs)
 
     # ── Step 5: Full sigma sweep (10 trajs per level) ───────────────────────
     if "full_sweep" in steps:

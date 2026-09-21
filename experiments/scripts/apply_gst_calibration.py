@@ -2,17 +2,27 @@
 """Rescale the GST covariance columns of a CMM input CSV to the measured SPP error.
 
 Why this exists. ``extract_spp_for_cmm.py`` writes the receiver's NMEA GST
-1-sigma ellipse as the per-epoch covariance. That ellipse describes the
-receiver's RTK solution class, not the SPP solution it is actually emitting, so
-the covariance handed to the emission model is far too small -- measured against
-RTK it is short by a factor of 3.0008 in sigma on the Haikou set. The model is
-then over-sharp and the filtering posterior saturates.
+1-sigma ellipse as the per-epoch covariance. This script applies that script's
+``GST_COVARIANCE_SCALE`` -- imported from the generator so there is exactly one
+definition of the factor -- directly to an existing CSV, so that rescaling an
+input table does not require re-running the generator.
 
-Normally the fix would be to re-run the generator. It cannot be: the hainan_06
-raw receiver logs (``实时定位结果/spp_solution.txt``) are no longer on disk, and
-the CSV is the only surviving copy of the data they contained. So this script
-applies the same calibration constant, imported from the generator so there is
-exactly one definition of it, directly to an existing CSV.
+The constant itself is **1.0** since Donkey.Ning's 2026-09-16 ruling, so this
+transform is currently the identity and the output equals the input, column for
+column. The 3.0008 it held before was a *compensation*, not a calibration: it
+was correcting two ground-truth defects plus an unmodelled antenna lever arm and
+a fixed-azimuth SPP bias, not the GST. With those removed the raw GST is already
+right (k ~ 0.87-0.94). The scaling path is kept because the factor should still
+have exactly one definition, and because it is likely to be revisited once
+``build_real_data_gt.py`` is fixed.
+
+An earlier version of this docstring said the hainan_06 raw receiver logs
+(``实时定位结果/spp_solution.txt``) were no longer on disk. They are:
+``spp_solution.txt``, ``rtk_solution.txt``, ``rtk_solution_clean.txt`` and
+``GNSS原始观测/`` exist for all 7 trajectories, so the table is regenerable
+from scratch. (One caveat on the other script: its ``main()`` glob is one
+directory level too shallow for the on-disk layout, so it currently finds no
+files.)
 
 What it does NOT touch. ``sdu``, ``sdeu`` and ``sdun`` are left alone, including
 the fact that ``sdu`` is in metres while ``sde``/``sdn`` are in degrees -- that

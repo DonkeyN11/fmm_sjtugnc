@@ -56,6 +56,17 @@ PAPER = {
 
 def is_edge_match(m, g):
     m=m.strip(); g=g.strip()
+    # An empty match is never a match. The two REV_MAP tests below fall back to
+    # the empty string for any edge the map does not list, so with m == '' the
+    # second of them reads REV_MAP.get(g,'') == '' and returns True for every
+    # ground-truth edge outside the map -- i.e. every failed or absent epoch was
+    # credited as a hit. That is the epoch a comparison most needs counted
+    # against the matcher, and it silently inflated accuracy by exactly the
+    # failure rate: on the r=0.003 fair FMM run, 5247 of 13123 epochs carry an
+    # empty cpath but the score read 91.1 % instead of the true 36.5 %.
+    # compare_real_metrics_enu.py has always guarded this at its call site
+    # (`if cpath else False`); the guard belongs here, in the one definition.
+    if not m or not g: return False
     if m==g: return True
     if REV_MAP.get(m,'')==g: return True
     if REV_MAP.get(g,'')==m: return True
