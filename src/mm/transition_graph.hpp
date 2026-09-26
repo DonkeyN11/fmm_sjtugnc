@@ -39,6 +39,23 @@ struct TGNode {
   double trustworthiness; /**< filtering posterior: normalized P(state_t | obs_{1:t}) */
   double delta_entropy; /**< information gain: H(prior) - H(posterior) in bits */
   double posterior_entropy; /**< layer posterior entropy H(posterior) in bits */
+  /**
+   * Smoothed posterior of this node: normalized P(state_t | obs_{1:T}), the
+   * estimator of the paper's Eq. (smoothing_posterior). Computed by the backward
+   * pass in CovarianceMapMatch::process_sub_segment; equals `trustworthiness` on
+   * the last layer of a sub-segment, where beta == 1 by definition.
+   */
+  double trustworthiness_smoothed;
+  /**
+   * Row of normalized log transition probabilities INTO this node, indexed by the
+   * candidate index in the PREVIOUS layer: entry a is log t_{a -> b}. A pair that
+   * the forward pass gated out holds -inf, which is the same convention as
+   * tp_raw == 0. Stored rather than recomputed because recomputing would have to
+   * replicate both gates and would double the UBODT lookups, all of which
+   * serialise on a single critical section. Empty on the first layer of a
+   * sub-segment, which has no predecessors.
+   */
+  std::vector<double> incoming_log_tp;
 };
 
 /**

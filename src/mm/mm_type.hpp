@@ -70,6 +70,14 @@ struct MatchedCandidate {
   double trustworthiness; /**< filtering posterior: normalized P(state_t | obs_{1:t}) */
   double delta_entropy; /**< information gain: H(prior) - H(posterior) in bits (CMM) */
   double posterior_entropy; /**< layer posterior entropy H(posterior) in bits (CMM) */
+  /**
+   * Smoothed posterior: normalized P(state_t | obs_{1:T}), the exact alpha*beta
+   * estimator of the paper's Eq. (smoothing_posterior). Reported beside
+   * `trustworthiness` so that the filtering and smoothing arms are read off the
+   * same run with the candidate fixed on the Viterbi path, which is the only
+   * difference the comparison is allowed to carry.
+   */
+  double trustworthiness_smoothed;
 };
 
 /**

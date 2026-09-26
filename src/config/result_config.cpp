@@ -53,6 +53,8 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "delta_entropy ";
   if (output_config.write_posterior_entropy)
     ss << "posterior_entropy ";
+  if (output_config.write_trustworthiness_smoothed)
+    ss << "trustworthiness_smoothed ";
   if (output_config.point_mode)
     ss << "point_mode ";
   SPDLOG_INFO("ResultConfig");
@@ -172,6 +174,8 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
         config.output_config.write_delta_entropy = true;
       } else if (v.first == "posterior_entropy") {
         config.output_config.write_posterior_entropy = true;
+      } else if (v.first == "trustworthiness_smoothed") {
+        config.output_config.write_trustworthiness_smoothed = true;
       } else if (v.first == "point_mode") {
         config.output_config.point_mode = true;
       } else if (v.first == "all") {
@@ -197,6 +201,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
         config.output_config.write_timestamp = true;
         config.output_config.write_delta_entropy = true;
         config.output_config.write_posterior_entropy = true;
+        config.output_config.write_trustworthiness_smoothed = true;
       }
     }
   }
@@ -287,6 +292,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     if (dict.find("posterior_entropy") != dict.end()) {
       config.output_config.write_posterior_entropy = true;
     }
+    if (dict.find("trustworthiness_smoothed") != dict.end()) {
+      config.output_config.write_trustworthiness_smoothed = true;
+    }
     if (dict.find("point_mode") != dict.end()) {
       config.output_config.point_mode = true;
     }
@@ -313,6 +321,7 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
       config.output_config.write_timestamp = true;
       config.output_config.write_delta_entropy = true;
       config.output_config.write_posterior_entropy = true;
+      config.output_config.write_trustworthiness_smoothed = true;
     }
   }
   return config;

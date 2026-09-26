@@ -1370,6 +1370,76 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
 
         // Pre-extract top-3 trustworthiness per layer from lag-smoothing softmax posterior
         const auto& layers = tg_ptr->get_layers();
+
+        // ---------------------------------------------------------------------
+        // Backward pass: the exact alpha*beta smoother of Eq. (smoothing_posterior).
+        //
+        // The forward pass has already filled forward_cumu (log alpha) and, on
+        // every node, the incoming row of row-normalised log transitions. What is
+        // missing is beta:
+        //
+        //   log beta_t(b) = LSE_a [ log t_{b->a} + log p(z_{t+1} | a) + log beta_{t+1}(a) ]
+        //
+        // with beta_T == 1 on the last layer of the sub-segment.
+        //
+        // get_layers() holds exactly ONE sub-segment: a restart constructs a new
+        // TransitionGraph (see the push_back sites in the layer loop), so a
+        // boundary can never appear inside this vector and none has to be
+        // detected here.
+        //
+        // There is no leak term. This implementation has no background state and
+        // log_prob_unconsidered is never fed back into cumu_prob or forward_cumu,
+        // so beta must be the exact mirror of the forward recursion. Everything
+        // stays in log space: alpha is never rescaled, so |log alpha| grows
+        // linearly with sub-segment length.
+        {
+            const size_t L = layers.size();
+            const double NEG_INF = -std::numeric_limits<double>::infinity();
+            std::vector<std::vector<double>> log_beta(L);
+            log_beta[L - 1].assign(layers[L - 1].size(), 0.0);  // beta_T == 1
+
+            for (size_t li = L - 1; li-- > 0; ) {  // li = L-2, ..., 0
+                const TGLayer& cur = layers[li];
+                const TGLayer& nxt = layers[li + 1];
+                log_beta[li].assign(cur.size(), NEG_INF);
+                for (size_t b = 0; b < cur.size(); ++b) {
+                    std::vector<double> terms;
+                    terms.reserve(nxt.size());
+                    for (size_t c = 0; c < nxt.size(); ++c) {
+                        const TGNode& nc = nxt[c];
+                        if (log_beta[li + 1][c] == NEG_INF) continue;
+                        if (b >= nc.incoming_log_tp.size()) continue;
+                        const double lt = nc.incoming_log_tp[b];
+                        if (lt == NEG_INF) continue;
+                        terms.push_back(lt + nc.ep + log_beta[li + 1][c]);
+                    }
+                    if (!terms.empty()) {
+                        log_beta[li][b] = log_sum_exp(terms);
+                    }
+                }
+            }
+
+            // gamma_t(b) = softmax over the layer of (log alpha + log beta). A node
+            // that is unreachable in either direction gets 0 rather than a NaN.
+            std::vector<TGLayer>& wlayers = tg_ptr->get_layers();
+            for (size_t li = 0; li < L; ++li) {
+                TGLayer& layer = wlayers[li];
+                std::vector<double> joint(layer.size(), NEG_INF);
+                for (size_t b = 0; b < layer.size(); ++b) {
+                    const double la = layer[b].forward_cumu;
+                    const double lb = log_beta[li][b];
+                    if (la != NEG_INF && lb != NEG_INF) joint[b] = la + lb;
+                }
+                const double denom = log_sum_exp(joint);
+                for (size_t b = 0; b < layer.size(); ++b) {
+                    layer[b].trustworthiness_smoothed =
+                        (joint[b] == NEG_INF || denom == NEG_INF)
+                            ? 0.0
+                            : std::exp(joint[b] - denom);
+                }
+            }
+        }
+
         std::vector<std::vector<double>> layer_nbest;
         layer_nbest.reserve(layers.size());
         for (size_t li = 0; li < layers.size(); ++li) {
@@ -1409,7 +1479,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
             // filtered_path stays empty and the FAILED_NO_CANDIDATE fallback below
             // reports it rather than crashing.
             if (node->c != nullptr && node->c->edge != nullptr) {
-                MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy};
+                MatchedCandidate mc{*(node->c), std::exp(node->ep), node->tp, node->cumu_prob, node->sp_dist, trust, node->delta_entropy, node->posterior_entropy, node->trustworthiness_smoothed};
                 matched_candidate_path.push_back(mc);
 
                 if (!config.filtered || trust >= config.trustworthiness_threshold) {
@@ -1952,6 +2022,11 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
         TGNode &node_b = (*lb_ptr)[b];
 
         std::vector<double> incoming_log_probs; // 收集所有指向 node_b 的分支概率
+        // The row of normalized log-transitions into node_b, indexed by the
+        // previous layer's candidate index. Kept so the backward pass can form
+        // beta without recomputing transitions (see TGNode::incoming_log_tp).
+        std::vector<double> incoming_log_tp(prev_count,
+                                            -std::numeric_limits<double>::infinity());
         TGNode *best_prev = nullptr;
         double best_log_branch_prob = -std::numeric_limits<double>::infinity();
         double best_log_tp_norm = -std::numeric_limits<double>::infinity();
@@ -1969,6 +2044,7 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                 // Row-normalize: for source a, Σ_j a(a,j) = 1
                 double linear_tp_norm = tp_raw / sum_tp_raw;
                 double log_tp_norm = std::log(linear_tp_norm);
+                incoming_log_tp[a] = log_tp_norm;
 
                 // Forward sum branch: α_{t-1}(a) * a(a,b) in log-space
                 // Uses forward_cumu (sum over all paths), not cumu_prob (max path).
@@ -1987,6 +2063,11 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
                 }
             }
         }
+
+        // The transition row is kept in both branches: a node with no admissible
+        // predecessor still has a well-defined (all -inf) incoming row, and the
+        // backward pass indexes it uniformly.
+        node_b.incoming_log_tp = std::move(incoming_log_tp);
 
         // 4. 计算最终的 Cumu_Prob (结合已归一化到 Log 空间的 EP)
         if (!incoming_log_probs.empty() && node_b.ep > -std::numeric_limits<double>::infinity()) {
