@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 import matplotlib.patches as patches
 import numpy as np
 
-OUT = "/home/ncz/fmm_sjtugnc/docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/tmm_framework"
+OUT = "/home/ncz/fmm_sjtugnc/docs/integrity/figs/tmm_framework"
 DPI = 300
 
 plt.rcParams.update({

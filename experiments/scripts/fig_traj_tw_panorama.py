@@ -42,7 +42,7 @@ PROJECT = Path(__file__).resolve().parents[2]
 DATA = PROJECT / "data/real_vehicle/hainan_06/processed"
 MAP_SHP = PROJECT / "input/map/hainan/edges.shp"
 REV_MAP = PROJECT / "experiments/config/reverse_edge_map.json"
-OUT_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+OUT_DIR = PROJECT / "docs/calib/figs"
 OUT_DIR.mkdir(parents=True, exist_ok=True)
 
 DPI = 200

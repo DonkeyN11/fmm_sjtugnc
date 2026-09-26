@@ -19,7 +19,7 @@ plt.rcParams.update({"font.size":7,"axes.labelsize":8,"axes.titlesize":9,
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "data/simulation/sigma_30"
-PAPER_FIGS = PROJECT_ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+PAPER_FIGS = PROJECT_ROOT / "docs/integrity/figs"
 
 CONDITIONS = [
     ("no_occlusion/no_fault",        "Clean (σ=30m)",           "#4dac26"),

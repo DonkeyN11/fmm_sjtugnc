@@ -8,7 +8,7 @@ import numpy as np
 
 PROJECT = Path(__file__).resolve().parents[2]
 JSON_PATH = PROJECT / "experiments/output/3_full_matching/sample_rate_full.json"
-FIGS_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS_DIR = PROJECT / "docs/calib/figs"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 DPI = 300

@@ -19,11 +19,11 @@ plt.rcParams.update({"font.size":7,"axes.labelsize":8,"axes.titlesize":9,
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 DATA_ROOT = PROJECT_ROOT / "data/simulation/sigma_30"
-PAPER_FIGS = PROJECT_ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+PAPER_FIGS = PROJECT_ROOT / "docs/integrity/figs"
 
 CONDITIONS = [
     ("no_occlusion/no_fault",        "Clean (σ=30m)",           "#4dac26"),
-    ("no_occlusion/with_fault",      "Step Fault (U(100,500)m)", "#e66101"),
+    ("no_occlusion/with_fault",      "Step Fault (U(100,200)m)", "#e66101"),
     ("with_occlusion/no_fault",      "Cross-Road Occlusion",     "#5e3c99"),
     ("with_occlusion/with_fault",    "Occlusion + Fault",        "#b2182b"),
 ]
@@ -57,9 +57,17 @@ def load_errors(data_dir: Path):
             obs_x, obs_y = float(row["x"]), float(row["y"])
             err = haversine_m(obs_x, obs_y, gt_x, gt_y)
             pl = float(row["protection_level"])
-            # Convert PL from degrees to meters
-            mlat = math.radians((obs_y+gt_y)/2)
-            pl_m = pl * 111320.0 * math.cos(mlat)
+            # Convert PL from degrees to metres.
+            #
+            # protection_level is a RADIUS, not an east-west component, so the
+            # latitude factor does not apply to it: a degree of latitude and a
+            # degree of longitude are both ~111320 m at this scale, and the
+            # cosine belongs only in the longitude term of a component-wise
+            # conversion (which is what haversine_m above does for the error).
+            # Multiplying by cos(lat) here under-reported every PL by 6% at
+            # Haikou (cos 19.98 deg = 0.940), which inflated the HMI counts and
+            # made this figure disagree with tab:stanford.
+            pl_m = pl * 111320.0
             errors.append(err)
             pls.append(pl_m)
     return np.array(errors), np.array(pls)

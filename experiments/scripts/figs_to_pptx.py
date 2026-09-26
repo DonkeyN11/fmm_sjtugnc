@@ -12,7 +12,7 @@ from pptx.opc.package import Part, PackURI
 from lxml import etree
 
 PROJECT = Path(__file__).resolve().parents[2]
-FIGS_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS_DIR = PROJECT / "docs/calib/figs"
 OUT = FIGS_DIR / "all_figures.pptx"
 
 FIGURES = [

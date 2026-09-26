@@ -15,7 +15,7 @@ from matplotlib.collections import LineCollection
 PROJECT = Path(__file__).resolve().parents[2]
 DATA = PROJECT / "data/real_vehicle/hainan_06/processed"
 MAP = PROJECT / "input/map/hainan/edges.shp"
-OUT = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+OUT = PROJECT / "docs/calib/figs"
 OUT.mkdir(parents=True, exist_ok=True)
 
 DPI = 300

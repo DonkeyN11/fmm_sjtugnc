@@ -30,8 +30,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.lines import Line2D  # noqa: E402
 
 BASE = Path(__file__).resolve().parents[2]
-FIGS = (BASE / "docs/Trustworthiness Evaluation Framework for Map Matching "
-        "based on Covariance Ellipse/figs")
+FIGS = (BASE / "docs/calib/figs")
 
 # One colour per noise level, as in the rest of the paper's figures.
 SIGMA_STYLE = {

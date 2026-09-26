@@ -42,7 +42,7 @@ except ImportError:  # pragma: no cover - env fallback
 
 # ---------------------------------------------------------------- paths ----
 ROOT = Path(__file__).resolve().parents[2]
-DOCS = ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse"
+DOCS = ROOT / "docs" / "integrity"
 SIM = ROOT / "data/simulation/sigma_15/no_occlusion/no_fault"
 EDGES_SHP = ROOT / "input/map/hainan/edges.shp"
 OUT_PNG = DOCS / "figs/traj9_comparison.png"

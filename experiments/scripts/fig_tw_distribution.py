@@ -12,8 +12,8 @@ REV = json.load(open(ROOT / "experiments/config/reverse_edge_map.json"))
 REV = {str(k): str(v) for k, v in REV.items()}
 def em(m,t): return str(m)==str(t) or REV.get(str(m))==str(t)
 
-OUT_SIM = ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/tw_dist_simulation.png"
-OUT_REAL = ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/tw_dist_real.png"
+OUT_SIM = ROOT / "docs/calib/figs/tw_dist_simulation.png"
+OUT_REAL = ROOT / "docs/calib/figs/tw_dist_real.png"
 DPI = 300
 plt.rcParams.update({"font.size":8,"axes.labelsize":9,"axes.titlesize":10,
     "legend.fontsize":7,"figure.dpi":DPI,"savefig.dpi":DPI,"savefig.bbox":"tight"})

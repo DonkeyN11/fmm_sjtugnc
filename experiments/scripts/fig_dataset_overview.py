@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Fig. dataset_overview: Haikou road network + 7 SPP trajectories + HPL context."""
+"""Fig. dataset_overview: Haikou road network + the 6 evaluated SPP trajectories.
+
+Repaired 2026-09-22. It used to read data/real_vehicle/processed/, a directory
+that does not exist, and cmm_input_points.csv, the pre-calibration table, while
+plotting TRAJ_IDS including 12 -- which the paper excludes -- and drawing only
+the first 5,000 of the 152,547 network edges while the caption claimed the whole
+network. It now reads the table the matchers consume and draws every edge.
+"""
 import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
@@ -7,7 +14,7 @@ from pathlib import Path
 from mpl_toolkits.axes_grid1.inset_locator import inset_axes
 import shapefile
 
-OUT = Path(__file__).resolve().parents[2] / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+OUT = Path(__file__).resolve().parents[2] / "docs/calib/figs"
 OUT.mkdir(parents=True, exist_ok=True)
 
 plt.rcParams.update({"font.size": 9, "axes.labelsize": 10, "axes.titlesize": 11,
@@ -27,15 +34,16 @@ print(f"Loaded {len(roads)} road segments")
 
 # ── 2. Load 7 trajectories ────────────────────────────────────────
 import csv
-DATA = Path("/home/ncz/fmm_sjtugnc/data/real_vehicle/processed")
-TRAJ_IDS = [11, 12, 13, 14, 21, 22, 23]
-COLORS = plt.cm.tab10(np.linspace(0, 1, 7))
+DATA = Path("/home/ncz/fmm_sjtugnc/data/real_vehicle/hainan_06")
+# Traj 12 is excluded: most of its epochs lie outside the mapped network.
+TRAJ_IDS = [11, 13, 14, 21, 22, 23]
+COLORS = plt.cm.tab10(np.linspace(0, 1, len(TRAJ_IDS)))
 
 all_lons, all_lats = [], []
 trajs = {}
 for tid in TRAJ_IDS:
     lons, lats = [], []
-    with open(DATA / "cmm_input_points.csv") as f:
+    with open(DATA / "cmm_input_points_k1.csv") as f:
         for row in csv.DictReader(f, delimiter=";"):
             if int(row["id"]) == tid:
                 lons.append(float(row["x"]))
@@ -49,8 +57,10 @@ fig = plt.figure(figsize=(10, 8))
 ax = fig.add_subplot(111)
 
 # Road network — light gray
-for r in roads[:5000]:  # subsample for speed
-    ax.plot(r[:, 0], r[:, 1], color="#d0d0d0", linewidth=0.2, alpha=0.6)
+# Every edge, as one LineCollection. The per-edge ax.plot loop this replaces
+# is why the previous version subsampled to the first 5,000.
+from matplotlib.collections import LineCollection
+ax.add_collection(LineCollection(roads, colors="#d0d0d0", linewidths=0.2, alpha=0.6))
 
 # Trajectories — colored, with direction arrows
 bbox = None
@@ -100,7 +110,7 @@ ax_inset.set_xticks([]); ax_inset.set_yticks([])
 ax_inset.set_title("Location", fontsize=7, pad=2)
 
 # ── 5. Annotations ────────────────────────────────────────────────
-ax.text(0.02, 0.97, f"Haikou Road Network\n{len(roads):,} edges\n7 GNSS trajectories\n16,155 epochs",
+ax.text(0.02, 0.97, f"Haikou Road Network\n{len(roads):,} edges\n{len(TRAJ_IDS)} GNSS trajectories\n15,421 epochs",
         transform=ax.transAxes, fontsize=8, verticalalignment="top",
         bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85, edgecolor="gray"))
 

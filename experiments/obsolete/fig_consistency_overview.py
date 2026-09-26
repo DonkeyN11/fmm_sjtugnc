@@ -30,7 +30,7 @@ import numpy as np
 from scipy import stats
 
 PROJECT = Path(__file__).resolve().parents[2]
-FIGS = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS = PROJECT / "docs/figs"
 FIGS.mkdir(parents=True, exist_ok=True)
 
 DPI = 300; C = {"blue":"#2471A3","red":"#C0392B","gray":"#95A5A6"}

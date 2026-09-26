@@ -19,7 +19,7 @@ import numpy as np
 # ── Paths ────────────────────────────────────────────────────────────────────
 PROJECT = Path(__file__).resolve().parents[2]
 MR_DIR = PROJECT / "data/real_vehicle" / "mr"
-FIGS_DIR = PROJECT / "docs" / "Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse" / "figs"
+FIGS_DIR = PROJECT / "docs" / "calib" / "figs"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 DPI = 300

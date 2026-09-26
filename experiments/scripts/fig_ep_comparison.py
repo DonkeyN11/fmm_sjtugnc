@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 
 ROOT = Path(__file__).resolve().parents[2]
 SIM = ROOT / "data/simulation"
-OUT = ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/ep_comparison.png"
+OUT = ROOT / "docs/calib/figs/ep_comparison.png"
 DPI = 300
 plt.rcParams.update({"font.size":9,"axes.labelsize":10,"axes.titlesize":11,
     "legend.fontsize":8,"figure.dpi":DPI,"savefig.dpi":DPI,"savefig.bbox":"tight"})

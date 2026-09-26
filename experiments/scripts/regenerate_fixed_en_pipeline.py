@@ -30,7 +30,7 @@ SIM = BASE / "data/simulation"
 OUT3 = BASE / "experiments/output/3_full_matching"
 OUT4 = BASE / "experiments/output/4_sigma_mismatch"
 OUT5 = BASE / "experiments/output/5_degraded"
-FIGS = BASE / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS = BASE / "docs/calib/figs"
 for d in (OUT3, OUT4, OUT5, FIGS):
     d.mkdir(parents=True, exist_ok=True)
 

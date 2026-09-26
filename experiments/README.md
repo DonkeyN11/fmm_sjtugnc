@@ -1,7 +1,7 @@
 # Experiments Suite for IEEE T-ITS Article
 
 Reorganized experiment scripts and synthetic data generation pipeline for
-"Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse."
+"original."
 
 ## Directory Structure
 
@@ -539,9 +539,9 @@ python experiments/scripts/exp5_degraded_conditions.py \
 
 # Step 3: Copy figures to paper directory (optional)
 cp experiments/output/1_covariance_validation/validation_sigma_10.png \
-   "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/covariance_validation_sigma10.png"
+   "docs/integrity/figs/covariance_validation_sigma10.png"
 cp experiments/output/3_full_matching/comparison_overview.png \
-   "docs/../figs/sigma_sweep.png"
+   "docs/calib/figs/sigma_sweep.png"
 # ... (see Copy experiment output figures section above)
 ```
 

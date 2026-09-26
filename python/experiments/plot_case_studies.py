@@ -361,18 +361,22 @@ def main():
             OUT_DIR / 'case2_complex_low_tw',
         )
 
-    # ── Scenario 4: Wrong Match, Very Low TW ──
-    # Traj 22, uni_seq around 575-640
+    # ── Scenario 3: Wrong Match, HIGH TW ──
+    # Traj 22, uni_seq 575-630. The title this window used to carry
+    # ("Low TW, Wrong Match") was the opposite of its content: trustworthiness
+    # returns to 1.0 after epoch ~586 and stays there for the remaining 45 of
+    # the 56 epochs, while the match itself is wrong on 50 of them. It is the
+    # confident-error regime, and the figure is the illustration of it.
     t22 = traj_data.get('22', [])
-    s4_seg = [s for s in t22 if 575 <= s['seq'] <= 630]
-    if s4_seg:
-        print(f"\nS4: Traj 22, {len(s4_seg)} epochs, "
-              f"TW=[{min(s['tw'] for s in s4_seg):.4f}, {max(s['tw'] for s in s4_seg):.4f}], "
-              f"correct={sum(s['correct'] for s in s4_seg)}")
+    s3_seg = [s for s in t22 if 575 <= s['seq'] <= 630]
+    if s3_seg:
+        print(f"\nS3: Traj 22, {len(s3_seg)} epochs, "
+              f"TW=[{min(s['tw'] for s in s3_seg):.4f}, {max(s['tw'] for s in s3_seg):.4f}], "
+              f"correct={sum(s['correct'] for s in s3_seg)}")
         plot_case_study(
-            s4_seg,
-            'Case 4: Parallel Road Confusion — Low TW, Wrong Match (Traj 22)',
-            OUT_DIR / 'case4_wrong_low_tw',
+            s3_seg,
+            'Case 3: Parallel Carriageway — High TW, Wrong Match (Traj 22)',
+            OUT_DIR / 'case3_parallel_high_tw_wrong',
         )
 
     print("\nDone!")

@@ -10,7 +10,7 @@ import numpy as np
 
 PROJECT = Path(__file__).resolve().parents[2]
 METRICS_JSON = PROJECT / "experiments/output/5_degraded/degraded_full.json"
-FIGS_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS_DIR = PROJECT / "docs/calib/figs"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 DPI = 300

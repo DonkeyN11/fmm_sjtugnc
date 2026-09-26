@@ -8,7 +8,7 @@ import numpy as np
 
 PROJECT = Path(__file__).resolve().parents[2]
 CSV_PATH = PROJECT / "experiments/output/4_sigma_mismatch/mismatch_summary.csv"
-FIGS_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS_DIR = PROJECT / "docs/calib/figs"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 DPI = 300
@@ -84,11 +84,17 @@ ax4.set_xlabel(r"True $\sigma_{\rho}$ (m)"); ax4.set_ylabel(r"$\Delta$Trust (cor
 ax4.set_title("(d) Trust Separation"); ax4.legend(); ax4.grid(alpha=0.3)
 
 # (e) ECE vs true sigma for both methods (simplified reliability substitute)
-ax5.plot(sigma_pr, get_cmm("ece_tw"), "o-", color=COLOR_CaMM, lw=1.5, ms=7, label="CaMM")
-ax5.plot(sigma_pr, get_hmm("ece_tw"), "s--", color=COLOR_HMM, lw=1.5, ms=7, label="HMM")
-ax5.axvline(20, color="gray", ls=":", lw=1, alpha=0.5)
-ax5.set_xlabel(r"True $\sigma_{\rho}$ (m)"); ax5.set_ylabel("ECE")
-ax5.set_title("(e) ECE vs True Noise — CaMM vs HMM"); ax5.legend(); ax5.grid(alpha=0.3)
+# (e) ROC AUC for mismatch detection.
+# This panel used to redraw (c) with a different title -- identical data, axes and
+# legend, so the figure carried a duplicate. The summary CSV has roc_auc and
+# mce_tw, neither of which was plotted anywhere, so the panel now reports the
+# ranking behaviour that the reliability diagrams of Fig. 7 would have shown.
+ax5.plot(sigma_pr, get_cmm("roc_auc"), "o-", color=COLOR_CaMM, lw=1.5, ms=7, label="CaMM")
+ax5.plot(sigma_pr, get_hmm("roc_auc"), "s--", color=COLOR_HMM, lw=1.5, ms=7, label="HMM")
+ax5.axvline(20, color="gray", ls=":", lw=1, alpha=0.5, label=r"$\sigma_{wls}=20$m")
+ax5.axhline(0.5, color="gray", lw=0.8, ls="--")
+ax5.set_xlabel(r"True $\sigma_{\rho}$ (m)"); ax5.set_ylabel("ROC AUC")
+ax5.set_title("(e) ROC AUC vs True Noise"); ax5.legend(); ax5.grid(alpha=0.3)
 
 # (f) ECE vs mismatch
 ax6.plot(mismatch, get_cmm("ece_tw"), "o-", color=COLOR_CaMM, lw=1.5, ms=7, label="CaMM")

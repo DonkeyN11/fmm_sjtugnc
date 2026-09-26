@@ -7,7 +7,7 @@ from matplotlib.patches import Ellipse
 import numpy as np
 
 PROJECT = Path(__file__).resolve().parents[2]
-FIGS = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS = PROJECT / "docs/integrity/figs"
 FIGS.mkdir(parents=True, exist_ok=True)
 
 DPI = 300; C = {"blue":"#2471A3","red":"#C0392B","green":"#27AE60","road":"#566573","gray":"#95A5A6"}

@@ -36,8 +36,7 @@ import inventory_real_metrics as I  # noqa: E402
 import verify_paper_numbers as v  # noqa: E402
 
 BASE = SCRIPT_DIR.parents[1]
-FIG = (BASE / "docs/Trustworthiness Evaluation Framework for Map Matching "
-       "based on Covariance Ellipse/figs")
+FIG = (BASE / "docs/calib/figs")
 
 
 def pairs(path: Path, gt):

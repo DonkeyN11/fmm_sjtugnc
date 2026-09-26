@@ -4,8 +4,8 @@ import subprocess, sys
 from pathlib import Path
 
 ROOT = Path("/home/ncz/fmm_sjtugnc")
-FIG_DIR = ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
-SVG_DIR = ROOT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs_svg"
+FIG_DIR = ROOT / "docs/integrity/figs"
+SVG_DIR = ROOT / "docs/integrity/figs_svg"
 SVG_DIR.mkdir(parents=True, exist_ok=True)
 
 # Config: (script, args, output_png_name)

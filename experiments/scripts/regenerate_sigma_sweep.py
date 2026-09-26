@@ -27,7 +27,7 @@ PROJECT = Path(__file__).resolve().parents[2]
 OUTPUT_DIR = PROJECT / "experiments/output/3_full_matching"
 FULL_JSON = OUTPUT_DIR / "sigma_sweep_full.json"
 SUMMARY_CSV = OUTPUT_DIR / "sigma_sweep_table.csv"
-FIGS_DIR = PROJECT / "docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs"
+FIGS_DIR = PROJECT / "docs/calib/figs"
 FIGS_DIR.mkdir(parents=True, exist_ok=True)
 
 DPI = 300
@@ -104,6 +104,27 @@ def csv_get(data_dict, sigma_label, key, default=np.nan):
     entry = data_dict.get(sigma_label, {})
     val = entry.get(key)
     return val if val is not None else default
+
+
+def _bubble_area(n):
+    """Bubble area in points^2 for a bin of n samples.
+
+    Scaling the area by n*0.5 gives a ~77 pt marker for the largest bins
+    (n ~ 9445), which overflows the axes and clips against the frame. This
+    scale keeps the largest bubble near 22 pt across, so the reliability curve
+    still reads as a curve and the sample-size encoding stays secondary.
+    """
+    return min(max(n * 0.018, 5.0), 170.0)
+
+
+def _sigma_num(label):
+    """'sigma_10' or 'sigma_10_sr1' -> '10', for the panel titles.
+
+    The detail dicts carry the loader's raw label string; printing that
+    verbatim into a panel title puts ``sigma_10'' in a typeset figure.
+    """
+    m = re.search(r"sigma_(\d+)", str(label))
+    return str(int(m.group(1))) if m else str(label)
 
 # ── IQR (P25-P75) for panel (a) error bars ──
 # sigma_sweep_full.json only stores mean/median/rmse/p95, so the quartiles are
@@ -286,7 +307,8 @@ def _find_detail_data(detail_dict, preferred_label):
             return v
     return None
 
-ax5.plot([0, 1], [0, 1], "k--", lw=0.8, label="Perfect calibration")
+perfect_h, = ax5.plot([0, 1], [0, 1], "k--", lw=0.8, label="Perfect calibration")
+reliability_handles = []
 # Try detailed JSON first, then CSV fallback
 cmm_detail = _find_detail_data(detail_cmm, RELIABILITY_SIGMA)
 hmm_detail = _find_detail_data(detail_hmm, RELIABILITY_SIGMA)
@@ -303,22 +325,30 @@ for label, detail, color in [("CaMM", cmm_detail, COLOR_CMM), ("HMM", hmm_detail
         ns = [b["n"] for b in bins if b.get("n", 0) > 0]
         all_ns.extend(ns)
         if confs:
-            ax5.scatter(confs, accs, s=[max(n * 0.5, 10) for n in ns],
-                       color=color, label=label, edgecolors="white", lw=0.5, zorder=3, alpha=0.8)
-            ax5.plot(confs, accs, "-", color=color, lw=1.0, alpha=0.4)
+            # The scatter carries the sample-size encoding and NO label; the
+            # line carries the label. Labelling the scatter instead lets its
+            # data-sized markers into the legend, where they burst out of the
+            # frame and cover the diagonal -- so the legend below is built from
+            # these explicit handles rather than from ax5.legend().
+            ax5.scatter(confs, accs, s=[_bubble_area(n) for n in ns],
+                       color=color, edgecolors="white", lw=0.5, zorder=3, alpha=0.8)
+            _h, = ax5.plot(confs, accs, "o-", color=color, lw=1.4, ms=5,
+                           zorder=4, label=label)
+            reliability_handles.append(_h)
             reliability_plotted = True
 
 # Add sample-size (bubble size) legend
 if all_ns:
     max_n = max(all_ns)
+    _ms = lambda n: math.sqrt(_bubble_area(n) / math.pi) * 2.0
     small_samp = mlines.Line2D([], [], color='gray', marker='o', linestyle='None',
-                               markersize=5, label=f'< {max_n//4:.0f}')
+                               markersize=_ms(min(max_n // 4, 1)), label=f'< {max_n//4:.0f}')
     medium_samp = mlines.Line2D([], [], color='gray', marker='o', linestyle='None',
-                                markersize=8, label=f'{max_n//4:.0f} – {max_n//2:.0f}')
+                                markersize=_ms(min(max_n // 2, 1)), label=f'{max_n//4:.0f} – {max_n//2:.0f}')
     large_samp = mlines.Line2D([], [], color='gray', marker='o', linestyle='None',
-                               markersize=12, label=f'> {max_n//2:.0f}')
+                               markersize=_ms(max_n), label=f'> {max_n//2:.0f}')
     legend_size = ax5.legend(handles=[small_samp, medium_samp, large_samp],
-                             title="Sample Size (n)", loc='lower right',
+                             title="Sample Size (n)", loc='center right',
                              fontsize=5.5, title_fontsize=6)
     ax5.add_artist(legend_size)
 
@@ -333,8 +363,10 @@ if cmm_detail:
     used_sigma_label = cmm_detail.get("label", RELIABILITY_SIGMA)
 ax5.set_xlabel("Confidence")
 ax5.set_ylabel("Accuracy")
-ax5.set_title(f"(e) Reliability ({used_sigma_label})")
-ax5.legend(fontsize=7)
+ax5.set_title("(e) Reliability ($\\sigma_\\rho = "
+              f"{_sigma_num(used_sigma_label)}$ m)")
+if reliability_plotted:
+    ax5.legend(handles=[perfect_h] + reliability_handles, fontsize=7, loc="lower right")
 ax5.grid(alpha=0.3)
 
 # (f) ROC curves
@@ -358,7 +390,8 @@ if not roc_plotted:
              transform=ax6.transAxes, fontsize=10, color="gray")
 ax6.set_xlabel("FPR")
 ax6.set_ylabel("TPR")
-ax6.set_title(f"(f) ROC ({used_sigma_label})")
+ax6.set_title("(f) ROC ($\\sigma_\\rho = "
+              f"{_sigma_num(used_sigma_label)}$ m)")
 ax6.legend(fontsize=7)
 ax6.grid(alpha=0.3)
 

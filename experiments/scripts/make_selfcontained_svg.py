@@ -6,9 +6,9 @@ import matplotlib; matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from PIL import Image
 
-SRC = "/home/ncz/fmm_sjtugnc/docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs_svg/tmm_pipeline.svg"
-OUT_SVG = "/home/ncz/fmm_sjtugnc/docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs_svg/tmm_framework.svg"
-OUT_PNG = "/home/ncz/fmm_sjtugnc/docs/Trustworthiness Evaluation Framework for Map Matching based on Covariance Ellipse/figs/tmm_framework.png"
+SRC = "/home/ncz/fmm_sjtugnc/docs/integrity/figs_svg/tmm_pipeline.svg"
+OUT_SVG = "/home/ncz/fmm_sjtugnc/docs/integrity/figs_svg/tmm_framework.svg"
+OUT_PNG = "/home/ncz/fmm_sjtugnc/docs/integrity/figs/tmm_framework.png"
 CACHE = "/tmp/formula_cache"; os.makedirs(CACHE, exist_ok=True)
 
 # ── Formula renderer ──
