@@ -169,6 +169,18 @@ class FastMapMatch {
                     double eu_dist, double reverse_tolerance,
                     bool *connected, bool tw_use_viterbi = false);
   /**
+   * Run the backward pass over a transition graph whose forward pass is
+   * complete, and store the smoothed posterior P(state_t | obs_{1:T}) --
+   * softmax over the layer of (log alpha + log beta) -- on every node
+   * (TGNode::trustworthiness_smoothed). Reads the transitions that
+   * update_layer persisted on each node, so it costs no UBODT lookup. Ported
+   * from CovarianceMapMatch::process_sub_segment, which computes the same
+   * estimator for CaMM; beta_T == 1 on the last layer by definition, so that
+   * layer's smoothed score reproduces its filtering score exactly.
+   * @param tg transition graph with a complete forward pass
+   */
+  static void smooth_tg(TransitionGraph *tg);
+  /**
    * Preprocess trajectory and candidates: filter out points without candidates
    * @param traj original trajectory
    * @param tc candidates for all points from search

@@ -42,18 +42,26 @@ struct TGNode {
   /**
    * Smoothed posterior of this node: normalized P(state_t | obs_{1:T}), the
    * estimator of the paper's Eq. (smoothing_posterior). Computed by the backward
-   * pass in CovarianceMapMatch::process_sub_segment; equals `trustworthiness` on
-   * the last layer of a sub-segment, where beta == 1 by definition.
+   * pass in CovarianceMapMatch::process_sub_segment (and, since paper 1's
+   * reviewer-requested baseline arm, by FastMapMatch::smooth_tg); equals
+   * `trustworthiness` on the last layer of a sub-segment or trajectory, where
+   * beta == 1 by definition.
    */
   double trustworthiness_smoothed;
   /**
-   * Row of normalized log transition probabilities INTO this node, indexed by the
-   * candidate index in the PREVIOUS layer: entry a is log t_{a -> b}. A pair that
-   * the forward pass gated out holds -inf, which is the same convention as
+   * Row of log transition probabilities INTO this node, indexed by the candidate
+   * index in the PREVIOUS layer: entry a is log t_{a -> b}. A pair that the
+   * forward pass gated out holds -inf, which is the same convention as
    * tp_raw == 0. Stored rather than recomputed because recomputing would have to
    * replicate both gates and would double the UBODT lookups, all of which
    * serialise on a single critical section. Empty on the first layer of a
    * sub-segment, which has no predecessors.
+   *
+   * It holds THE TRANSITION KERNEL THE FORWARD RECURSION USED, which is what
+   * makes the backward pass the exact mirror of it. That kernel is
+   * row-normalised (sum_b t_{a->b} = 1) in CaMM, whose forward normalises too;
+   * in FMM it is the raw TransitionGraph::calc_tp, because FMM's forward does
+   * not normalise and normalising it would move every reported FMM number.
    */
   std::vector<double> incoming_log_tp;
 };
