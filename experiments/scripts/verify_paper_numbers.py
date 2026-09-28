@@ -39,8 +39,8 @@ REV_MAP = json.load(open(BASE / 'experiments/config/reverse_edge_map.json'))
 # it, which is exactly how the policy went unrecorded until now.
 EXCLUDE_TRAJ = {"12"}
 
-# Paper claims — the SUBMITTED manuscript's Tables V and VI (revision of 2026-09-22),
-# over the 13,123 evaluable epochs (6 trajectories; traj 12 excluded).
+# Paper claims — the revised manuscript's Tables V and VI (revision of 2026-09-28),
+# over the 13,069 evaluable epochs (6 trajectories; traj 12 excluded).
 #
 # These were the 2026-09-02 numbers until 2026-09-22, when §V was regenerated at one
 # configuration. The old set was not merely stale, it pointed the WRONG WAY on the
@@ -50,17 +50,25 @@ EXCLUDE_TRAJ = {"12"}
 # whenever §V moves, and never let it drift a revision behind the .tex again.
 #
 # Values are the manuscript's ROUNDED figures, so check()'s tolerances do the work.
+# The manuscript's reported values, as the regression target. Re-based 2026-09-28 on
+# the current operating point and the current runs; the CMM column is the FILTERING
+# arm, which is the one this script's estimator most closely matches (it reads the
+# `trustworthiness` column). The smoothed arm is not scored here -- add a column if
+# the paper's headline moves to it.
+#
+# 'cmm' entries below were previously 96.9 / 0.044 / 0.649 / 5.5 / 13.5, which is
+# ablation-ladder row 7 (HPL-adaptive disk, phmi = 1e-5). The paper reports row 5.
 PAPER = {
     'accuracy': {
-        '11': (2439, 94.8, 82.7), '13': (1908, 98.7, 96.8),
-        '14': (352, 100, 67.3), '21': (3581, 98.4, 99.8), '22': (2123, 91.8, 99.0),
-        '23': (2720, 99.3, 99.0), 'ALL': (13123, 96.9, 95.0),
+        '11': (2385, 96.69, 84.57), '13': (1908, 97.90, 96.80),
+        '14': (352, 100, 67.33), '21': (3581, 98.74, 99.80), '22': (2123, 97.74, 99.01),
+        '23': (2720, 98.79, 99.04), 'ALL': (13069, 98.13, 95.42),
     },
-    'tw_sep': {'cmm_corr': 0.981, 'cmm_wrong': 0.904, 'cmm_sep': 0.077,
-               'fmm_corr': 0.781, 'fmm_wrong': 0.350, 'fmm_sep': 0.431, 'ratio': 0.18},
-    'ece': {'cmm': 0.044, 'fmm': 0.190},
-    'auc': {'cmm': 0.649, 'fmm': 0.859},
-    'pos_err': {'cmm_mean': 5.5, 'cmm_p95': 13.5, 'fmm_mean': 6.0, 'fmm_p95': 15.0},
+    'tw_sep': {'cmm_corr': 0.957, 'cmm_wrong': 0.533, 'cmm_sep': 0.424,
+               'fmm_corr': 0.781, 'fmm_wrong': 0.350, 'fmm_sep': 0.442, 'ratio': 0.96},
+    'ece': {'cmm': 0.039, 'fmm': 0.193},
+    'auc': {'cmm': 0.836, 'fmm': 0.865},
+    'pos_err': {'cmm_mean': 5.66, 'cmm_p95': 13.7, 'fmm_mean': 6.0, 'fmm_p95': 15.0},
     # The submitted manuscript reports no false-match rate. The script still measures
     # one; None means "print it, do not score it against a claim that does not exist".
     'fmr': {'cmm': None, 'fmm': None},
@@ -208,8 +216,10 @@ PROC = BASE / 'data/real_vehicle/hainan_06/processed'
 # The 2026-09-15 ECEF->ENU protection-level correction is a separate open question:
 # the corrected HPL is tighter (median 10.9 m vs 22.8 m) and every metric is worse,
 # because a search radius of exactly HPL admits fewer candidates.
-CMM_CSV = BASE / 'data/archive_20260922/real_final/cmm_final.csv'
-FMM_CSV = BASE / 'data/archive_20260922/real_final/fmm_final.csv'
+# Reproduce both with `experiments/scripts/real_final_tables.py`, which reruns the
+# matchers at the paper's operating point and writes these files.
+CMM_CSV = BASE / 'data/archive_20260928/final/cmm.csv'
+FMM_CSV = BASE / 'data/archive_20260928/final/fmm.csv'
 
 
 def main():
@@ -226,21 +236,38 @@ def main():
     # silently changes the reported accuracy, which is what exp6_real_accuracy
     # and the paper both count as 13123.
     gt_by_ts = {}
-    # (id, uni_seq) -> timestamp, over EVERY aligned.csv row including those with no
-    # usable ground truth. Needed to resolve FMM's seq column; see load_mr.
+    # (id, seq) -> timestamp, needed to resolve FMM's seq column; see load_mr.
+    #
+    # BUILT FROM THE INPUT TABLE, NOT FROM aligned.csv, since 2026-09-28. FMM's `seq`
+    # is a 0-based index into the trajectory it was given, so the file that defines
+    # it is the one it read -- data/real_vehicle/hainan_06/cmm_input_points_k1.csv.
+    # This map used aligned.csv's `uni_seq` until then, and that happened to agree
+    # because aligned.csv's union of four sources enumerated exactly the same epochs
+    # in the same order. Once it did not (11 FMM-only keys entered the union, whose
+    # timestamps no observation carries), uni_seq and seq diverged and every later
+    # epoch of a trajectory was joined to the wrong label: FMM scored 93.23 % with a
+    # 27.6 m mean position error instead of 95.42 % with 6.0 m, and printed a
+    # perfectly plausible table while doing it. The input table's own (id, timestamp)
+    # pairs, sorted per trajectory, are what `seq` counts.
+    #
+    # This is deliberately independent of EXCLUDE_TRAJ: it is a mechanical lookup, and
+    # the matcher result files still contain the excluded trajectory's rows
+    # (fmm_final.csv carries all 734 of traj 12's). Excluding here instead would leave
+    # those rows unresolvable and silently demote the whole FMM file to a timestamp
+    # join -- which is the failure this map exists to prevent.
     ts_by_seq = {}
+    _per_traj = defaultdict(list)
+    with open(BASE/'data/real_vehicle/hainan_06/cmm_input_points_k1.csv',newline='') as f:
+        for r in csv.DictReader(f,delimiter=';'):
+            _per_traj[r['id'].strip()].append(norm_ts(r['timestamp']))
+    for _tid, _stamps in _per_traj.items():
+        for _i, _ts in enumerate(sorted(_stamps)):
+            ts_by_seq[(_tid, str(_i))] = _ts
+
     n_excluded = 0
     with open(BASE/'data/real_vehicle/hainan_06/processed/aligned.csv',newline='') as f:
         for r in csv.DictReader(f,delimiter=';'):
             tid = r['id'].strip()
-            # Populate ts_by_seq for EVERY row, before the exclusion test. It is a
-            # mechanical seq -> timestamp lookup, not an evaluation-layer decision,
-            # and the matcher result files still contain the excluded trajectory's
-            # rows (fmm_final.csv carries all 734 of traj 12's). Excluding here
-            # instead would leave those rows unresolvable and silently demote the
-            # whole FMM file to a timestamp join -- which is the failure this map
-            # exists to prevent.
-            ts_by_seq[(tid, r['uni_seq'].strip())] = norm_ts(r['timestamp'])
             if tid in EXCLUDE_TRAJ:
                 n_excluded += 1
                 continue

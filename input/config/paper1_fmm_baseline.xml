@@ -1,0 +1,86 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Paper 1 (calibration), the classical FMM baseline reported in Section V.
+
+  This is the comparison arm, not a contribution of this paper: it is stock FMM with
+  a fixed isotropic GPS error, scored with its own native Viterbi score. It is
+  committed here because review item R8 asked for the configuration behind each table
+  to be in the repository rather than reconstructed from memory, and because the
+  numbers this file produces are what the manuscript calls "FMM native".
+
+  THE SEARCH DISK IS THE SAME 300 m AS CaMM's, on purpose. r and gps_error are in
+  network units, which on an EPSG:4326 network means degrees: 300 m = 300/111320 =
+  0.0026949335 deg and 100 m = 100/111320 = 0.0008983112 deg. A source default of
+  "300" would be 300 DEGREES; there is no usable default and the conversion is
+  mandatory. This is the second time the project has had to write that sentence --
+  an earlier revision ran the baseline at 0.03 deg, a 3.3 km disk, and reported the
+  result as a fair comparison.
+
+  tw_use_viterbi = true gives delta_t / sum_j delta_t(j). The filtering posterior
+  alpha_t / sum_j alpha_t(j) is the SAME estimand CaMM reports and is the more
+  informative comparison; it is obtained by setting this key to false, and it is
+  reported in Table \ref{tab:audit} as S_2. The manuscript's main table uses the
+  native score because that is what FMM actually reports.
+
+  trustworthiness_smoothed is the alpha*beta smoother of the baseline's own
+  forward recursion -- the FMM counterpart of the arm CaMM reports as its
+  contribution. It is a second column off the same run, so the candidate stays
+  fixed on the Viterbi path and the smoothed and filtering arms differ only in
+  the evidence set. The backward pass is FastMapMatch::smooth_tg, and it always
+  uses the forward probability alpha, whatever tw_use_viterbi says: at
+  tw_use_viterbi = true the two columns are different estimands (delta_t /
+  sum delta_t beside gamma_t), which is why they differ even on the last epoch
+  of a trajectory, where beta == 1 and the smoothed score reduces to
+  alpha_t / sum alpha_t.
+
+  reverse_tolerance = 0.1 is a ratio of edge length, not a distance. The simulation
+  corpus uses gps_error = 0.001 (111 m) instead of 0.0008983112 (100 m), because
+  that is the value experiments/scripts/exp3_full_matching.py generated the corpus
+  with; do not "fix" one to match the other without regenerating.
+
+  Reproduce with:
+      python3 experiments/scripts/real_final_tables.py
+-->
+<config>
+  <input>
+    <ubodt>
+      <file>input/map/hainan_ubodt_indexed.bin</file>
+    </ubodt>
+    <network>
+      <file>input/map/hainan/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+    <gps>
+      <file>data/real_vehicle/hainan_06/cmm_input_points_k1.csv</file>
+      <gps_point/>
+      <id>id</id>
+      <x>x</x>
+      <y>y</y>
+      <timestamp>timestamp</timestamp>
+    </gps>
+  </input>
+  <parameters>
+    <k>16</k>
+    <r>0.0026949335</r>
+    <gps_error>0.0008983112</gps_error>
+    <reverse_tolerance>0.1</reverse_tolerance>
+    <tw_use_viterbi>true</tw_use_viterbi>
+  </parameters>
+  <output>
+    <fields>
+      <cpath/>
+      <pgeom/>
+      <trustworthiness/>
+      <trustworthiness_smoothed/>
+      <timestamp/>
+      <candidates/>
+    </fields>
+    <file>data/archive_20260928/final/fmm.csv</file>
+  </output>
+  <other>
+    <use_omp/>
+    <input_epsg>4326</input_epsg>
+  </other>
+</config>

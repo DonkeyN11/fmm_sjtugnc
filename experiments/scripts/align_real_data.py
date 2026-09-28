@@ -79,7 +79,7 @@ DEFAULTS = {
 
 FIELDS = ["id", "uni_seq", "timestamp",
           "obs_x", "obs_y", "obs_sde", "obs_sdn", "obs_sdne",
-          "cmm_x", "cmm_y", "cmm_tw", "cmm_cpath",
+          "cmm_x", "cmm_y", "cmm_tw", "cmm_tw_smoothed", "cmm_cpath",
           "cmm_status", "cmm_delta_entropy", "cmm_posterior_entropy",
           "fmm_x", "fmm_y", "fmm_tw", "fmm_cpath",
           "gt_x", "gt_y", "gt_edge"]
@@ -150,7 +150,8 @@ def main():
     obs = load_csv(args.obs, ["x", "y", "sde", "sdn", "sdne", "sdu",
                               "protection_level"])
     print("Loading CMM results...")
-    cmm = load_csv(args.cmm, ["pgeom", "cpath", "trustworthiness", "ep", "tp",
+    cmm = load_csv(args.cmm, ["pgeom", "cpath", "trustworthiness",
+                              "trustworthiness_smoothed", "ep", "tp",
                               "n_best_trustworthiness", "delta_entropy",
                               "posterior_entropy", "status"])
     print("Loading FMM results...")
@@ -185,6 +186,11 @@ def main():
             row["cmm_x"] = c.get("x") if c.get("x") is not None else ""
             row["cmm_y"] = c.get("y") if c.get("y") is not None else ""
             row["cmm_tw"] = c.get("trustworthiness", "")
+            # The smoothed posterior of the same Viterbi candidate. It is the arm
+            # the paper's distance-based charge is computed from, and it is what
+            # the Case-2 window illustrates: a sustained filtering collapse that
+            # the whole-trajectory evidence largely removes.
+            row["cmm_tw_smoothed"] = c.get("trustworthiness_smoothed", "")
             row["cmm_cpath"] = c.get("cpath", "")
             row["cmm_status"] = c.get("status", "")
             row["cmm_delta_entropy"] = c.get("delta_entropy", "")

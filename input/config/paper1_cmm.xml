@@ -1,0 +1,141 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Paper 1 (calibration), the CaMM operating point reported in Section V.
+
+  This is ablation-ladder row 5 of data/archive_20260922/stair/run2.py, which
+  EXPERIMENT_DESIGN.md 0.1 registers as "the paper's model" and which Donkey.Ning
+  confirmed on 2026-09-28. Every real-data number in the manuscript comes from it.
+  Reproduce the whole table with:
+      python3 experiments/scripts/real_final_tables.py
+  which reads this file rather than carrying its own copy of the settings.
+
+  WHAT MAKES IT ROW 5 RATHER THAN ROW 7, and why that distinction cost a revision:
+
+    k_search = 0 with delta_road = 300 m  => the disk is a FIXED 300 m circle, the
+        same one the FMM baseline searches. Row 7 would be k_search = 1 with
+        delta_road = 13.5 m, the HPL-adaptive disk, which belongs to paper 2
+        (integrity) and is NOT what Section V reports. The two are easy to confuse
+        and the candidate count is the tell: 8.82 candidates/epoch here, 2.92 there.
+        Section III has described the fixed disk since the 2026-09-23 split, so a
+        run with 2.92 candidates is not at the operating point this paper describes.
+
+    phmi = 0  => the PHMI-grouped emission normalisation degenerates to a plain
+        layer-wise softmax, which is Eq. (layer_norm) and nothing more. Paper 2
+        carries the grouping. Note the two cannot be varied independently here:
+        PHMI only has a boundary to group at because the disk is HPL-derived, so
+        r and the grouping are one choice, and this is the choice the paper makes.
+
+  THE TWO DIRECTION PARAMETERS ARE BOTH WRITTEN OUT, because they are the model's only
+  calibrated constants and leaving one to a default is how a dataset-specific number
+  becomes invisible:
+
+    direction_kappa_scale = 0.227   c = 2(1-rho), the factor converting a one-epoch
+        covariance into a two-epoch DIFFERENCE covariance. rho = 0.89 here.
+    direction_kappa_floor = 0.0084  b, in rad^2: the heading variance the covariance
+        cannot contain -- the vehicle's heading change within the epoch, the digitised
+        centreline's disagreement with the road, the reference truth's noise. 5.5 deg.
+
+  Both come from one regression, sigma_theta^2 = c * (n^T Sigma n)/|v|^2 + b, over
+  11,792 correctly-matched gap-free steps (experiments/scripts/fit_direction_kappa.py).
+  z(b) = 9.0, so the floor is real and not a fitting artefact. AN EARLIER VALUE OF
+  c = 0.36 came from regressing on 1/|v|^2 alone, which omits the per-epoch regressor
+  n^T Sigma n and is therefore biased; 0.227 is the definition this file uses, and the
+  two are not two measurements of one quantity.
+
+  THE CONSTANTS ARE A FIXED POINT, not a one-shot fit, and that is a property of the
+  procedure rather than a refinement. The regression sample is "epochs the matcher got
+  right on a gap-free step", so it depends on the matcher's parameters, which depend on
+  the constants. Fitting against the previous configuration's output gives c = 0.254 /
+  b = 0.0093; re-running at those and re-fitting gives 0.227 / 0.0084, and re-running at
+  THOSE reproduces 0.227 / 0.0084 exactly. The iteration converges in one step and the
+  values in this file are the converged ones. Two decimal places of agreement is not
+  enough to skip the step: quoting a value the shipped configuration does not reproduce
+  is the defect this comment exists to prevent.
+
+  Why the floor matters even though it is only 3 % of the variance at highway speed:
+  with it the concentration SATURATES at 1/b as |v| grows, so a long straight step
+  cannot make the heading arbitrarily certain while the vehicle is steering. Removing
+  the c term entirely and keeping only the floor costs 2.5 pp of accuracy on Haikou
+  (98.14 -> 95.62), which is the clearest evidence that the term's value is in its
+  SPEED DEPENDENCE and not in its magnitude.
+
+  direction_max_interval = 2 s stays at its default: a gap guard, since a displacement
+  spanning longer is not a heading. direction_symmetric stays false -- it is a measured
+  net loss, see tests/test_cmm_direction_penalty.cpp.
+
+  map_error_sigma = 10.6 m is sqrt(10^2 + 3.5^2): the paper's own decomposition of
+  delta_road into 3.5 m of lane width and a 10 m map allowance, added in VARIANCE
+  because the two sources are independent. A radius allowance is a worst case and
+  adds linearly; a variance does not.
+-->
+<config>
+  <input>
+    <network>
+      <file>input/map/hainan/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+    <ubodt>
+      <file>input/map/hainan_ubodt_indexed.bin</file>
+    </ubodt>
+    <gps>
+      <file>data/real_vehicle/hainan_06/cmm_input_points_k1.csv</file>
+      <id>id</id>
+      <x>x</x>
+      <y>y</y>
+      <timestamp>timestamp</timestamp>
+      <sde>sde</sde>
+      <sdn>sdn</sdn>
+      <sdu>sdu</sdu>
+      <sdne>sdne</sdne>
+      <sdeu>sdeu</sdeu>
+      <sdun>sdun</sdun>
+      <protection_level>protection_level</protection_level>
+    </gps>
+  </input>
+  <output>
+    <file>data/archive_20260928/final/cmm.csv</file>
+    <fields>
+      <point_mode/>
+      <seq/>
+      <timestamp/>
+      <ogeom/>
+      <cpath/>
+      <tpath/>
+      <opath/>
+      <pgeom/>
+      <ep/>
+      <tp/>
+      <trustworthiness/>
+      <trustworthiness_smoothed/>
+      <n_best_trustworthiness/>
+      <candidates/>
+      <status/>
+      <delta_entropy/>
+      <posterior_entropy/>
+      <cumu_prob/>
+    </fields>
+  </output>
+  <parameters>
+    <k>16</k>
+    <min_candidates>1</min_candidates>
+    <reverse_tolerance>0.1</reverse_tolerance>
+    <use_mahalanobis>true</use_mahalanobis>
+    <filtered>true</filtered>
+    <max_interval>180.0</max_interval>
+    <trustworthiness_threshold>0.0</trustworthiness_threshold>
+    <phmi>0.0</phmi>
+    <cumulative_reverse_pct>0.03</cumulative_reverse_pct>
+    <k_search>0.0</k_search>
+    <delta_road>0.0026949335</delta_road>
+    <map_error_sigma>10.6</map_error_sigma>
+    <direction_kappa_scale>0.227</direction_kappa_scale>
+    <direction_kappa_floor>0.0084</direction_kappa_floor>
+  </parameters>
+  <other>
+    <log_level>2</log_level>
+    <use_omp>true</use_omp>
+    <input_epsg>4326</input_epsg>
+  </other>
+</config>

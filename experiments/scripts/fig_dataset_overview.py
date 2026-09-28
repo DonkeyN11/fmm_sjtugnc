@@ -114,7 +114,7 @@ ax.text(0.02, 0.97, f"Haikou Road Network\n{len(roads):,} edges\n{len(TRAJ_IDS)}
         transform=ax.transAxes, fontsize=8, verticalalignment="top",
         bbox=dict(boxstyle="round,pad=0.4", facecolor="white", alpha=0.85, edgecolor="gray"))
 
-ax.set_title("Hainan-06 Dataset: Haikou Road Network with 7 SPP GNSS Trajectories", fontweight="bold")
+ax.set_title("Hainan-06 Dataset: Haikou Road Network with the 6 Evaluated SPP GNSS Trajectories", fontweight="bold")
 
 fig.savefig(OUT / "dataset_overview.png")
 fig.savefig(OUT / "dataset_overview.svg")
