@@ -136,7 +136,13 @@ struct CovarianceMapMatchConfig {
                            double k_search_arg = 1.0,
                            double delta_road_arg = 0.0,
                            double isotropic_emission_scale_arg = 0.0,
-                           bool tw_use_viterbi_arg = false);
+                           bool tw_use_viterbi_arg = false,
+                           double map_error_sigma_arg = 0.0,
+                           double direction_kappa_scale_arg = 0.36,
+                           double direction_kappa_floor_arg = 0.0,
+                           double direction_lambda_max_arg = 0.0,
+                           double direction_max_interval_arg = 2.0,
+                           bool direction_symmetric_arg = false);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -153,6 +159,109 @@ struct CovarianceMapMatchConfig {
 
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
     bool direction_penalty;              /**< Whether to apply direction-consistency von Mises penalty for reverse-direction candidates (default true). Set to false for ablation studies isolating the contribution of direction awareness. */
+
+    // The von Mises concentration is kappa = |v|^2 / (c * n^T Sigma n), where n is
+    // the unit normal to the displacement. c = 2(1-rho) carries the inter-epoch
+    // correlation of the receiver error, which a single epoch's covariance cannot
+    // express: the displacement is a difference of two fixes, so its error is
+    // 2(1-rho)Sigma rather than Sigma.
+    //
+    // Measured by one regression, sigma_theta^2 = c * (n^T Sigma n)/|v|^2 + b, over
+    // 11,792 correctly-matched gap-free steps on the Haikou set:
+    //
+    //     c = 0.227,  b = 0.0084 rad^2,  rho = 0.89,  z(b) = 9.0
+    //
+    // (experiments/scripts/fit_direction_kappa.py). The regressor is
+    // n^T Sigma n / |v|^2, which is what the model says the covariance term is.
+    //
+    // THE FIT IS A FIXED POINT, NOT A ONE-SHOT REGRESSION, and the difference is not
+    // cosmetic. The sample is "epochs the matcher got right on a gap-free step", so it
+    // depends on the matcher's parameters, which depend on these constants. Regressing
+    // against the PREVIOUS configuration's output gives c = 0.254 / b = 0.0093;
+    // re-running at those and regressing again gives 0.227 / 0.0084, and re-running at
+    // THOSE reproduces them exactly. The iteration converges in one step and the numbers
+    // above are the converged ones. Quoting the first-iteration values is how a constant
+    // the shipped configuration does not reproduce gets written down as if it were the
+    // model's -- input/config/paper1_cmm.xml carries the same warning for the same reason.
+    //
+    // AN EARLIER VALUE OF 0.36 IS ALSO SUPERSEDED, and it failed for a different reason:
+    // it came from regressing on 1/|v|^2 alone, which is the same thing only if
+    // n^T Sigma n is constant -- it is not, it varies epoch to epoch with the reported
+    // covariance -- so that fit was biased by omitting the regressor. So 0.36 and 0.254
+    // are not two estimates of one quantity either; only 0.227 is the definition.
+    //
+    // This constant is NOT derivable from the reported covariance: Sigma_i is the
+    // marginal distribution of one epoch and rho is a property of the pair. It is
+    // measured, not assumed, and the measurement is a regression on the heading
+    // residual rather than a fit to any reported metric. 1.0 restores the
+    // pre-2026-09-27 behaviour of an implicit rho = 0.5.
+    double direction_kappa_scale;
+    /**
+     * b in sigma_theta^2 = c * (n^T Sigma n) / |v|^2 + b, in rad^2.
+     *
+     * The second term is the part of the heading variance the covariance cannot contain:
+     * the vehicle's own heading change within the epoch, the digitised centreline's
+     * disagreement with the road, and the reference truth's own noise. Fitting only c and
+     * forcing b = 0 makes c absorb b, which is why a slope fitted on one dataset does not
+     * transfer to another -- the corpus fitted 1.09 to 3.44 against Haikou's 0.227.
+     *
+     * With b > 0, kappa saturates at 1/b as |v| grows instead of growing without bound: a
+     * long straight step cannot make the heading arbitrarily certain when the vehicle is
+     * steering. Measured on Haikou, b = 0.0084 rad^2 -- a 5.2 deg floor, 29x the c term at
+     * the median speed. 0.0 reproduces the one-parameter model exactly, term for term.
+     * See experiments/scripts/fit_direction_kappa.py.
+     */
+    double direction_kappa_floor;
+
+    // The heading residual is heavy-tailed well beyond what the Gaussian behind kappa
+    // predicts, and no von Mises mixture fits the 3-6 sigma band (both a two- and a
+    // three-component fit under-predict the measured exceedance by a factor of two to
+    // three there; the cause is structural -- a mixture jumps from a narrow core to a
+    // broad component while the physical cause, how far the vehicle moves laterally in
+    // one epoch, is continuous). Measured on 11,740 correctly-matched epochs, 1.89 %
+    // exceed 4 sigma, so an uncapped term would fire an alarm on 222 of them.
+    //
+    // Since the tail cannot be modelled it must not be allowed to drive the inference.
+    // The per-epoch contribution is capped, which makes the RUN LENGTH rather than the
+    // extremity of any one epoch the deciding quantity: a single epoch can move the
+    // candidate/background odds by at most exp(lambda_max), while a divergence sustained
+    // over N epochs contributes N * lambda_max.
+    // Only meaningful with direction_symmetric. The one-sided form's penalty at a
+    // reversal is -kappa, which reaches ~2000 on this data, and capping THAT to a few
+    // nats would gut the wrong-way detection the shipped term exists for. Defaulted off
+    // for that reason; the symmetric form is where the cap was measured to matter.
+    double direction_lambda_max;         /**< Cap on the per-epoch heading penalty, in nats. 0 (default) = no cap. Only useful with direction_symmetric */
+
+    // The heading is the DIRECTION of the displacement, and that is only a heading if
+    // the interval is short enough that the vehicle cannot have turned in between. It is
+    // a TIME bound, not a speed bound: the four offending Haikou epochs carried 2450 m
+    // over 118 s, which is 20.8 m/s -- a perfectly ordinary road speed, and one that any
+    // speed ceiling high enough to admit a motorway would let through. What is wrong
+    // with those epochs is that the chord between two fixes two minutes apart is not the
+    // direction of travel at either end.
+    double direction_max_interval;       /**< Displacements spanning more than this many seconds are not headings; the term is skipped. 0 disables the guard */
+
+    // Making the heading term symmetric -- kappa(cos-1), penalising any misalignment
+    // rather than only a reversal -- is the obvious way to give a diverged vehicle a
+    // low score. It was implemented and MEASURED on 2026-09-27 and it is a net negative
+    // on this data. At the manuscript operating point, against the one-sided term:
+    //
+    //     accuracy   97.87 -> 96.44   (-1.43 pp; -1.14 pp excluding the 61 GT-defect
+    //                                  epochs, so it is not a labelling artefact)
+    //     ECE        0.0303 -> 0.0452
+    //     BSS       -0.176  -> -0.510
+    //     sep        0.435  -> 0.305
+    //     false alarm, tw < 0.5, on correctly-matched epochs:  2.04 % -> 3.29 %
+    //
+    // The loss is concentrated on Traj 11 (-5.1 pp) and Traj 13 (-1.8 pp), and the
+    // mechanism is the heavy tail documented above: on the 3.1 % of correctly-matched
+    // epochs whose heading residual exceeds 3 sigma, the symmetric term pushes the
+    // matcher OFF the correct edge. And it does not achieve the goal anyway -- Traj 11's
+    // window stays 44/44 wrong under it -- because the road the vehicle was on is not a
+    // candidate at all, so no re-ranking among candidates can recover it.
+    //
+    // Left in, defaulted off, so the measurement is reproducible rather than a claim.
+    bool direction_symmetric;            /**< false (default, measured better) = one-sided, penalise reversals only; true = symmetric von Mises, penalise any misalignment */
 
     // --- Search radius -------------------------------------------------------
     // The paper's candidate search radius is
@@ -187,6 +296,33 @@ struct CovarianceMapMatchConfig {
     double isotropic_emission_scale; /**< > 0 makes the emission claim an isotropic covariance with the SAME TOTAL VARIANCE as the reported one: sigma_i = scale * sqrt((sde_i^2 + sdn_i^2) / 2). scale = 1 is the variance-matched operating point. The projection keeps using the reported covariance, so emission shape and projection metric stay separable factors. */
 
     bool tw_use_viterbi; /**< Ablation-only. false (default) scores trustworthiness with the forward probability, giving the filtering posterior of the paper's Eq. (filtering_posterior_tw). true scores it with the Viterbi score instead: the confidence implied by the best-path recursion, which never sees the mass of the competing paths and is therefore the natural "native" score of a Viterbi-only matcher. The two differ only from the second epoch of a sub-segment onward; at the first they are the same quantity by construction. */
+
+    // --- Map-registration term in the emission --------------------------------
+    // The residual d = z_i - x_ij is not the GNSS error alone. It also carries
+    // the map's own error: the distance from the true road position to the
+    // digitised centreline, plus the vehicle's lateral offset within the
+    // carriageway. The candidate search already allows for both -- that is what
+    // delta_road is -- but the emission does not, so Sigma_i currently claims
+    // the residual is the reported GNSS covariance when it is not.
+    //
+    // map_error_sigma adds that term back, in metres, as Sigma_emis = Sigma + s^2 I
+    // added in the VARIANCE: sde and sdn are combined in quadrature and the
+    // cross term is left alone, the map error being uncorrelated with the GNSS
+    // one. Isotropic is the honest shape for the map component: georeferencing
+    // error has no preferred direction. The anisotropic structure of the
+    // reported covariance is preserved by construction, because the term is
+    // added to it rather than replacing it.
+    //
+    // The DIRECTION PENALTY deliberately does not see this term. Its
+    // concentration kappa = |v|^2 / (sde * sdn) is a heading uncertainty, driven
+    // by the displacement error between consecutive fixes; a misregistered map
+    // shifts where the road is, not which way the vehicle is pointing. Letting
+    // kappa follow the widened covariance would attenuate it by (0.8/10)^2 and
+    // confound the emission change with a direction change, which is the same
+    // confound the ablation sweeps already carry.
+    //
+    // default 0.0 --> the term is absent and every result is bit-identical.
+    double map_error_sigma; /**< Isotropic map-registration standard deviation in METRES, added to the emission covariance in quadrature. 0 (default) disables it. */
 
     /**
      * Check if the configuration is valid or not
@@ -425,6 +561,58 @@ public:
                                                 double latitude_deg);
 
     /**
+     * Express an isotropic metric standard deviation as a covariance in the
+     * network's own units.
+     *
+     * The conversion is the one fallback_covariance() documents: metric CRS
+     * passes sigma through unchanged, geographic CRS divides by the WGS84 mean
+     * meridian length, and the east axis divides again by cos(latitude) so that
+     * the result is a circle in metres rather than in degrees. Both callers
+     * share it so that the fallback and the map-error term cannot drift apart
+     * in units -- the failure mode this code already carries a defect for.
+     *
+     * @param sigma_m isotropic standard deviation in metres, must be >= 0
+     * @param network_projected true if the network's CRS is projected (metric)
+     * @param latitude_deg observation latitude, only used for geographic CRS
+     * @return a zero-cross-term covariance in network units
+     */
+    static CovarianceMatrix sigma_m_to_covariance(double sigma_m,
+                                                  bool network_projected,
+                                                  double latitude_deg);
+
+    /**
+     * The two covariances the emission step needs, kept apart because they
+     * answer different questions.
+     *
+     * `emission` is the position likelihood's: the reported covariance with the
+     * map-registration term added in quadrature. `direction` is the direction
+     * penalty's: the reported covariance, never widened.
+     *
+     * The split is deliberate and is the thing to preserve. The penalty's
+     * concentration kappa = |v|^2 / (sde * sdn) is a HEADING uncertainty, driven
+     * by the displacement error between consecutive fixes. A misregistered map
+     * moves where the road is, not which way the vehicle points, so the map term
+     * has no business in kappa. Letting it in would attenuate kappa by roughly
+     * (0.8/10)^2 -- silently switching the direction penalty off -- and would
+     * change two mechanisms at once, which is exactly what makes the earlier
+     * isotropic-emission sweep unattributable.
+     *
+     * @param base the emission covariance already resolved for the isotropic
+     *             ablation, i.e. BEFORE the map term is added
+     * @param map_error_sigma isotropic map-registration sigma in metres, 0 = off
+     * @param network_projected true if the network's CRS is projected (metric)
+     * @param latitude_deg observation latitude, only used for geographic CRS
+     * @return the pair; both fields equal base when map_error_sigma <= 0
+     */
+    struct EmissionCovariances {
+        CovarianceMatrix emission;  /**< position likelihood */
+        CovarianceMatrix direction; /**< direction penalty; never widened */
+    };
+    static EmissionCovariances emission_covariances(
+        const CovarianceMatrix &base, double map_error_sigma,
+        bool network_projected, double latitude_deg);
+
+    /**
      * The candidate search radius at one epoch: r_i = k_search * HPL_i + delta_road.
      *
      * There is deliberately no fallback here. An epoch whose disk admits no
@@ -481,6 +669,65 @@ public:
      */
     static double isotropic_sigma(const CovarianceMatrix &cov, double scale);
 
+    /**
+     * Compute the direction-consistency penalty for a candidate.
+     *
+     * Two things changed here on 2026-09-27, both measured rather than assumed.
+     *
+     * 1. THE TANGENT IS LOCAL. The tangent used to be the edge's start -> end chord.
+     *    For a long edge that chord is not the road's direction where the vehicle is:
+     *    on 白驹大道 (3.5 km) it differs from the local direction by enough to inflate
+     *    the apparent heading residual from 0.72 deg to 7.82 deg at 25-35 m of travel.
+     *    The inflation grew with speed -- exactly the opposite of the 1/|v| law the
+     *    measurement should follow -- which is what exposed it. The tangent is now the
+     *    direction of the polyline segment the candidate sits on.
+     *
+     * 2. KAPPA CARRIES THE INTER-EPOCH CORRELATION AND A FLOOR. The displacement is a
+     *    DIFFERENCE of two fixes, so its error is Var(dv) = 2(1-rho) Sigma, not Sigma.
+     *    The code used to form |v|^2 / (sde * sdn), i.e. c = 1, which silently asserts
+     *    rho = 0.5. The model is
+     *
+     *        sigma_theta^2 = c * (n^T Sigma n) / |v|^2 + b
+     *
+     *    with c = 0.227 (rho = 0.89) and b = 0.0084 rad^2, fitted over 11,792
+     *    correctly-matched gap-free steps; see the direction_kappa_scale comment for
+     *    why the fit is a FIXED POINT (0.254 / 0.0093 are its first iteration, not a
+     *    second estimate) and why the earlier 0.36 from a 1/|v|^2-only regression is
+     *    superseded, and the direction_kappa_floor comment for why b is in the model
+     *    rather than absorbed into c. "No residual floor" was written when the fit
+     *    regressed on 1/|v|^2 alone, which cannot separate a floor from a mis-scaled
+     *    slope; with the correct regressor the floor is non-zero at z = 9.0.
+     *
+     * The perpendicular variance n^T Sigma n is used rather than the product
+     * sde * sdn: the product is the geometric mean of the two axis variances whatever
+     * the direction of travel, while the heading error is governed by the variance
+     * ACROSS the direction of travel.
+     *
+     * The penalty remains one-sided in the sense that only cos(theta) < 0 is
+     * penalised -- see the note at the call site for what that does and does not catch.
+     *
+     * @param obs_prev     previous GNSS observation point (z_{i-1})
+     * @param obs_curr     current GNSS observation point (z_i)
+     * @param edge_geom    candidate edge geometry
+     * @param cand_point   the candidate point on that geometry (the projection)
+     * @param cov          reported covariance of the current epoch, NOT the widened
+     *                     emission covariance: the map term is common-mode across
+     *                     nearby epochs so it cancels in the displacement
+     * @param kappa_scale  c = 2(1-rho); 1.0 reproduces the pre-2026-09-27 formula
+     * @return             log penalty term (<= 0); 0 = no penalty
+     */
+    static double compute_direction_penalty(const CORE::Point &obs_prev,
+                                            const CORE::Point &obs_curr,
+                                            const CORE::LineString &edge_geom,
+                                            const CORE::Point &cand_point,
+                                            const CovarianceMatrix &cov,
+                                            double kappa_scale,
+                                            double kappa_floor,
+                                            double lambda_max,
+                                            double dt,
+                                            double max_interval,
+                                            bool symmetric);
+
 protected:
     /**
      * Compute direction-consistency penalty for reverse-direction candidates.
@@ -495,11 +742,6 @@ protected:
      * @param cov           current epoch covariance matrix (for kappa estimation)
      * @return              log penalty term (≤0); 0 = no penalty, negative = penalty
      */
-    static double compute_direction_penalty(const CORE::Point &obs_prev,
-                                            const CORE::Point &obs_curr,
-                                            const CORE::Point &edge_start,
-                                            const CORE::Point &edge_end,
-                                            const CovarianceMatrix &cov);
 
     /**
      * Search candidates based on protection level
@@ -513,6 +755,7 @@ protected:
         const CORE::LineString &geom,
         const std::vector<CovarianceMatrix> &covariances,
         const std::vector<double> &protection_levels,
+        const std::vector<double> &timestamps,
         const CovarianceMapMatchConfig &config) const;
 
     /**

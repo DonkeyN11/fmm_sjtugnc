@@ -539,7 +539,13 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double k_search_arg,
                                                    double delta_road_arg,
                                                    double isotropic_emission_scale_arg,
-                                                   bool tw_use_viterbi_arg)
+                                                   bool tw_use_viterbi_arg,
+                                                   double map_error_sigma_arg,
+                                                   double direction_kappa_scale_arg,
+                                                   double direction_kappa_floor_arg,
+                                                   double direction_lambda_max_arg,
+                                                   double direction_max_interval_arg,
+                                                   bool direction_symmetric_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       reverse_tolerance(reverse_tolerance_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
@@ -553,7 +559,13 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       k_search(k_search_arg),
       delta_road(delta_road_arg),
       isotropic_emission_scale(isotropic_emission_scale_arg),
-      tw_use_viterbi(tw_use_viterbi_arg) {
+      tw_use_viterbi(tw_use_viterbi_arg),
+      map_error_sigma(map_error_sigma_arg),
+      direction_kappa_scale(direction_kappa_scale_arg),
+      direction_kappa_floor(direction_kappa_floor_arg),
+      direction_lambda_max(direction_lambda_max_arg),
+      direction_max_interval(direction_max_interval_arg),
+      direction_symmetric(direction_symmetric_arg) {
     // The isotropic knob is ablation apparatus, not a model parameter. Announce
     // it loudly whenever it is not at its neutral value so that a run which does
     // not implement the paper cannot be mistaken for one that does.
@@ -562,6 +574,11 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                     "emission isotropic, sigma = scale * sqrt((sde^2+sdn^2)/2). "
                     "Not part of the paper's model.",
                     isotropic_emission_scale);
+    }
+    if (map_error_sigma < 0.0) {
+        SPDLOG_WARN("map_error_sigma = {} is negative; clamping to 0",
+                    map_error_sigma);
+        map_error_sigma = 0.0;
     }
 }
 
@@ -583,6 +600,18 @@ void CovarianceMapMatchConfig::print() const {
     SPDLOG_INFO("isotropic_emission_scale {} (ablation-only, 0 = off)",
                 isotropic_emission_scale);
     SPDLOG_INFO("tw_use_viterbi {} (ablation-only)", tw_use_viterbi);
+    SPDLOG_INFO("map_error_sigma {} m (emission variance += s^2; 0 = off)",
+                map_error_sigma);
+    SPDLOG_INFO("direction_kappa_scale {} (c = 2(1-rho); 1.0 = old implicit rho=0.5)",
+                direction_kappa_scale);
+    SPDLOG_INFO("direction_kappa_floor {} rad^2 (b in sigma_theta^2 = c*nSn/|v|^2 + b; 0 = off)",
+                direction_kappa_floor);
+    SPDLOG_INFO("direction_lambda_max {} nats (0 = uncapped; the tail is not modelled)",
+                direction_lambda_max);
+    SPDLOG_INFO("direction_max_interval {} s (0 = off; longer displacements are not headings)",
+                direction_max_interval);
+    SPDLOG_INFO("direction_symmetric {} (false = one-sided, MEASURED better on this data)",
+                direction_symmetric);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -612,6 +641,14 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double isotropic_emission_scale = xml_data.get("config.parameters.isotropic_emission_scale", 0.0);
     bool tw_use_viterbi = xml_data.get("config.parameters.tw_use_viterbi", false);
 
+    // Map-registration term in the emission, in metres. 0.0 = off.
+    double map_error_sigma = xml_data.get("config.parameters.map_error_sigma", 0.0);
+    double direction_kappa_scale = xml_data.get("config.parameters.direction_kappa_scale", 0.36);
+    double direction_kappa_floor = xml_data.get("config.parameters.direction_kappa_floor", 0.0);
+    double direction_lambda_max = xml_data.get("config.parameters.direction_lambda_max", 0.0);
+    double direction_max_interval = xml_data.get("config.parameters.direction_max_interval", 2.0);
+    bool direction_symmetric = xml_data.get("config.parameters.direction_symmetric", false);
+
     return CovarianceMapMatchConfig{k, min_candidates, reverse_tolerance,
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap_bridging,
@@ -619,7 +656,11 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     phmi,
                                     cumulative_reverse_pct, direction_penalty,
                                     k_search, delta_road,
-                                    isotropic_emission_scale, tw_use_viterbi};
+                                    isotropic_emission_scale, tw_use_viterbi,
+                                    map_error_sigma, direction_kappa_scale,
+                                    direction_kappa_floor,
+                                    direction_lambda_max, direction_max_interval,
+                                    direction_symmetric};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -649,6 +690,17 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
     double isotropic_emission_scale = arg_data.count("isotropic_emission_scale") ? arg_data["isotropic_emission_scale"].as<double>() : 0.0;
     bool tw_use_viterbi = arg_data.count("tw_use_viterbi") ? arg_data["tw_use_viterbi"].as<bool>() : false;
 
+    double map_error_sigma = arg_data.count("map_error_sigma") ? arg_data["map_error_sigma"].as<double>() : 0.0;
+    double direction_kappa_scale = arg_data.count("direction_kappa_scale") ? arg_data["direction_kappa_scale"].as<double>() : 0.36;
+    double direction_kappa_floor = arg_data.count("direction_kappa_floor") ? arg_data["direction_kappa_floor"].as<double>() : 0.0;
+    double direction_lambda_max = arg_data.count("direction_lambda_max") ? arg_data["direction_lambda_max"].as<double>() : 0.0;
+    double direction_max_interval = arg_data.count("direction_max_interval") ? arg_data["direction_max_interval"].as<double>() : 2.0;
+    bool direction_symmetric = arg_data.count("direction_symmetric") ? arg_data["direction_symmetric"].as<bool>() : false;
+
+    // tw_use_viterbi was read here but omitted from the positional construction
+    // below, so the CLI path silently ignored it while the XML path honoured it.
+    // Restored: both loaders must reach the same struct or the two entry points
+    // disagree about a documented knob.
     return CovarianceMapMatchConfig{k, min_candidates, reverse_tolerance,
                                     use_mahalanobis_candidates, filtered,
                                     enable_gap,
@@ -656,7 +708,11 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_arg(
                                     phmi,
                                     cumulative_reverse_pct, direction_penalty,
                                     k_search, delta_road,
-                                    isotropic_emission_scale};
+                                    isotropic_emission_scale, tw_use_viterbi,
+                                    map_error_sigma, direction_kappa_scale,
+                                    direction_kappa_floor,
+                                    direction_lambda_max, direction_max_interval,
+                                    direction_symmetric};
 }
 
 // Register all tunable knobs so the CLI help stays in sync with the structure.
@@ -692,6 +748,18 @@ void CovarianceMapMatchConfig::register_arg(cxxopts::Options &options) {
         ("isotropic_emission_scale", "ABLATION-ONLY, not in the paper: > 0 makes the emission isotropic with sigma = scale * sqrt((sde^2+sdn^2)/2), keeping the reported covariance for the projection (0.0)",
          cxxopts::value<double>()->default_value("0.0"))
         ("tw_use_viterbi", "ABLATION-ONLY, not in the paper: score trustworthiness with the Viterbi score instead of the forward probability (false)",
+         cxxopts::value<bool>()->default_value("false"))
+        ("map_error_sigma", "Map-registration standard deviation in METRES, added to the emission covariance in quadrature (0.0 = off). Isotropic, uncorrelated with the GNSS term, and seen by the emission only -- not by the direction penalty.",
+         cxxopts::value<double>()->default_value("0.0"))
+        ("direction_kappa_scale", "c = 2(1-rho) in kappa = |v|^2/(c * n^T Sigma n). Carries the inter-epoch correlation of the receiver error, which the covariance cannot express. Calibrated to 0.227 on Haikou (set in input/config/paper1_cmm.xml); the 0.36 default here is a placeholder, and 1.0 = the old implicit rho = 0.5.",
+         cxxopts::value<double>()->default_value("0.36"))
+        ("direction_kappa_floor", "b in sigma_theta^2 = c*n^T Sigma n/|v|^2 + b, in rad^2. The heading variance the covariance cannot contain (vehicle heading change within the epoch, digitised-centreline disagreement, reference-truth noise). With b > 0 kappa saturates at 1/b. 0.0 = the one-parameter model.",
+         cxxopts::value<double>()->default_value("0.0"))
+        ("direction_lambda_max", "Cap in nats on the per-epoch heading penalty. The heading residual is heavier-tailed than any von Mises mixture that fits it, so the tail is bounded rather than modelled; the run length then decides. 0 = uncapped.",
+         cxxopts::value<double>()->default_value("0.0"))
+        ("direction_max_interval", "Displacements spanning more than this many SECONDS are not headings -- over a long interval the vehicle may have turned, so the chord is not the direction of travel. The term is skipped. 0 disables.",
+         cxxopts::value<double>()->default_value("2.0"))
+        ("direction_symmetric", "false (default, measured better) = one-sided, penalise reversals only. true = symmetric von Mises, penalise any misalignment. The symmetric form costs 1.4 pp accuracy and doubles the false-alarm rate on this data; see the header.",
          cxxopts::value<bool>()->default_value("false"));
 }
 
@@ -742,18 +810,19 @@ bool CovarianceMapMatchConfig::validate() const {
 
 // Implementation of CovarianceMapMatch
 
-// Compute direction-consistency log penalty for reverse-direction candidates.
-// Only penalizes when the GNSS displacement velocity points opposite to the
-// candidate edge direction (cos(theta) < 0), using the von Mises concentration
-// kappa = |v|^2 / sigma_perp^2 derived from covariance propagation.
-//
-// Returns 0 (no penalty) or a negative log-probability term.
+// See the declaration in cmm_algorithm.hpp for the full rationale.
 double CovarianceMapMatch::compute_direction_penalty(
     const CORE::Point &obs_prev,
     const CORE::Point &obs_curr,
-    const CORE::Point &edge_start,
-    const CORE::Point &edge_end,
-    const CovarianceMatrix &cov) {
+    const CORE::LineString &edge_geom,
+    const CORE::Point &cand_point,
+    const CovarianceMatrix &cov,
+    double kappa_scale,
+    double kappa_floor,
+    double lambda_max,
+    double dt,
+    double max_interval,
+    bool symmetric) {
     using boost::geometry::get;
 
     // GNSS displacement velocity: v = (z_i - z_{i-1})
@@ -765,35 +834,112 @@ double CovarianceMapMatch::compute_direction_penalty(
     // No direction information if speed is near zero (stopped vehicle)
     if (speed < 1e-12) return 0.0;
 
-    // Edge tangent direction (start → end, normalized)
-    double ex = get<0>(edge_end) - get<0>(edge_start);
-    double ey = get<1>(edge_end) - get<1>(edge_start);
-    double elen = std::sqrt(ex * ex + ey * ey);
-    if (elen < 1e-12) return 0.0;
-    ex /= elen; ey /= elen;
+    // A displacement spanning a long interval is not a heading: the vehicle may have
+    // turned several times in between, so the chord between the two fixes is the
+    // direction of neither. Measured on the Haikou set, four such epochs carried 2450 m
+    // over 118 s and produced standardised heading residuals up to 2226; excluding them
+    // drops the maximum to 15.
+    if (max_interval > 0.0 && dt > max_interval) return 0.0;
+
+    // Tangent of the SEGMENT THE CANDIDATE SITS ON, not the edge's start -> end
+    // chord. On a long edge the chord can point well away from the road's direction
+    // where the vehicle actually is, and the error it injects grows with speed --
+    // the opposite of the 1/|v| behaviour the heading residual must follow. Measured
+    // on the Haikou set, switching to the local tangent collapses the apparent
+    // heading scatter at 25-35 m of travel from 7.82 deg to 0.72 deg.
+    const double px = get<0>(cand_point);
+    const double py = get<1>(cand_point);
+    const int npts = edge_geom.get_num_points();
+    double ex = 0.0, ey = 0.0, best_d2 = std::numeric_limits<double>::infinity();
+    for (int seg = 0; seg < npts - 1; ++seg) {
+        const double ax = edge_geom.get_x(seg),     ay = edge_geom.get_y(seg);
+        const double dx = edge_geom.get_x(seg + 1) - ax;
+        const double dy = edge_geom.get_y(seg + 1) - ay;
+        const double L2 = dx * dx + dy * dy;
+        if (L2 <= 0.0) continue;
+        double t = ((px - ax) * dx + (py - ay) * dy) / L2;
+        t = t < 0.0 ? 0.0 : (t > 1.0 ? 1.0 : t);
+        const double qx = px - (ax + t * dx), qy = py - (ay + t * dy);
+        const double d2 = qx * qx + qy * qy;
+        if (d2 < best_d2) {
+            best_d2 = d2;
+            const double len = std::sqrt(L2);
+            ex = dx / len;                      // in the edge's own sense
+            ey = dy / len;
+        }
+    }
+    if (!(ex * ex + ey * ey > 0.0)) return 0.0;
 
     // Cosine of angle between GNSS velocity and edge direction
     double cos_theta = (vx * ex + vy * ey) / speed;
 
-    // Only penalize reverse direction (cos < 0, i.e. > 90 degrees apart)
-    if (cos_theta >= 0.0) return 0.0;
+    // sigma_perp^2: the position-error variance ACROSS the direction of travel, which
+    // is what governs the heading. n = unit normal to v.
+    //
+    // The product sde * sdn used to stand in for this. It is the geometric mean of the
+    // two axis variances whatever direction the vehicle is travelling, so on an
+    // anisotropic covariance it is the wrong quantity; and it is not in metres^2, so
+    // the units only worked out because the ratio |v|^2 / (sde * sdn) is dimensionless
+    // anyway. The normal-direction quadratic form is the correct one and costs an
+    // inverse.
+    const double nx = -vy / speed;
+    const double ny =  vx / speed;
+    const double vE = nx * cov.sde;
+    const double vN = ny * cov.sdn;
+    double sigma_perp2 = vE * vE + 2.0 * nx * ny * cov.sdne + vN * vN;
 
-    // Estimate sigma_perp: the uncertainty of GNSS velocity perpendicular
-    // to the velocity direction. From covariance propagation:
-    //   Sigma_v ≈ 2 * Sigma_i  (assuming independent adjacent epochs)
-    // The perpendicular component is the smaller of sde^2 and sdn^2
-    // (conservative: use the geometric mean of the two variances)
-    double sigma_perp2 = cov.sde * cov.sdn;  // sqrt(var_e * var_n) as proxy
-    if (sigma_perp2 < 1e-20) return 0.0;
+    // Var of the DISPLACEMENT, not of one fix: v = z_i - z_{i-1}, so the two
+    // independent error contributions add and the covariance propagation law gives
+    // 2(1 - rho) Sigma, not 2 Sigma and not Sigma. kappa_scale carries that factor.
+    // See the member comment for the measurement that fixes it at 0.227.
+    //
+    // TWO TERMS, NOT ONE. The model for the heading residual is
+    //
+    //     sigma_theta^2 = c * (n^T Sigma n) / |v|^2  +  b,
+    //
+    // where the first term is the GNSS displacement error and the second is every
+    // angular error the covariance cannot contain: the vehicle's own heading change
+    // within the epoch, the digitised centreline's disagreement with the road, and the
+    // reference truth's own noise. Fitting only the slope and forcing b = 0 makes c
+    // absorb b, which is why a slope fitted on one dataset does not transfer to
+    // another. Measured on the Haikou set (experiments/scripts/fit_direction_kappa.py):
+    // c = 0.227, b = 0.0084 rad^2, and at the median speed of 21.5 m the b term is 29x
+    // the c term -- for most of this dataset the term is a constant angular tolerance
+    // and the covariance contributes almost nothing. That is a property of the data,
+    // and putting both parameters in the model is what lets it be seen.
+    //
+    // kappa_floor = 0.0 reproduces the one-parameter form exactly, term for term.
+    double denom = sigma_perp2 * kappa_scale + kappa_floor * speed2;
+    if (!(denom > 1e-20)) return 0.0;
 
-    // von Mises concentration: kappa = |v|^2 / sigma_perp^2
-    double kappa = speed2 / sigma_perp2;
+    // von Mises concentration: kappa = |v|^2 / Var(v_perp). With the floor present this
+    // SATURATES at 1/b as |v| grows, instead of growing without bound -- a long straight
+    // step cannot make the heading arbitrarily certain when the vehicle is steering.
+    double kappa = speed2 / denom;
 
-    // Direction penalty: kappa * cos_theta — ranges from -kappa (180°)
-    // to ~0 (near 90°). Only called when cos_theta < 0.
-    // Applied as additive log-probability term since direction EP
-    // multiplies with position EP.
-    return kappa * cos_theta;  // ≤ 0, cos < 0 → penalty < 0
+    // SYMMETRIC von Mises on the heading, zero at alignment:
+    //     Lambda = kappa * (cos(theta) - 1),   in [-2 kappa, 0].
+    //
+    // The term used to be one-sided: kappa * cos(theta) for cos(theta) < 0 and exactly
+    // zero otherwise. That threw away the signal. A vehicle that has diverged onto an
+    // unmapped ramp sits 22.29 deg off the mapped tangent -- nineteen sigma against the
+    // measured core scatter -- yet cos(22.29 deg) = 0.925 > 0, so the old branch returned
+    // EXACTLY zero and the term never fired. Measured over the 61 epochs in question,
+    // cos(theta) < 0 held on 0.0 % of them.
+    //
+    // The reversal penalty doubles as a result, from -kappa to -2 kappa. That is the
+    // correct von Mises normalisation, but it is a behavioural change and the wrong-way
+    // strength should be re-measured rather than assumed to be unaffected.
+    // One-sided (default): fires only when the displacement runs AGAINST the edge.
+    // Symmetric: a full von Mises centred on alignment. See the member comment for why
+    // the symmetric form is measured worse on this data and defaults off.
+    if (!symmetric) {
+        if (cos_theta >= 0.0) return 0.0;
+        return kappa * cos_theta;              // <= 0, from -kappa at reversal
+    }
+    double penalty = kappa * (cos_theta - 1.0);
+    if (lambda_max > 0.0 && penalty < -lambda_max) penalty = -lambda_max;
+    return penalty;
 }
 
 // Enumerate candidate projections per point by respecting both covariance ellipses
@@ -802,7 +948,9 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
     const CORE::LineString &geom,
     const std::vector<CovarianceMatrix> &covariances,
     const std::vector<double> &protection_levels,
+    const std::vector<double> &timestamps,
     const CovarianceMapMatchConfig &config) const {
+
 
     SPDLOG_DEBUG("Search candidates with protection level for {} points", geom.get_num_points());
 
@@ -872,6 +1020,21 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                 det_emis = cov_emis_mat.determinant();
                 cov_emis_inv = cov_emis_mat.inverse();
             }
+        }
+
+        // Map-registration error. `emission` carries the term, `direction` does
+        // not -- see the declaration in cmm_algorithm.hpp for why the split is
+        // the invariant and not an accident.
+        const EmissionCovariances ec = emission_covariances(
+            cov_emis, config.map_error_sigma, network_.is_projected(),
+            boost::geometry::get<1>(point));
+        const CovarianceMatrix &cov_dir = ec.direction;
+
+        if (config.map_error_sigma > 0.0) {
+            cov_emis = ec.emission;
+            Matrix2d cov_emis_mat = cov_emis.to_2d_matrix();
+            det_emis = cov_emis_mat.determinant();
+            cov_emis_inv = cov_emis_mat.inverse();
         }
 
         double obs_x = boost::geometry::get<0>(point);
@@ -1003,11 +1166,15 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                     const auto &edge_geom = network_.get_edge_geom(entry.candidate.edge->id);
                     if (edge_geom.get_num_points() >= 2) {
                         CORE::Point obs_prev = geom.get_point(i - 1);
+                        const double dt = (i < static_cast<int>(timestamps.size()) &&
+                                           i - 1 < static_cast<int>(timestamps.size()))
+                                              ? timestamps[i] - timestamps[i - 1] : 0.0;
                         double penalty = compute_direction_penalty(
-                            obs_prev, point,
-                            edge_geom.get_point(0),          // edge start
-                            edge_geom.get_point(edge_geom.get_num_points() - 1), // edge end
-                            cov_emis);
+                            obs_prev, point, edge_geom, entry.candidate.point,
+                            cov_dir, config.direction_kappa_scale,
+                            config.direction_kappa_floor,
+                            config.direction_lambda_max, dt, config.direction_max_interval,
+                            config.direction_symmetric);
                         log_probability += penalty;
                     }
                 }
@@ -1047,11 +1214,15 @@ CandidateSearchResult CovarianceMapMatch::search_candidates_with_protection_leve
                     const auto &edge_geom = network_.get_edge_geom(cand.edge->id);
                     if (edge_geom.get_num_points() >= 2) {
                         CORE::Point obs_prev = geom.get_point(i - 1);
+                        const double dt = (i < static_cast<int>(timestamps.size()) &&
+                                           i - 1 < static_cast<int>(timestamps.size()))
+                                              ? timestamps[i] - timestamps[i - 1] : 0.0;
                         double penalty = compute_direction_penalty(
-                            obs_prev, point,
-                            edge_geom.get_point(0),
-                            edge_geom.get_point(edge_geom.get_num_points() - 1),
-                            cov_emis);
+                            obs_prev, point, edge_geom, cand.point,
+                            cov_dir, config.direction_kappa_scale,
+                            config.direction_kappa_floor,
+                            config.direction_lambda_max, dt, config.direction_max_interval,
+                            config.direction_symmetric);
                         log_probability += penalty;
                     }
                 }
@@ -1253,7 +1424,8 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
     #pragma omp critical(search_candidates_section)
     {
         candidate_result = search_candidates_with_protection_level(
-            traj.geom, traj.covariances, traj.protection_levels, config);
+            traj.geom, traj.covariances, traj.protection_levels,
+            traj.timestamps, config);
     }
 
     const Traj_Candidates &tc_raw = candidate_result.candidates;
@@ -1439,6 +1611,7 @@ std::vector<MatchResult> CovarianceMapMatch::match_traj(const CMMTrajectory &tra
                 }
             }
         }
+
 
         std::vector<std::vector<double>> layer_nbest;
         layer_nbest.reserve(layers.size());
@@ -1868,40 +2041,75 @@ bool CovarianceMapMatch::is_covariance_usable(const CovarianceMatrix &cov) {
     return cov.sde * cov.sde * cov.sdn * cov.sdn - cov.sdne * cov.sdne > 0.0;
 }
 
-// See the declaration in cmm_algorithm.hpp for the choice of shape and units.
-CovarianceMatrix CovarianceMapMatch::fallback_covariance(bool network_projected,
-                                                         double latitude_deg) {
-    constexpr double FALLBACK_SIGMA_M = 5.0;
+// See the declaration in cmm_algorithm.hpp for the conversion's rationale.
+CovarianceMatrix CovarianceMapMatch::sigma_m_to_covariance(double sigma_m,
+                                                           bool network_projected,
+                                                           double latitude_deg) {
     // Mean meridian length; the WGS84 value, not the 111320 round number, so
     // the metric and geographic branches agree to better than 0.2 %.
     constexpr double METERS_PER_DEGREE_LAT = 111132.0;
     // A degree of longitude shrinks with cos(latitude) and vanishes at the
-    // pole, where no finite east-west sigma can represent 5 m. Clamping the
-    // cosine keeps the result finite and is documented rather than silent.
+    // pole, where no finite east-west sigma can represent a metric distance.
+    // Clamping the cosine keeps the result finite and is documented rather
+    // than silent.
     constexpr double MIN_COS_LAT = 1e-6;  // ~110 m from the pole
 
-    CovarianceMatrix fallback;
+    CovarianceMatrix cov;
     // Isotropic means no cross terms.
-    fallback.sdne = 0.0;
-    fallback.sdeu = 0.0;
-    fallback.sdun = 0.0;
+    cov.sdne = 0.0;
+    cov.sdeu = 0.0;
+    cov.sdun = 0.0;
 
     if (network_projected) {
-        fallback.sde = FALLBACK_SIGMA_M;
-        fallback.sdn = FALLBACK_SIGMA_M;
-        fallback.sdu = FALLBACK_SIGMA_M;
-        return fallback;
+        cov.sde = sigma_m;
+        cov.sdn = sigma_m;
+        cov.sdu = sigma_m;
+        return cov;
     }
 
     const double lat_rad = latitude_deg * M_PI / 180.0;
     const double cos_lat = std::cos(lat_rad);
     const double safe_cos = cos_lat > MIN_COS_LAT ? cos_lat : MIN_COS_LAT;
-    fallback.sdn = FALLBACK_SIGMA_M / METERS_PER_DEGREE_LAT;
-    fallback.sde = FALLBACK_SIGMA_M / (METERS_PER_DEGREE_LAT * safe_cos);
+    cov.sdn = sigma_m / METERS_PER_DEGREE_LAT;
+    cov.sde = sigma_m / (METERS_PER_DEGREE_LAT * safe_cos);
     // Vertical is never read by the 2D model, but keeping it in the same units
     // as sdn costs nothing and avoids leaving an inconsistent row behind.
-    fallback.sdu = fallback.sdn;
-    return fallback;
+    cov.sdu = cov.sdn;
+    return cov;
+}
+
+// See the declaration in cmm_algorithm.hpp for why the two are kept apart.
+CovarianceMapMatch::EmissionCovariances CovarianceMapMatch::emission_covariances(
+    const CovarianceMatrix &base, double map_error_sigma,
+    bool network_projected, double latitude_deg) {
+    EmissionCovariances out;
+    // The direction penalty sees the base covariance, always. Assigning it first
+    // and never touching it again is the invariant.
+    out.direction = base;
+    out.emission = base;
+
+    if (!(map_error_sigma > 0.0)) {
+        return out;
+    }
+
+    const CovarianceMatrix map_cov =
+        sigma_m_to_covariance(map_error_sigma, network_projected, latitude_deg);
+    // Added in the VARIANCE: sde/sdn hold standard deviations, so they combine
+    // in quadrature. sdne is untouched -- the map error is uncorrelated with the
+    // GNSS one, so it contributes nothing to the cross term. The reported
+    // covariance's anisotropy survives because the term is added to it rather
+    // than substituted for it.
+    out.emission.sde = std::hypot(base.sde, map_cov.sde);
+    out.emission.sdn = std::hypot(base.sdn, map_cov.sdn);
+    return out;
+}
+
+// See the declaration in cmm_algorithm.hpp for the choice of shape and units.
+CovarianceMatrix CovarianceMapMatch::fallback_covariance(bool network_projected,
+                                                         double latitude_deg) {
+    constexpr double FALLBACK_SIGMA_M = 5.0;
+    return sigma_m_to_covariance(FALLBACK_SIGMA_M, network_projected,
+                                 latitude_deg);
 }
 
 // See the declaration in cmm_algorithm.hpp for the reasoning. This is

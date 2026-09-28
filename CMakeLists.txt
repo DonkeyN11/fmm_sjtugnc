@@ -235,6 +235,14 @@ add_executable(test_cmm_ablation_knobs tests/test_cmm_ablation_knobs.cpp)
 target_link_libraries(test_cmm_ablation_knobs FMMLIB)
 add_test(NAME cmm_ablation_knobs COMMAND test_cmm_ablation_knobs)
 
+add_executable(test_cmm_map_error tests/test_cmm_map_error.cpp)
+target_link_libraries(test_cmm_map_error FMMLIB)
+add_test(NAME cmm_map_error COMMAND test_cmm_map_error)
+
+add_executable(test_cmm_direction_penalty tests/test_cmm_direction_penalty.cpp)
+target_link_libraries(test_cmm_direction_penalty FMMLIB)
+add_test(NAME cmm_direction_penalty COMMAND test_cmm_direction_penalty)
+
 # add_executable(performance_test tmp/ubodt_performance_test.cpp)
 # target_link_libraries(performance_test FMMLIB)
 
