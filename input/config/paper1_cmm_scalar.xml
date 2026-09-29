@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Paper 1 (calibration), the SCALAR operating point: the delivered model with the
+  covariance's SHAPE removed from both places it entered.
+
+  WHAT DIFFERS FROM input/config/paper1_cmm.xml, and only this:
+
+    use_mahalanobis = false        the candidate point is the Euclidean projection of
+        the fix onto the segment, not the Mahalanobis one. This is not a separate
+        choice from the next line: the Mahalanobis projection is defined through
+        Sigma^-1, so it asserts the anisotropy the emission below no longer claims.
+        Keeping it with a scalar emission would have the projection and the likelihood
+        assume different models.
+
+    isotropic_emission_scale = 1   the emission uses sigma_i = sqrt((sde^2 + sdn^2)/2),
+        computed PER EPOCH so the total variance is unchanged; only the shape goes.
+
+  WHY. Measured on both datasets (2026-09-28/29), and neither component is needed:
+
+    real data, 13,069 epochs:   Mahalanobis 98.13 / ECE 0.0386 / AUC 0.8368 / sep 0.4262
+                                scalar      98.11 / ECE 0.0382 / AUC 0.8381 / sep 0.4291
+      -- the projection carries the whole (tiny) effect and the emission adds nothing
+         further; every difference is inside the trajectory-clustered interval.
+
+    simulation corpus, 15 cells: changing the PROJECTION alone is +0.09 pp on average
+      (3 of 15 cells worse, i.e. noise); changing the EMISSION alone is +1.71 pp
+      (0 of 15 worse, max +5.03). Both are improvements or nothing, never a loss.
+
+  The 2x2 matrix, cov_inv, the covariance-validity test and its 5 m fallback are all
+  gone from the model with these two lines. Sigma_i is still read from GST and still
+  enters, as its trace.
+
+  Retained from paper1_cmm.xml, unchanged: the fixed 300 m disk both matchers search
+  (k_search = 0, delta_road = 0.0026949335), phmi = 0, k = 16, min_candidates = 1,
+  reverse_tolerance 0.1, cumulative_reverse_pct 0.03, the two-parameter heading model
+  at its converged constants (direction_kappa_scale = 0.227, direction_kappa_floor =
+  0.0084 rad^2), the 2 s gap guard, and map_error_sigma = 10.6 m.
+-->
+<config>
+  <input>
+    <network>
+      <file>input/map/hainan/edges.shp</file>
+      <id>key</id>
+      <source>u</source>
+      <target>v</target>
+    </network>
+    <ubodt>
+      <file>input/map/hainan_ubodt_indexed.bin</file>
+    </ubodt>
+    <gps>
+      <file>data/real_vehicle/hainan_06/cmm_input_points_k1.csv</file>
+      <id>id</id>
+      <x>x</x>
+      <y>y</y>
+      <timestamp>timestamp</timestamp>
+      <sde>sde</sde>
+      <sdn>sdn</sdn>
+      <sdu>sdu</sdu>
+      <sdne>sdne</sdne>
+      <sdeu>sdeu</sdeu>
+      <sdun>sdun</sdun>
+      <protection_level>protection_level</protection_level>
+    </gps>
+  </input>
+  <output>
+    <file>data/archive_20260929/scalar/cmm.csv</file>
+    <fields>
+      <point_mode/>
+      <seq/>
+      <timestamp/>
+      <ogeom/>
+      <cpath/>
+      <tpath/>
+      <opath/>
+      <pgeom/>
+      <ep/>
+      <tp/>
+      <trustworthiness/>
+      <trustworthiness_smoothed/>
+      <n_best_trustworthiness/>
+      <candidates/>
+      <status/>
+      <delta_entropy/>
+      <posterior_entropy/>
+      <cumu_prob/>
+    </fields>
+  </output>
+  <parameters>
+    <k>16</k>
+    <min_candidates>1</min_candidates>
+    <reverse_tolerance>0.1</reverse_tolerance>
+    <use_mahalanobis>false</use_mahalanobis>
+    <filtered>true</filtered>
+    <max_interval>180.0</max_interval>
+    <trustworthiness_threshold>0.0</trustworthiness_threshold>
+    <phmi>0.0</phmi>
+    <cumulative_reverse_pct>0.03</cumulative_reverse_pct>
+    <k_search>0.0</k_search>
+    <delta_road>0.0026949335</delta_road>
+    <map_error_sigma>10.6</map_error_sigma>
+    <direction_kappa_scale>0.227</direction_kappa_scale>
+    <direction_kappa_floor>0.0084</direction_kappa_floor>
+    <isotropic_emission_scale>1.0</isotropic_emission_scale>
+  </parameters>
+  <other>
+    <log_level>2</log_level>
+    <use_omp>true</use_omp>
+    <input_epsg>4326</input_epsg>
+  </other>
+</config>

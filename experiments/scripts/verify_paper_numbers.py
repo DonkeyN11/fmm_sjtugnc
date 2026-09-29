@@ -110,6 +110,34 @@ def ece(confs,corrects,n=10):
         e+=nb/N*abs(confs[mask].mean()-corrects[mask].mean())
     return e
 
+def log_score(labels, scores, eps=1e-12):
+    """Mean LOG LIKELIHOOD of the binary outcome, in NATS. Higher is better.
+
+    The sign convention matters and is the one the manuscript uses: this returns
+    log p(y | score) averaged over epochs, so every arm's value is negative, a perfect
+    forecaster scores 0, a forecaster who always says one half scores log(0.5) = -0.693,
+    and -0.410 (the baseline's native score on Haikou) is worse than -0.173 (the
+    smoothed posterior). Reporting the negated quantity is equally common in the
+    literature and would print every column with the opposite sign, which is a silent
+    way for a table and its prose to disagree.
+
+    The one metric in the audit that is unbounded, which is why it is reported beside the
+    Brier score rather than instead of it: a single confident error costs more than any
+    number of humble ones, so it is the column that exposes the tail the binned
+    calibration error cannot see.
+
+    Scores at exactly 1 or 0 are clipped by `eps`. That is a real truncation, not a
+    formality: a saturated arm reports 0.9+ on most epochs, and without the clip the log
+    score of an arm with a single wrong-and-certain epoch would be infinite, which would
+    make the column incomparable across arms rather than informative. The same clip is
+    applied to every arm, so the comparison is fair, and the saturation rate is reported
+    separately so the reader can see how much clipping a column carries.
+    """
+    labels = np.asarray(labels, dtype=float)
+    s = np.clip(np.asarray(scores, dtype=float), eps, 1.0 - eps)
+    return float((labels * np.log(s) + (1.0 - labels) * np.log(1.0 - s)).mean())
+
+
 def auc(labels,scores):
     """AUC as the tie-corrected Mann-Whitney rank statistic.
 

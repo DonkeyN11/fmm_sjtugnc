@@ -45,12 +45,20 @@ import verify_paper_numbers as v  # noqa: E402
 SEED = 20260928
 
 # (label, run file, score column, join through the seq->timestamp map?)
+#
+# Named by ESTIMATOR, not by matcher, because that is the axis the paper ablates: the
+# three columns are the Viterbi score delta_t/sum delta_t, the filtering posterior
+# alpha_t/sum alpha_t and the smoothed posterior alpha_t beta_t/sum alpha_t beta_t, all
+# read off one decoded path. The proposed matcher's delta arm is a separate file because
+# tw_use_viterbi is a config key rather than an output column; the baseline's is not,
+# because fmm.csv is already run at tw_use_viterbi=true.
 ARMS = [
-    ('CaMM filtering', R.OUTDIR / 'cmm.csv', 'trustworthiness', False),
-    ('CaMM smoothed', R.OUTDIR / 'cmm.csv', 'trustworthiness_smoothed', False),
-    ('FMM native', R.OUTDIR / 'fmm.csv', 'trustworthiness', True),
-    ('FMM posterior', R.OUTDIR / 'fmm_post.csv', 'trustworthiness', True),
-    ('FMM smoothed', R.OUTDIR / 'fmm.csv', 'trustworthiness_smoothed', True),
+    ('proposed delta', R.OUTDIR / 'cmm_viterbi.csv', 'trustworthiness', False),
+    ('proposed alpha', R.OUTDIR / 'cmm.csv', 'trustworthiness', False),
+    ('proposed ab', R.OUTDIR / 'cmm.csv', 'trustworthiness_smoothed', False),
+    ('baseline delta', R.OUTDIR / 'fmm.csv', 'trustworthiness', True),
+    ('baseline alpha', R.OUTDIR / 'fmm_post.csv', 'trustworthiness', True),
+    ('baseline ab', R.OUTDIR / 'fmm.csv', 'trustworthiness_smoothed', True),
 ]
 
 
@@ -150,25 +158,36 @@ def main():
     print('\n=== paired differences on the same resampled trajectories ===')
     print('(the interval is of the DIFFERENCE; it spanning 0 means this dataset cannot')
     print(' resolve the contrast, which is weaker than "the two are equal")\n')
+    # Three groups, in the order the paper argues them.
+    #
+    # (1) WITHIN the proposed matcher: the ablation. Same path, same candidates, three
+    #     evidence sets. This is the paper's own claim, so every metric is asked of it.
+    # (2) AGAINST the baseline at the estimator the baseline actually reports: the
+    #     comparison a reader will make.
+    # (3) SAME estimator, different observation model: isolates the model from the
+    #     estimator, so that a win cannot be attributed to the wrong axis.
     PAIRS = [
-        ('FMM native', 'CaMM filtering', 'AUC', 'auc'),
-        ('FMM native', 'CaMM filtering', 'separation', 'sep'),
-        ('CaMM filtering', 'CaMM smoothed', 'AUC', 'auc'),
-        ('CaMM filtering', 'CaMM smoothed', 'separation', 'sep'),
-        ('CaMM filtering', 'CaMM smoothed', 'ECE', 'ece'),
-        ('CaMM filtering', 'CaMM smoothed', 'BSS', 'bss'),
-        ('FMM native', 'FMM posterior', 'ECE', 'ece'),
-        ('FMM native', 'FMM posterior', 'AUC', 'auc'),
-        ('CaMM filtering', 'FMM native', 'accuracy', 'acc'),
-        ('CaMM filtering', 'FMM native', 'pos. error', 'err'),
-        ('CaMM filtering', 'FMM native', 'ECE', 'ece'),
-        ('CaMM filtering', 'FMM native', 'BSS', 'bss'),
-        ('CaMM smoothed', 'FMM native', 'ECE', 'ece'),
-        ('CaMM smoothed', 'FMM native', 'BSS', 'bss'),
-        ('CaMM smoothed', 'FMM native', 'AUC', 'auc'),
-        ('CaMM smoothed', 'FMM smoothed', 'ECE', 'ece'),
-        ('CaMM smoothed', 'FMM smoothed', 'BSS', 'bss'),
-        ('CaMM filtering', 'FMM smoothed', 'ECE', 'ece'),
+        # (1) the ablation
+        ('proposed ab', 'proposed delta', 'ECE', 'ece'),
+        ('proposed ab', 'proposed delta', 'BSS', 'bss'),
+        ('proposed ab', 'proposed delta', 'AUC', 'auc'),
+        ('proposed ab', 'proposed alpha', 'ECE', 'ece'),
+        ('proposed ab', 'proposed alpha', 'BSS', 'bss'),
+        ('proposed ab', 'proposed alpha', 'AUC', 'auc'),
+        ('proposed alpha', 'proposed delta', 'ECE', 'ece'),
+        ('proposed alpha', 'proposed delta', 'AUC', 'auc'),
+        # (2) against the baseline's own reported score
+        ('proposed ab', 'baseline delta', 'ECE', 'ece'),
+        ('proposed ab', 'baseline delta', 'BSS', 'bss'),
+        ('proposed ab', 'baseline delta', 'AUC', 'auc'),
+        ('proposed ab', 'baseline delta', 'accuracy', 'acc'),
+        ('proposed ab', 'baseline delta', 'pos. error', 'err'),
+        # (3) estimator held fixed, model varied
+        ('proposed delta', 'baseline delta', 'ECE', 'ece'),
+        ('proposed delta', 'baseline delta', 'AUC', 'auc'),
+        ('proposed ab', 'baseline ab', 'ECE', 'ece'),
+        ('proposed ab', 'baseline ab', 'BSS', 'bss'),
+        ('proposed alpha', 'baseline alpha', 'ECE', 'ece'),
     ]
     for a, b, name, key in PAIRS:
         d = np.array(boot[a][key]) - np.array(boot[b][key])
@@ -176,6 +195,36 @@ def main():
         pt = point[a][key] - point[b][key]
         crosses = 'SPANS 0' if lo <= 0.0 <= hi else 'excludes 0'
         print(f'  {name:<11} {a} - {b}: {pt:+8.4f}  [{lo:+8.4f}, {hi:+8.4f}]  {crosses}')
+
+    # Exact sign-flip test. Six clusters make the percentile interval coarse; a
+    # sign-flip test on the per-trajectory differences needs no approximation at all,
+    # because all 2^6 = 64 allocations can be enumerated. The statistic is the mean of
+    # the six per-trajectory differences, and 1/64 is the smallest p the test returns.
+    print('\n=== exact sign-flip test on per-trajectory differences ===')
+    for a, b, name, key in (('proposed ab', 'baseline delta', 'ECE', 'ece'),
+                            ('proposed delta', 'baseline delta', 'ECE', 'ece'),
+                            ('proposed ab', 'baseline delta', 'accuracy', 'acc')):
+        d = np.array([stats(by_traj[a][t])[key] - stats(by_traj[b][t])[key]
+                      for t in trajs])
+        obs = float(d.mean())
+        signs = np.array([[1.0 if f >> i & 1 else -1.0 for i in range(len(d))]
+                          for f in range(2 ** len(d))])
+        flips = (signs * d).mean(axis=1)
+        p = float((flips <= obs + 1e-12).mean() if obs < 0
+                  else (flips >= obs - 1e-12).mean())
+        print(f'  {name:<9} {a} - {b}: mean over trajectories {obs:+8.4f}  '
+              f'p = {round(p * 64):.0f}/64')
+
+    # The ECE is a B=10 binned estimate; the ORDERING of the arms must not be an
+    # artefact of that choice, and the absolute values must be read as bin-dependent.
+    print('\n=== ECE vs bin count ===')
+    hdr = f"{'arm':<16}" + ''.join(f'{b:>10}' for b in (5, 10, 15, 20))
+    print(hdr)
+    print('-' * len(hdr))
+    for lab in data:
+        y = np.array([r[1] for r in data[lab]])
+        s = np.array([r[2] for r in data[lab]])
+        print(f'{lab:<16}' + ''.join(f'{v.ece(s, y, n=b):10.4f}' for b in (5, 10, 15, 20)))
     return 0
 
 

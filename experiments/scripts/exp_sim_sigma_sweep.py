@@ -33,24 +33,28 @@ easy to repeat:
      1779957248, so the point-mode run does not even address the same epochs. Point mode
      is not a choice a corpus runner may silently make.
 
-THE CMM SIDE. The CaMM arm is the SHIPPED MODEL, at the parameter block of
+THE CMM SIDE. `--cmm-arm paper1` is the previous operating point, at the parameter block of
 `input/config/paper1_cmm.xml` verbatim: the fixed 300 m disk both matchers search
 (k_search=0, delta_road=0.0026949335), phmi=0, k=16, min_candidates=1, Mahalanobis
 projection, the 10.6 m map-registration term in the emission, and the two-parameter heading
-model at its calibrated constants (direction_kappa_scale=0.254, direction_kappa_floor=
-0.0093 rad^2), with direction_max_interval=2 s and direction_symmetric=false at their
-defaults.
+model at its converged constants (direction_kappa_scale=0.227, direction_kappa_floor=
+0.0084 rad^2), with direction_max_interval=2 s and direction_symmetric=false at their
+defaults. `--cmm-arm scalar` is the candidate operating point,
+`input/config/paper1_cmm_scalar.xml`: the same block with the covariance's SHAPE removed
+from both places it entered -- Euclidean projection and an isotropic per-epoch emission --
+so the 2x2 matrix is used nowhere.
 
-KNOWN DEVIATION FROM THAT CLAIM, recorded 2026-09-28 and NOT yet repaired. The heading
-constants above are the FIRST ITERATION of a fixed-point fit; the shipped configuration
-carries the converged 0.227 / 0.0084 (see the direction_kappa_scale comment in
-src/mm/cmm/cmm_algorithm.hpp, and input/config/paper1_cmm.xml). The constants used to be
-described as "verbatim" because they matched paper1_cmm.xml when this script was written;
-they stopped matching when the fit was iterated, and nobody re-ran the sweep. The settings
-genuinely do differ from the paper's model until this is fixed -- do not restore the word
-"verbatim" without moving the two numbers and re-running, and note that moving them may
-move the sigma-sweep numbers this script produced. `--cmm-arm direction-off` is the same model with the heading term disabled; that
+THE HEADING CONSTANTS WERE CORRECTED ON 2026-09-29. They read 0.254 / 0.0093 -- the
+FIRST ITERATION of a fixed-point fit -- until then, and the shipped configuration had
+carried the converged 0.227 / 0.0084 for a day. Every `paper1` number this script produced
+before that date is at the wrong constants and is not comparable with the ones after it.
+The template is now the shipped block, and the substitution arms below take their values
+from it rather than restating them.
+
+`--cmm-arm direction-off` is the same model with the heading term disabled; that
 is the scope ablation Section IV-C reports, not a configuration the paper runs.
+`euclid-only` and `iso-emis-only` split `scalar` into its two halves, because the combined
+arm cannot say which of them moves a number.
 
 WHY THE HEADING TERM IS OUT OF SCOPE ON THIS CORPUS, which is a result rather than a
 concession. The term scores the displacement against the candidate's tangent, so it needs
@@ -97,6 +101,8 @@ Usage: python3 experiments/scripts/exp_sim_sigma_sweep.py [--skip-rerun]
 import argparse
 import csv
 import json
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -112,7 +118,9 @@ import real_final_tables as R  # noqa: E402
 import verify_paper_numbers as v  # noqa: E402
 
 SIM = BASE / 'data/simulation'
-OUTDIR = BASE / 'data/archive_20260928/sim'
+# Overridable, so a candidate operating point's sweep can be written beside the
+# delivered one instead of on top of it.
+OUTDIR = Path(os.environ.get('CMM_SIM_OUTDIR') or (BASE / 'data/archive_20260928/sim'))
 LEVELS = ['sigma_01', 'sigma_05', 'sigma_10', 'sigma_15', 'sigma_20', 'sigma_25', 'sigma_30']
 
 NET = 'input/map/hainan/edges.shp'
@@ -159,7 +167,7 @@ CMM_PAPER1 = """<?xml version="1.0" encoding="UTF-8"?>
   <output>
     <file>{out}</file>
     <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
-      <ep/><tp/><trustworthiness/><n_best_trustworthiness/><candidates/>
+      <ep/><tp/><trustworthiness/><trustworthiness_smoothed/><n_best_trustworthiness/><candidates/>
       <status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
   </output>
   <parameters>
@@ -171,8 +179,8 @@ CMM_PAPER1 = """<?xml version="1.0" encoding="UTF-8"?>
     <direction_penalty>true</direction_penalty><enable_gap_bridging>true</enable_gap_bridging>
     <k_search>0.0</k_search><delta_road>0.0026949335</delta_road>
     <map_error_sigma>10.6</map_error_sigma>
-    <direction_kappa_scale>0.254</direction_kappa_scale>
-    <direction_kappa_floor>0.0093</direction_kappa_floor>
+    <direction_kappa_scale>0.227</direction_kappa_scale>
+    <direction_kappa_floor>0.0084</direction_kappa_floor>
   </parameters>
   <other><log_level>2</log_level><use_omp>true</use_omp><input_epsg>4326</input_epsg></other>
 </config>
@@ -202,13 +210,19 @@ def cells():
     return out
 
 
-def pairs(data_dir, run_csv):
+def pairs(data_dir, run_csv, col='trustworthiness'):
     """(label, score, n_evaluable) over the epochs this run answers.
 
     The join and the label are `eval_sim_corpus`'s canonical ones: ground-truth edge from
     `ground_truth.csv`'s point_edge_ids indexed by seq, reached through the (id,
     rounded timestamp) map built from `observations.csv`. `seq` is not the key -- a split
     trajectory restarts it.
+
+    `col` selects the estimator, not the run: one CMM run writes the filtering posterior
+    to `trustworthiness` and the smoothed one to `trustworthiness_smoothed`, and the two
+    arms must be read off the SAME file so that the candidate and the Viterbi path are
+    identical and only the evidence set differs. The default keeps every existing caller
+    on the filtering column.
     """
     gt_edges = E.load_gt_edges(data_dir)
     ts_to_seq, _ = E.load_obs_index(data_dir)
@@ -221,7 +235,7 @@ def pairs(data_dir, run_csv):
                 continue
             n_eval += 1
             try:
-                tw = float(row['trustworthiness'])
+                tw = float(row[col])
             except (ValueError, KeyError):
                 continue
             if tw <= TW_SENTINEL:
@@ -330,32 +344,93 @@ def run_fmm(data_dir, tag, skip_rerun):
     return (out if r.returncode == 0 else None), synthesised
 
 
+def _set_key(text, key, value):
+    """Set <key>value</key> in the <parameters> block, replacing any existing element.
+
+    Replacement rather than append is load-bearing, and it is the bug the direction-off
+    arm was written to avoid: Boost's property_tree returns the FIRST match for a key, so
+    appending a second <key> silently leaves the original in force and the "ablation"
+    reproduces the baseline arm exactly while looking like a real result. The
+    post-condition is therefore uniqueness plus the requested value -- not text
+    inequality, which would reject an arm that legitimately asks for a value the
+    template already carries.
+    """
+    want = f'<{key}>{value}</{key}>'
+    pat = re.compile(rf'<{key}>[^<]*</{key}>')
+    if pat.search(text):
+        new = pat.sub(want, text, count=1)
+    else:
+        anchor = '  </parameters>'
+        assert anchor in text, f'{key}: no <parameters> block to insert into'
+        new = text.replace(anchor, f'    {want}\n{anchor}', 1)
+    n = len(re.findall(rf'<{key}>', new))
+    assert n == 1, f'{key}: {n} occurrences after substitution'
+    assert want in new, f'{key}: substitution did not produce {want}'
+    return new
+
+
+# Each arm is the set of (key, value) settings applied to CMM_PAPER1.
+#
+#   paper1         the shipped model, i.e. Section IV's CaMM arm. It must reproduce the
+#                  corpus's stored cmm_result.csv BIT-EXACTLY; that is the invariant the
+#                  verdict section checks, and it is why every other arm is reported
+#                  against this one rather than against the stored file.
+#   direction-off  Section IV-C's scope ablation: the same model with the heading term
+#                  disabled. The constants go to 0 as well as the switch, because a
+#                  disabled term that still carries fitted constants is a different
+#                  statement than a disabled term.
+#   no-cov-shape   The question of whether the 2x2 covariance is needed at all: Euclidean
+#                  candidate projection and an isotropic per-epoch emission, i.e. the
+#                  matrix is used NOWHERE. On the real data this reproduces the operating
+#                  point (98.11/0.0382/0.8380 against 98.13/0.0386/0.8368). It is run here
+#                  because the real data is a GOOD-CONDITION regime: the 10.6 m map term
+#                  dominates a ~0.8 m ellipse, so the shape has nowhere to show. On this
+#                  corpus sigma_rho reaches 30 m and the fabricated position sigma is
+#                  ~1.5 sigma_rho, where the ellipse is comparable to the map error -- if
+#                  the shape matters anywhere in this paper, it matters here.
+#   euclid-only    no-cov-shape's two halves taken separately, because the combined arm
+#   iso-emis-only  cannot say WHICH of them moves the number. `no-cov-shape` = both.
+ARMS = {
+    'paper1': [],
+    'direction-off': [('direction_penalty', 'false'),
+                      ('direction_kappa_scale', '0.0'),
+                      ('direction_kappa_floor', '0.0')],
+    'scalar': [('use_mahalanobis', 'false'),
+               ('isotropic_emission_scale', '1.0')],
+    # The Viterbi-score estimator on the same path: the third arm of the estimator
+    # comparison. Same candidates, same Viterbi path, different score.
+    'scalar-viterbi': [('use_mahalanobis', 'false'),
+                       ('isotropic_emission_scale', '1.0'),
+                       ('tw_use_viterbi', 'true')],
+    # Section IV-C's scope ablation, at the SCALAR operating point. The direction term is
+    # the axis the corpus cannot evaluate (see the docstring), so this arm exists to show
+    # what turning it off does here, not to select a configuration.
+    'scalar-direction-off': [('use_mahalanobis', 'false'),
+                             ('isotropic_emission_scale', '1.0'),
+                             ('direction_penalty', 'false'),
+                             ('direction_kappa_scale', '0.0'),
+                             ('direction_kappa_floor', '0.0')],
+    'euclid-only': [('use_mahalanobis', 'false')],
+    'iso-emis-only': [('isotropic_emission_scale', '1.0')],
+}
+
+
 def run_cmm(data_dir, tag, skip_rerun, arm, cmm_bin):
     if skip_rerun:
         return None
-    out = OUTDIR / f'{tag}_cmm.csv'
-    if arm == 'direction-off':
-        # The scope ablation of Section IV-C: the same model with the heading term disabled.
-        # The values are SUBSTITUTED, not appended. Boost's property_tree returns the FIRST
-        # match for a key, so appending a second <direction_penalty> silently leaves the
-        # original in force and the "ablation" reproduces the baseline arm exactly.
-        text = (CMM_PAPER1
-                .replace('<direction_penalty>true</direction_penalty>',
-                         '<direction_penalty>false</direction_penalty>')
-                .replace('<direction_kappa_scale>0.254</direction_kappa_scale>',
-                         '<direction_kappa_scale>0.0</direction_kappa_scale>')
-                .replace('<direction_kappa_floor>0.0093</direction_kappa_floor>',
-                         '<direction_kappa_floor>0.0</direction_kappa_floor>'))
-        assert text != CMM_PAPER1 and '<direction_penalty>false' in text
-        with tempfile.NamedTemporaryFile(suffix='.xml', delete=False, mode='w') as fh:
-            fh.write(text.format(gps=str(data_dir / 'observations.csv'), out=str(out),
-                                 net=NET, ubodt=UBODT))
-            cfg = Path(fh.name)
-    else:
-        with tempfile.NamedTemporaryFile(suffix='.xml', delete=False, mode='w') as fh:
-            fh.write(CMM_PAPER1.format(gps=str(data_dir / 'observations.csv'), out=str(out),
-                                       net=NET, ubodt=UBODT))
-            cfg = Path(fh.name)
+    # The arm is part of the filename so that two arms can coexist on disk. They used to
+    # share one name, which made a comparison impossible without saving the first table
+    # by hand -- and a hand-saved table is the provenance this script exists to avoid.
+    out = OUTDIR / f'{tag}_cmm_{arm}.csv'
+    text = CMM_PAPER1
+    for key, value in ARMS[arm]:
+        text = _set_key(text, key, value)
+    if arm != 'paper1':
+        assert text != CMM_PAPER1, f'{arm}: no substitution applied'
+    with tempfile.NamedTemporaryFile(suffix='.xml', delete=False, mode='w') as fh:
+        fh.write(text.format(gps=str(data_dir / 'observations.csv'), out=str(out),
+                             net=NET, ubodt=UBODT))
+        cfg = Path(fh.name)
     r = subprocess.run([str(cmm_bin), str(cfg)], cwd=BASE,
                        stdout=subprocess.DEVNULL, stderr=subprocess.STDOUT)
     cfg.unlink()
@@ -407,11 +482,15 @@ def main():
     ap.add_argument('--cmm-bin', type=Path, default=BASE / 'build' / 'cmm',
                     help='The CaMM binary to run. The default is the shipped tree, which '
                          'is the arm Section IV reports.')
-    ap.add_argument('--cmm-arm', choices=['paper1', 'direction-off'], default='paper1',
+    ap.add_argument('--cmm-arm', choices=sorted(ARMS), default='paper1',
                     help='paper1 (default) = the shipped model, i.e. the parameter block '
-                         'of input/config/paper1_cmm.xml. direction-off = the same model '
-                         'with the heading term disabled, which is the scope ablation of '
-                         'Section IV-C, not a configuration the paper runs.')
+                         'of input/config/paper1_cmm.xml; it must reproduce the stored '
+                         'cmm_result.csv bit-exactly. direction-off = the same model with '
+                         'the heading term disabled, the scope ablation of Section IV-C. '
+                         'no-cov-shape = Euclidean projection + isotropic per-epoch '
+                         'emission, i.e. the 2x2 covariance used nowhere. Only paper1 is '
+                         'a configuration the paper runs; the other two are ablations and '
+                         'are expected to differ from the stored corpus file.')
     args = ap.parse_args()
     OUTDIR.mkdir(parents=True, exist_ok=True)
 
@@ -435,7 +514,7 @@ def main():
         if fmm_agree:
             verdicts.append((tag, 'FMM', fmm_agree[0], fmm_agree[1], synth))
         if cmm_agree:
-            verdicts.append((tag, 'CMM', cmm_agree[0], cmm_agree[1], False))
+            verdicts.append((tag, f'CMM[{args.cmm_arm}]', cmm_agree[0], cmm_agree[1], False))
         for m in (cm, fm):
             m['err_mean'], m['err_p95'] = _point_err(d, cmm_csv if m is cm else fmm_csv)
         rows.append(dict(cell=tag, sigma=sigma, dir=str(d.relative_to(BASE)),
@@ -445,6 +524,9 @@ def main():
                          fmm_rerun_rows=fmm_agree[1] if fmm_agree else None))
 
     print('\n=== does the re-run reproduce the corpus file? ===')
+    if args.cmm_arm != 'paper1':
+        print(f'  (the stored cmm_result.csv is the paper1 model, so CMM[{args.cmm_arm}] is '
+              f'EXPECTED to differ; only CMM[paper1] is a bit-exactness check)')
     for tag, arm, diff, nrows, synth in verdicts:
         extra = '  [traj input synthesised from observations.csv]' if synth else ''
         print(f'  {tag:32s} {arm}: ' +

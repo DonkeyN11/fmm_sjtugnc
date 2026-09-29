@@ -1,34 +1,43 @@
-"""The audit's own figure: reliability diagram and ROC curve, four arms, one page.
+"""The audit's own figure: reliability diagram and ROC curve, six arms, one page.
 
 WHY THIS EXISTS. Section V of the manuscript is an audit of whether the reported
 confidence is a probability, and it cites "reliability diagrams" in the abstract and in
-the introduction. Until now the paper carried no reliability diagram and no ROC curve:
-every audit result was a number in a table. A calibration paper whose central exhibit has
-no calibration plot is the first thing a referee notices.
+the introduction. A calibration paper whose central exhibit has no calibration plot is
+the first thing a referee notices.
+
+THE SIX ARMS ARE THE 2x3 GRID OF THE AUDIT TABLE: two observation models (the proposed
+matcher and the classical baseline) each scored by the three estimators of
+Section III-C -- delta_t/sum delta_t (Viterbi score), alpha_t/sum alpha_t (filtering
+posterior), alpha_t beta_t/sum alpha_t beta_t (smoothed posterior). All three are read
+off one decoded path per model, so within a model the arms differ only in the evidence
+set they condition on.
+
+VISUAL ENCODING. Colour carries the ESTIMATOR (blue delta, teal alpha, orange
+alpha*beta), linestyle carries the MODEL (solid proposed, dashed baseline), and the
+marker repeats the estimator. The three hues pass the dataviz validator for the
+lightness band, chroma floor, CVD separation, normal-vision floor and contrast;
+identity is never colour-alone -- every series is direct-labelled in both panels and
+the legend names model and estimator together.
 
 WHAT THE TWO PANELS SHOW.
 
   Left, reliability: the unit interval in ten equal-width bins, empirical frequency of
   correctness against the mean score in the bin, marker area proportional to the bin's
-  population. The diagonal is a perfectly calibrated score. The large marker crowded
-  against the right edge is the saturation this paper reports -- 68 to 80 per cent of
-  epochs sit at exactly 1.000, so one bin carries most of the mass and the diagram can
-  say very little about the interior. That is drawn, not hidden: the top-bin share is
-  annotated for each arm.
+  population, open markers for the baseline and solid ones for the proposed matcher. The diagonal is a perfectly calibrated score. The large marker crowded
+  against the right edge is the saturation this paper reports -- 68 to 75 per cent of
+  the proposed matcher's epochs sit at exactly 1.000, so one bin carries most of the
+  mass and the diagram can say very little about the interior. That is drawn, not
+  hidden: the point-mass share is annotated for each arm.
 
   Right, ROC: mismatch detection, with the tie-corrected rank AUC of
-  verify_paper_numbers.auc(). The curves cross and the AUCs are close, which is the
-  honest picture and matches Section V's finding that six trajectories cannot rank the
-  two matchers on discrimination.
-
-COLOUR. Fixed order, never cycled: CaMM filtering, CaMM smoothed, FMM native, FMM
-posterior. The palette is checked by the dataviz validator for the lightness band, chroma
-floor, CVD separation, normal-vision floor and contrast; it passes all five. Identity is
-never colour-alone -- every series is direct-labelled in both panels.
+  verify_paper_numbers.auc(). The curves cross and the AUCs sit in a band of 0.08,
+  which is the honest picture and matches Section V's finding that six trajectories
+  cannot rank the arms on discrimination.
 
 Inputs are the runs written by experiments/scripts/real_final_tables.py.
-Usage: python3 experiments/scripts/fig_audit_reliability_roc.py
+Usage: CMM_OUTDIR=<run dir> python3 experiments/scripts/fig_audit_reliability_roc.py
 """
+import os
 import sys
 from pathlib import Path
 
@@ -42,18 +51,32 @@ sys.path.insert(0, str(BASE / 'experiments/scripts'))
 import real_final_tables as R  # noqa: E402
 import verify_paper_numbers as v  # noqa: E402
 
-FIG = BASE / 'docs/calib/figs'
+# Overridable so that a candidate operating point can be drawn beside the delivered
+# one instead of on top of it. The default is the figure the manuscript includes.
+FIG = Path(os.environ.get('CMM_FIGDIR') or (BASE / 'docs/calib/figs'))
 
 # (label, run, column, seq->ts map, colour, linestyle, marker)
+# Colour = estimator, linestyle = model. The proposed matcher's delta arm is a separate
+# run because tw_use_viterbi is a config key, not an output column; the baseline's fmm.csv
+# is already run at tw_use_viterbi=true and carries the smoothed column beside it.
+EST = {  # estimator -> (colour, marker)
+    'delta': ('#2471A3', 'o'),
+    'alpha': ('#16A085', 's'),
+    'ab': ('#CA6F1E', '^'),
+}
 ARMS = [
-    ('CaMM filtering', R.OUTDIR / 'cmm.csv', 'trustworthiness', False,
-     '#2471A3', '-', 'o'),
-    ('CaMM smoothed', R.OUTDIR / 'cmm.csv', 'trustworthiness_smoothed', False,
-     '#16A085', '-', 's'),
-    ('FMM native', R.OUTDIR / 'fmm.csv', 'trustworthiness', True,
-     '#C0392B', '--', '^'),
-    ('FMM posterior', R.OUTDIR / 'fmm_post.csv', 'trustworthiness', True,
-     '#8E44AD', '--', 'D'),
+    ('proposed $\\delta$', R.OUTDIR / 'cmm_viterbi.csv', 'trustworthiness', False,
+     EST['delta'][0], '-', EST['delta'][1]),
+    ('proposed $\\alpha$', R.OUTDIR / 'cmm.csv', 'trustworthiness', False,
+     EST['alpha'][0], '-', EST['alpha'][1]),
+    ('proposed $\\alpha\\beta$', R.OUTDIR / 'cmm.csv', 'trustworthiness_smoothed', False,
+     EST['ab'][0], '-', EST['ab'][1]),
+    ('baseline $\\delta$', R.OUTDIR / 'fmm.csv', 'trustworthiness', True,
+     EST['delta'][0], '--', EST['delta'][1]),
+    ('baseline $\\alpha$', R.OUTDIR / 'fmm_post.csv', 'trustworthiness', True,
+     EST['alpha'][0], '--', EST['alpha'][1]),
+    ('baseline $\\alpha\\beta$', R.OUTDIR / 'fmm.csv', 'trustworthiness_smoothed', True,
+     EST['ab'][0], '--', EST['ab'][1]),
 ]
 
 NBINS = 10
@@ -121,14 +144,19 @@ def main():
         y, s = pairs(path, col, ts_by_seq if use_seq else None, gt)
         bins = reliability(y, s)
         n = np.array([b[2] for b in bins], float)
-        dx = (k - 1.5) * 0.024
+        dx = (k - 2.5) * 0.019
         # radius ∝ population (so area ∝ n, as a reliability diagram requires), with
         # a floor so a small bin is still visible and a cap so the saturated one does
         # not swallow the panel.
         size = 4.0 + 95.0 * np.sqrt(n / n.sum())
-        axr.scatter([b[0] + dx for b in bins], [b[1] for b in bins], s=size, c=c,
-                    marker=mk, zorder=4, edgecolors='white', linewidths=0.6,
-                    label=lab)
+        # Fill carries the model: solid marker = proposed, open = baseline. Colour and
+        # marker carry the estimator. A scatter has no line, so the linestyle encoding
+        # of the ROC panel would be invisible here and in the legend without this.
+        axr.scatter([b[0] + dx for b in bins], [b[1] for b in bins], s=size,
+                    facecolors='none' if ls == '--' else c,
+                    edgecolors=c if ls == '--' else 'white',
+                    linewidths=1.4 if ls == '--' else 0.6,
+                    marker=mk, zorder=4, label=lab)
         exact_one[lab] = 100.0 * float((s >= 1.0).mean())
 
     axr.set_xlim(-0.02, 1.02)
@@ -145,8 +173,14 @@ def main():
     # EXACTLY 1.000, which is not the top bin's population ([0.9, 1.0]) -- the two are
     # different numbers and quoting the bin's for the point mass was a real error in
     # the first draft of this figure.
-    share = '\n'.join(f'  {lab:<15}{v:5.1f} %' for lab, v in exact_one.items())
-    axr.text(0.03, 0.33, 'epochs at exactly 1.000:\n' + share, fontsize=5.8,
+    short = {r'proposed $\delta$': 'proposed delta',
+             r'proposed $\alpha$': 'proposed alpha',
+             r'proposed $\alpha\beta$': 'proposed alpha*beta',
+             r'baseline $\delta$': 'baseline delta',
+             r'baseline $\alpha$': 'baseline alpha',
+             r'baseline $\alpha\beta$': 'baseline alpha*beta'}
+    share = '\n'.join(f'  {short[lab]:<18}{v:5.1f} %' for lab, v in exact_one.items())
+    axr.text(0.03, 0.42, 'epochs at exactly 1.000:\n' + share, fontsize=5.4,
              color='#333333', family='monospace', va='top', zorder=6,
              bbox=dict(boxstyle='round,pad=0.35', fc='white', ec='#cccccc', lw=0.6))
 
@@ -163,7 +197,7 @@ def main():
         axc.annotate(f'{lab}  AUC {a:.3f}', xy=(0.98, 0.30), fontsize=5.8, color=c,
                      ha='right', va='center')
     # place the labels without overlap: recompute y positions in draw order
-    ys = np.linspace(0.34, 0.14, len(ARMS))
+    ys = np.linspace(0.36, 0.11, len(ARMS))
     for txt, yy in zip(list(axc.texts), ys):
         if txt.get_text().startswith('perfect'):
             continue

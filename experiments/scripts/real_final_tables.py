@@ -37,6 +37,7 @@ Usage: python3 experiments/scripts/real_final_tables.py
 """
 import csv
 import math
+import os
 import re
 import subprocess
 import sys
@@ -50,7 +51,16 @@ BASE = Path('/home/ncz/fmm_sjtugnc')
 sys.path.insert(0, str(BASE / 'experiments/scripts'))
 import verify_paper_numbers as v  # noqa: E402
 
-OUTDIR = BASE / 'data/archive_20260928/final'
+# The operating point and its output directory are overridable through the environment
+# so that a candidate model can be run and compared WITHOUT overwriting the delivered
+# one. Every downstream script (bootstrap_real_metrics, fig_audit_reliability_roc, ...)
+# reaches its inputs through `R.OUTDIR`, so overriding it here moves the whole pipeline
+# at once and the two runs stay on disk side by side.
+#
+# The defaults are the delivered operating point, so an unqualified invocation produces
+# exactly the numbers the manuscript reports.
+OUTDIR = Path(os.environ.get('CMM_OUTDIR') or (BASE / 'data/archive_20260928/final'))
+CMM_CONFIG = os.environ.get('CMM_CONFIG', 'paper1_cmm.xml')
 GPS = 'data/real_vehicle/hainan_06/cmm_input_points_k1.csv'
 ALIGNED = BASE / 'data/real_vehicle/hainan_06/processed/aligned.csv'
 GT_CSV = BASE / 'data/real_vehicle/hainan_06/processed/ground_truth.csv'
@@ -248,6 +258,10 @@ def evaluate(run_path, gt, score_col, ts_by_seq=None):
         sat=100.0 * float((scores >= 1.0).mean()),
         distinct=len(np.unique(scores)),
         per_traj={k: (m, 100.0 * c / m) for k, (m, c) in sorted(per_traj.items())},
+        # The aligned arrays themselves, so a caller that needs a metric this function
+        # does not compute (the log score, a bootstrap replicate, a sub-population ECE)
+        # reuses the same join and the same score extraction instead of re-deriving them.
+        labels=labels, scores=scores,
     )
 
 
@@ -317,7 +331,14 @@ def main():
     print(f'evaluable epochs: {len(gt)}\n')
 
     runs = {}
-    for name, tmpl, extra in (('cmm', 'paper1_cmm.xml', {}),
+    # Four runs give the 2x3 grid of estimators. `cmm` and `fmm` each write TWO of the
+    # three columns (the score selected by tw_use_viterbi, plus the smoother's, which
+    # always uses the forward recursion), so the proposed matcher's Viterbi score needs
+    # its own run -- tw_use_viterbi is a config key, not an output column. The path is
+    # the same in both, because the key changes only which recursion is reported, so the
+    # three estimators are read off one decoded path and differ only in evidence set.
+    for name, tmpl, extra in (('cmm', CMM_CONFIG, {}),
+                              ('cmm_viterbi', CMM_CONFIG, {'viterbi': 'true'}),
                               ('fmm', 'paper1_fmm_baseline.xml', {}),
                               ('fmm_post', 'paper1_fmm_baseline.xml', {'viterbi': 'false'})):
         out = OUTDIR / f'{name}.csv'

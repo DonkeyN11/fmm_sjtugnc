@@ -25,6 +25,8 @@ manuscript's operating point and no other row may be used.
 Usage: python3 experiments/scripts/exp_maperr_sweep.py
 """
 import csv
+import os
+import re
 import subprocess
 import sys
 import tempfile
@@ -34,53 +36,40 @@ import numpy as np
 
 BASE = Path('/home/ncz/fmm_sjtugnc')
 sys.path.insert(0, str(BASE / 'experiments/scripts'))
+import real_final_tables as R  # noqa: E402
 import verify_paper_numbers as v  # noqa: E402
 
-OUTDIR = BASE / 'data/archive_20260927/maperr'
-REFERENCE = BASE / 'data/archive_20260922/real_final/cmm_final.csv'
+# Overridable, and following the same CMM_CONFIG switch as real_final_tables, so that a
+# candidate operating point can be swept beside the delivered one.
+OUTDIR = Path(os.environ.get('CMM_OUTDIR') or (BASE / 'data/archive_20260927/maperr'))
+REFERENCE = R.OUTDIR / 'cmm.csv'
 GT_CSV = BASE / 'data/real_vehicle/hainan_06/processed/aligned.csv'
 
-# The manuscript's operating point, verbatim from newdelta/real_d13p5.xml, with
-# <trustworthiness_smoothed/> added so one run yields both arms.
-TMPL = """<?xml version="1.0" encoding="UTF-8"?>
-<config>
-  <input>
-    <network><file>input/map/hainan/edges.shp</file><id>key</id><source>u</source><target>v</target></network>
-    <ubodt><file>input/map/hainan_ubodt_indexed.bin</file></ubodt>
-    <gps>
-      <file>{gps}</file>
-      <id>id</id><x>x</x><y>y</y><timestamp>timestamp</timestamp>
-      <sde>sde</sde><sdn>sdn</sdn><sdu>sdu</sdu>
-      <sdne>sdne</sdne><sdeu>sdeu</sdeu><sdun>sdun</sdun>
-      <protection_level>protection_level</protection_level>
-    </gps>
-  </input>
-  <output>
-    <file>{out}</file>
-    <fields><point_mode/><seq/><timestamp/><ogeom/><cpath/><tpath/><opath/><pgeom/>
-      <ep/><tp/><trustworthiness/><trustworthiness_smoothed/><n_best_trustworthiness/>
-      <candidates/><status/><delta_entropy/><posterior_entropy/><cumu_prob/></fields>
-  </output>
-  <parameters>
-    <k>16</k>
-    <min_candidates>1</min_candidates>
-    <reverse_tolerance>0.1</reverse_tolerance>
-    <use_mahalanobis>true</use_mahalanobis>
-    <filtered>true</filtered>
-    <max_interval>180.0</max_interval>
-    <trustworthiness_threshold>0.0</trustworthiness_threshold>
-    <phmi>0.00001</phmi>
-    <cumulative_reverse_pct>0.03</cumulative_reverse_pct>
-    <k_search>1.0</k_search><delta_road>0.000121272</delta_road>
-    <map_error_sigma>{ms}</map_error_sigma>
-  </parameters>
-  <other>
-    <log_level>2</log_level>
-    <use_omp>true</use_omp>
-    <input_epsg>4326</input_epsg>
-  </other>
-</config>
-"""
+
+def arm_config(out, ms):
+    """The operating point, with the map term set to `ms` and the output redirected.
+
+    DERIVED from real_final_tables.CMM_CONFIG rather than restated, because the template
+    that used to sit here had drifted: it carried the HPL-adaptive disk (k_search = 1,
+    delta_road = 13.5 m, phmi = 1e-5), i.e. ablation-ladder row 7, while the table it
+    feeds is row 5 -- the same confusion memory cmm-operating-point-is-row5-fixed-300m
+    records for the main table, in a second copy that the ruling did not reach. It also
+    anchored its pass criterion to data/archive_20260922, an archive two model revisions
+    old. Restating an operating point in a second file is what let both happen; the fix
+    is to have one copy of it.
+    """
+    text = R._config(R.CMM_CONFIG, out)
+    pat = re.compile(r'<map_error_sigma>[^<]*</map_error_sigma>')
+    want = f'<map_error_sigma>{ms:g}</map_error_sigma>'
+    if pat.search(text):
+        text = pat.sub(want, text, count=1)
+    else:
+        anchor = '  </parameters>'
+        assert anchor in text, 'no <parameters> block'
+        text = text.replace(anchor, f'    {want}\n{anchor}', 1)
+    n = len(re.findall(r'<map_error_sigma>', text))
+    assert n == 1, f'map_error_sigma: {n} occurrences'
+    return text
 
 GPS = 'data/real_vehicle/hainan_06/cmm_input_points_k1.csv'
 SIGMAS = [0.0, 3.5, 5.0, 10.0, 10.6, 13.5, 20.0]
@@ -135,7 +124,7 @@ def main():
     for ms in SIGMAS:
         out = OUTDIR / f'map{ms:g}.csv'
         with tempfile.NamedTemporaryFile(suffix='.xml', delete=False, mode='w') as fh:
-            fh.write(TMPL.format(gps=str((BASE / GPS).resolve()), out=str(out), ms=ms))
+            fh.write(arm_config(out, ms))
             cfg = fh.name
         log = OUTDIR / f'log_map{ms:g}.txt'
         with open(log, 'w') as lf:
@@ -148,22 +137,30 @@ def main():
         results[ms] = out
         print(f'sigma_map={ms:5.1f}  rows={sum(1 for _ in open(out))-1:7d}  -> {out.name}')
 
-    if 0.0 not in results:
-        print('\nNO NEUTRAL RUN; cannot establish the operating point. Stopping.')
-        return 1
-
     # --- pass criterion -----------------------------------------------------
-    print('\n=== pass criterion: sigma_map = 0 must reproduce the archived run ===')
-    a = metrics(results[0.0], gt, 'trustworthiness')
+    # The row that must reproduce the operating point is the one AT the operating point's
+    # own map_error_sigma, not sigma_map = 0. Anchoring to 0 was correct only while the
+    # archived run it compared against was itself run with no map term; the manuscript's
+    # operating point has carried 10.6 m since 2026-09-27, so a sigma_map = 0 row differs
+    # from it BY CONSTRUCTION and the criterion would fail on a correct sweep.
+    op_sigma = float(re.search(r'<map_error_sigma>([^<]*)</map_error_sigma>',
+                               R._config(R.CMM_CONFIG, 'x')).group(1))
+    if op_sigma not in results:
+        print(f'\nTHE OPERATING POINT\'S map_error_sigma ({op_sigma:g} m) IS NOT IN THE '
+              f'SWEEP {SIGMAS}.\nNo row can be checked against it. Stopping.')
+        return 1
+    print(f'\n=== pass criterion: sigma_map = {op_sigma:g} (the operating point) must '
+          f'reproduce {R.OUTDIR / "cmm.csv"} ===')
+    a = metrics(results[op_sigma], gt, 'trustworthiness')
     b = metrics(REFERENCE, gt, 'trustworthiness')
     keys = ('n', 'acc', 'ece', 'auc', 'sep')
     same = all(abs(a[k] - b[k]) < 1e-9 for k in keys)
     for k in keys:
-        print(f'  {k:5s} new {a[k]:12.6f}   archived {b[k]:12.6f}   '
+        print(f'  {k:5s} sweep {a[k]:12.6f}   operating point {b[k]:12.6f}   '
               f'{"OK" if abs(a[k]-b[k]) < 1e-9 else "DIFF"}')
     if not same:
-        print('\n  NEUTRAL RUN DOES NOT REPRODUCE. Not at the operating point.')
-        print('  No other row may be used. Stopping.')
+        print(f'\n  THE sigma_map = {op_sigma:g} ROW DOES NOT REPRODUCE THE OPERATING POINT.')
+        print('  The sweep is not derived from the same configuration. Stopping.')
         return 1
     print('  reproduces exactly.')
 

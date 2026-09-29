@@ -44,6 +44,7 @@ a corpus sampled at 1 Hz on a slow trajectory can violate that: at 12 m/s the st
 Usage: python3 experiments/scripts/fit_direction_kappa.py
 """
 import csv
+import os
 import math
 import sys
 from pathlib import Path
@@ -58,6 +59,11 @@ import verify_paper_numbers as v  # noqa: E402
 M_PER_DEG = 111320.0
 REAL_OBS = BASE / 'data/real_vehicle/hainan_06/cmm_input_points_k1.csv'
 SIM = BASE / 'data/simulation'
+SIM_ARM = os.environ.get('CMM_SIM_ARM', 'scalar')
+# The sweep writes into its OWN archive directory, not real_final_tables' OUTDIR;
+# reading the latter silently fell through to a 2026-09-28 archive.
+import exp_sim_sigma_sweep as _S  # noqa: E402
+SIM_OUTDIR = _S.OUTDIR
 SIM_LEVELS = ['sigma_01', 'sigma_05', 'sigma_10', 'sigma_15', 'sigma_20', 'sigma_25', 'sigma_30']
 
 _TANGENT_CACHE = {}
@@ -293,14 +299,26 @@ def main():
                csv.DictReader(open(d / 'observations.csv', newline=''), delimiter=';')]
         gt_edges = E.load_gt_edges(d)
         obs_rows = list(csv.DictReader(open(d / 'observations.csv', newline=''), delimiter=';'))
-        run_rows = list(csv.DictReader(open(R.OUTDIR / f'{lvl}_cmm.csv', newline=''), delimiter=';')) \
-            if (R.OUTDIR / f'{lvl}_cmm.csv').exists() else None
-        if run_rows is None:
-            arch = BASE / 'data/archive_20260928/sim' / f'{lvl}_cmm.csv'
-            if not arch.exists():
-                print(f'{lvl:<22}   (no run; skipping)')
-                continue
-            run_rows = list(csv.DictReader(open(arch, newline=''), delimiter=';'))
+        # The sweep names its output by ARM since 2026-09-29, so the lookup is by arm
+        # too. It used to read `{lvl}_cmm.csv`, a name the sweep no longer writes, and
+        # fell through to the 2026-09-28 archive -- which is the ANISOTROPIC operating
+        # point. The sim rows below would then have been measured on a matcher this
+        # script's real rows no longer describe, and the two columns of one table would
+        # have come from two different models. The archive is kept as a last resort but
+        # it is now announced rather than silent.
+        run = SIM_OUTDIR / f'{lvl}_cmm_{SIM_ARM}.csv'
+        src_note = ''
+        if not run.exists():
+            alt = sorted(SIM_OUTDIR.glob(f'{lvl}_cmm_*.csv'))
+            if alt:
+                run = alt[0]
+            else:
+                run = BASE / 'data/archive_20260928/sim' / f'{lvl}_cmm.csv'
+                src_note = '  [2026-09-28 ARCHIVE, not the current arm]'
+        if not run.exists():
+            print(f'{lvl:<22}   (no run; skipping)')
+            continue
+        run_rows = list(csv.DictReader(open(run, newline=''), delimiter=';'))
         th, L, spec = samples(obs_rows, run_rows, gt_edges, geo,
                               lambda r: (r['id'].strip(), int(r['seq'])))
         report(f'sim {lvl}', th, L, spec)
