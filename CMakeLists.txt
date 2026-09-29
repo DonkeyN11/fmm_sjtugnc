@@ -243,6 +243,12 @@ add_executable(test_cmm_direction_penalty tests/test_cmm_direction_penalty.cpp)
 target_link_libraries(test_cmm_direction_penalty FMMLIB)
 add_test(NAME cmm_direction_penalty COMMAND test_cmm_direction_penalty)
 
+# The transition-factor ablation key, which exists in both matchers' configs with
+# different defaults; the loader wiring is the part a typo would disable silently.
+add_executable(test_tp_normalized_knob tests/test_tp_normalized_knob.cpp)
+target_link_libraries(test_tp_normalized_knob FMMLIB)
+add_test(NAME tp_normalized_knob COMMAND test_tp_normalized_knob)
+
 # add_executable(performance_test tmp/ubodt_performance_test.cpp)
 # target_link_libraries(performance_test FMMLIB)
 

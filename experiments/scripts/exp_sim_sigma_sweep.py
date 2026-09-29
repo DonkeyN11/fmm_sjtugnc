@@ -410,6 +410,17 @@ ARMS = {
                              ('direction_penalty', 'false'),
                              ('direction_kappa_scale', '0.0'),
                              ('direction_kappa_floor', '0.0')],
+    # The no-heading model's Viterbi score. Needed because the heading term is gated
+    # by direction_max_interval, so on a corpus whose step exceeds 2 s the shipped
+    # `scalar` arm silently IS the no-heading model -- and then a rate sweep read off
+    # `scalar` would confound the rate with the model. With this arm all three
+    # estimators are available at a model that is identical at every rate.
+    'scalar-direction-off-viterbi': [('use_mahalanobis', 'false'),
+                                     ('isotropic_emission_scale', '1.0'),
+                                     ('direction_penalty', 'false'),
+                                     ('direction_kappa_scale', '0.0'),
+                                     ('direction_kappa_floor', '0.0'),
+                                     ('tw_use_viterbi', 'true')],
     'euclid-only': [('use_mahalanobis', 'false')],
     'iso-emis-only': [('isotropic_emission_scale', '1.0')],
 }

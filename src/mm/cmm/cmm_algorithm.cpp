@@ -545,7 +545,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
                                                    double direction_kappa_floor_arg,
                                                    double direction_lambda_max_arg,
                                                    double direction_max_interval_arg,
-                                                   bool direction_symmetric_arg)
+                                                   bool direction_symmetric_arg,
+                                                   bool tp_normalized_arg)
     : k(k_arg), min_candidates(min_candidates_arg),
       reverse_tolerance(reverse_tolerance_arg),
       use_mahalanobis_candidates(use_mahalanobis_candidates_arg),
@@ -565,7 +566,8 @@ CovarianceMapMatchConfig::CovarianceMapMatchConfig(int k_arg, int min_candidates
       direction_kappa_floor(direction_kappa_floor_arg),
       direction_lambda_max(direction_lambda_max_arg),
       direction_max_interval(direction_max_interval_arg),
-      direction_symmetric(direction_symmetric_arg) {
+      direction_symmetric(direction_symmetric_arg),
+      tp_normalized(tp_normalized_arg) {
     // The isotropic knob is ablation apparatus, not a model parameter. Announce
     // it loudly whenever it is not at its neutral value so that a run which does
     // not implement the paper cannot be mistaken for one that does.
@@ -612,6 +614,8 @@ void CovarianceMapMatchConfig::print() const {
                 direction_max_interval);
     SPDLOG_INFO("direction_symmetric {} (false = one-sided, MEASURED better on this data)",
                 direction_symmetric);
+    SPDLOG_INFO("tp_normalized {} (false = raw transition factors, attribution ablation)",
+                tp_normalized);
 }
 
 // Parse configuration fields from XML, falling back to hard-coded defaults when needed.
@@ -648,6 +652,9 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
     double direction_lambda_max = xml_data.get("config.parameters.direction_lambda_max", 0.0);
     double direction_max_interval = xml_data.get("config.parameters.direction_max_interval", 2.0);
     bool direction_symmetric = xml_data.get("config.parameters.direction_symmetric", false);
+    // Ablation-only: false stores the raw transition factor w = min(1, d_gnss/d_road)
+    // instead of the row-normalised one. See the member comment in the header.
+    bool tp_normalized = xml_data.get("config.parameters.tp_normalized", true);
 
     return CovarianceMapMatchConfig{k, min_candidates, reverse_tolerance,
                                     use_mahalanobis_candidates, filtered,
@@ -660,7 +667,7 @@ CovarianceMapMatchConfig CovarianceMapMatchConfig::load_from_xml(
                                     map_error_sigma, direction_kappa_scale,
                                     direction_kappa_floor,
                                     direction_lambda_max, direction_max_interval,
-                                    direction_symmetric};
+                                    direction_symmetric, tp_normalized};
 }
 
 // Parse configuration flags from CLI arguments.
@@ -2250,7 +2257,16 @@ void CovarianceMapMatch::update_layer_cmm(TGLayer *la_ptr, TGLayer *lb_ptr,
 
             if (tp_raw > 0 && sum_tp_raw > 0) {
                 // Row-normalize: for source a, Σ_j a(a,j) = 1
-                double linear_tp_norm = tp_raw / sum_tp_raw;
+                //
+                // tp_normalized=false is the attribution ablation: it stores the raw
+                // factor w = min(1, d_gnss/d_road) instead, which is what the FMM
+                // baseline's recursion multiplies by. The forward sum and the
+                // backward pass both read THIS row, so alpha and beta stay messages
+                // of one chain under either setting -- what must not happen is a
+                // normalised forward paired with a raw backward, which would not be
+                // the posterior of any single model.
+                double linear_tp_norm =
+                    config.tp_normalized ? tp_raw / sum_tp_raw : tp_raw;
                 double log_tp_norm = std::log(linear_tp_norm);
                 incoming_log_tp[a] = log_tp_norm;
 

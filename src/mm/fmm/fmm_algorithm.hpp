@@ -39,7 +39,8 @@ struct FastMapMatchConfig{
    *
    */
   FastMapMatchConfig(int k_arg = 8, double r_arg = 300, double gps_error = 50,
-    double reverse_tolerance = 0.0, bool tw_use_viterbi_arg = false);
+    double reverse_tolerance = 0.0, bool tw_use_viterbi_arg = false,
+    bool tp_normalized_arg = false);
   int k; /**< Number of candidates */
   double radius; /**< Search radius*/
   double gps_error; /**< GPS error */
@@ -55,6 +56,33 @@ struct FastMapMatchConfig{
    * epoch of a trajectory and differ from the second onward.
    */
   bool tw_use_viterbi;
+  /**
+   * Row-normalise the transition factors: t_{a->b} = w_{a->b} / sum_b' w_{a->b'},
+   * w = min(1, d_gnss / d_road).
+   *
+   * false (default) is the ORIGINAL FMM behaviour and the one every published FMM
+   * number is computed with: the raw factor multiplies the recursion, so the
+   * forward sum over a source's successors is not 1 and the model is a scoring
+   * scheme rather than a normalised chain. true is the classical row-normalised
+   * form, and it changes every reported number -- measured on the Haikou set over
+   * the 13,069 evaluable epochs, the smoothed arm moves ECE 0.1970 -> 0.0601,
+   * Brier 0.1619 -> 0.1404, AUC 0.7876 -> 0.8171, separation 0.3519 -> 0.2827,
+   * while segment accuracy falls 95.42 -> 76.36 %. The two must be read together:
+   * the arm that is better calibrated here is the worse decoder, and the contrast
+   * with the proposed matcher's emission (where the same change costs 1.14 pp of
+   * accuracy rather than 19) is the point of running it. See the long note in
+   * update_layer, which also keeps the earlier incoherent probe's numbers (raw
+   * forward beside a normalised row) apart from these.
+   *
+   * It exists as an ABLATION, not as a configuration this project ships: with the
+   * emission held at its constant sigma, it is the "fixed sigma, row-normalised
+   * factors" cell that sits between the baseline and the proposed matcher, and
+   * running it is what separates the two changes -- emission model and transition
+   * factor -- that a baseline-vs-proposed comparison otherwise bundles together.
+   * Both recursions plus the stored backward row use the setting, so alpha and
+   * beta remain messages of one chain either way.
+   */
+  bool tp_normalized;
   /**
    * Check if the configuration is valid or not
    * @return true if valid
@@ -155,7 +183,8 @@ class FastMapMatch {
   void update_tg(TransitionGraph *tg,
                  const CORE::Trajectory &traj,
                  double reverse_tolerance = 0,
-                 bool tw_use_viterbi = false);
+                 bool tw_use_viterbi = false,
+                 bool tp_normalized = false);
   /**
    * Update probabilities between two layers a and b in the transition graph
    * @param level   the index of layer a
@@ -167,7 +196,8 @@ class FastMapMatch {
    */
   void update_layer(int level, TGLayer *la_ptr, TGLayer *lb_ptr,
                     double eu_dist, double reverse_tolerance,
-                    bool *connected, bool tw_use_viterbi = false);
+                    bool *connected, bool tw_use_viterbi = false,
+                    bool tp_normalized = false);
   /**
    * Run the backward pass over a transition graph whose forward pass is
    * complete, and store the smoothed posterior P(state_t | obs_{1:T}) --

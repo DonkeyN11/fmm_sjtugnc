@@ -38,10 +38,12 @@ double log_sum_exp(const std::vector<double> &log_vals) {
 FastMapMatchConfig::FastMapMatchConfig(int k_arg, double r_arg,
                                        double gps_error,
                                        double reverse_tolerance,
-                                       bool tw_use_viterbi_arg) :
+                                       bool tw_use_viterbi_arg,
+                                       bool tp_normalized_arg) :
   k(k_arg), radius(r_arg), gps_error(gps_error),
   reverse_tolerance(reverse_tolerance),
-  tw_use_viterbi(tw_use_viterbi_arg) {
+  tw_use_viterbi(tw_use_viterbi_arg),
+  tp_normalized(tp_normalized_arg) {
 };
 
 void FastMapMatchConfig::print() const {
@@ -49,6 +51,8 @@ void FastMapMatchConfig::print() const {
   SPDLOG_INFO("k {} radius {} gps_error {} reverse_tolerance {}",
     k, radius, gps_error, reverse_tolerance);
   SPDLOG_INFO("tw_use_viterbi {}", tw_use_viterbi);
+  SPDLOG_INFO("tp_normalized {} (false = the original raw FMM transition factor)",
+    tp_normalized);
 };
 
 FastMapMatchConfig FastMapMatchConfig::load_from_xml(
@@ -60,8 +64,11 @@ FastMapMatchConfig FastMapMatchConfig::load_from_xml(
     xml_data.get("config.parameters.reverse_tolerance", 0.0);
   bool tw_use_viterbi =
     xml_data.get("config.parameters.tw_use_viterbi", false);
+  // Ablation-only; see the member comment in the header.
+  bool tp_normalized =
+    xml_data.get("config.parameters.tp_normalized", false);
   return FastMapMatchConfig{k, radius, gps_error, reverse_tolerance,
-                            tw_use_viterbi};
+                            tw_use_viterbi, tp_normalized};
 };
 
 FastMapMatchConfig FastMapMatchConfig::load_from_arg(
@@ -194,7 +201,7 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   SPDLOG_DEBUG("Update cost in transition graph");
   // The network will be used internally to update transition graph
   update_tg(&tg, filtered_traj, config.reverse_tolerance,
-            config.tw_use_viterbi);
+            config.tw_use_viterbi, config.tp_normalized);
   SPDLOG_DEBUG("Optimal path inference");
   TGOpath tg_opath = tg.backtrack();
   SPDLOG_DEBUG("Optimal path size {}", tg_opath.size());
@@ -401,7 +408,7 @@ double FastMapMatch::get_sp_dist(
 void FastMapMatch::update_tg(
   TransitionGraph *tg,
   const Trajectory &traj, double reverse_tolerance,
-  bool tw_use_viterbi) {
+  bool tw_use_viterbi, bool tp_normalized) {
   SPDLOG_DEBUG("Update transition graph");
   std::vector<TGLayer> &layers = tg->get_layers();
   std::vector<double> eu_dists = ALGORITHM::cal_eu_dist(traj.geom);
@@ -411,7 +418,7 @@ void FastMapMatch::update_tg(
     bool connected = false;
     update_layer(i, &(layers[i]), &(layers[i + 1]),
                  eu_dists[i], reverse_tolerance, &connected,
-                 tw_use_viterbi);
+                 tw_use_viterbi, tp_normalized);
     if (!connected){
       SPDLOG_WARN("Traj {} unmatched as point {} and {} not connected",
         traj.id, i, i+1);
@@ -428,7 +435,8 @@ void FastMapMatch::update_layer(int level,
                                 double eu_dist,
                                 double reverse_tolerance,
                                 bool *connected,
-                                bool tw_use_viterbi) {
+                                bool tw_use_viterbi,
+                                bool tp_normalized) {
   // SPDLOG_TRACE("Update layer");
   TGLayer &lb = *lb_ptr;
   bool layer_connected = false;
@@ -449,14 +457,49 @@ void FastMapMatch::update_layer(int level,
   for (size_t bi = 0; bi < nb; ++bi)
     lb[bi].incoming_log_tp.assign(na, neg_inf);
 
+  // Row sums of the transition factors, one per source candidate, computed only
+  // when the row-normalisation ablation is on. The default path multiplies by the
+  // raw factor and never reads them, so it keeps its exact arithmetic and its
+  // single get_sp_dist per pair.
+  std::vector<double> tp_row_sum;
+  std::vector<std::vector<double>> tp_matrix;
+  std::vector<std::vector<double>> sp_matrix;
+  if (tp_normalized) {
+    tp_row_sum.assign(na, 0.0);
+    tp_matrix.assign(na, std::vector<double>(nb, 0.0));
+    sp_matrix.assign(na, std::vector<double>(nb, 0.0));
+    for (size_t ai = 0; ai < na; ++ai) {
+      TGNode *iter_a = &(*la_ptr)[ai];
+      if (iter_a->cumu_prob <= neg_inf) continue;
+      for (size_t bi = 0; bi < nb; ++bi) {
+        double sp_dist = get_sp_dist(iter_a->c, lb[bi].c, reverse_tolerance);
+        double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
+        if (tp <= 0) continue;
+        tp_matrix[ai][bi] = tp;
+        sp_matrix[ai][bi] = sp_dist;
+        tp_row_sum[ai] += tp;
+      }
+    }
+  }
+
   for (size_t ai = 0; ai < na; ++ai) {
     TGNode *iter_a = &(*la_ptr)[ai];
     if (iter_a->cumu_prob <= neg_inf) continue;
     for (size_t bi = 0; bi < nb; ++bi) {
       auto &iter_b = lb[bi];
-      double sp_dist = get_sp_dist(iter_a->c, iter_b.c, reverse_tolerance);
-      double tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
-      if (tp <= 0) continue;
+      double sp_dist;
+      double tp;
+      if (tp_normalized) {
+        tp = tp_matrix[ai][bi];
+        if (tp <= 0) continue;
+        sp_dist = sp_matrix[ai][bi];
+        tp = (tp_row_sum[ai] > 0.0) ? tp / tp_row_sum[ai] : 0.0;
+        if (tp <= 0) continue;
+      } else {
+        sp_dist = get_sp_dist(iter_a->c, iter_b.c, reverse_tolerance);
+        tp = TransitionGraph::calc_tp(sp_dist, eu_dist);
+        if (tp <= 0) continue;
+      }
       iter_b.incoming_log_tp[ai] = std::log(tp);
 
       // Viterbi: single best path (for backtrack)
@@ -491,10 +534,29 @@ void FastMapMatch::update_layer(int level,
   // not the posterior of any model FMM fits. Storing the raw row keeps the
   // smoothed arm the alpha*beta posterior of the SAME model whose filtering
   // posterior is the column beside it, which is the only way the two are
-  // comparable as an evidence-set pair. Measured on the Haikou set over the
-  // 13,069 evaluable epochs, the normalised row costs ECE 0.197 -> 0.247, Brier
-  // 0.162 -> 0.190, AUC 0.788 -> 0.719 and separation 0.352 -> 0.214, i.e. it
-  // is worse on every axis except MCE; the switch is this one line.
+  // comparable as an evidence-set pair.
+  //
+  // THAT MISMATCH WAS MEASURED, and its numbers are worth keeping apart from the
+  // coherent arm's because they point the other way. With the forward raw and only
+  // the stored row normalised -- an alpha*beta that is not the posterior of any
+  // model -- the smoothed arm on Haikou (13,069 evaluable epochs) moved ECE
+  // 0.197 -> 0.247, Brier 0.162 -> 0.190, AUC 0.788 -> 0.719, separation
+  // 0.352 -> 0.214: worse on every axis but MCE. That is the incoherent pairing,
+  // and it is the reason the setting below is applied to the recursion AND the
+  // stored row together rather than to the row alone. The coherent arm
+  // (`tp_normalized=true` throughout) is a different experiment with a different
+  // answer on ECE: 0.1970 -> 0.0601, Brier 0.1619 -> 0.1404, AUC 0.7876 -> 0.8171,
+  // separation 0.3519 -> 0.2827 -- but with accuracy 95.42 -> 76.36 %, i.e. the
+  // calibration gain is bought with a decoding loss. See
+  // experiments/scripts/exp_tp_attribution.py and the CLAUDE.md row.
+  //
+  // WHAT THE NORMALISED PATH BELOW IS FOR. It is not an alternative default: it
+  // exists so that the classical HMM's row-normalised factors can be run against
+  // this baseline's own constant-sigma emission (`tp_normalized=true`), which is
+  // the cell that decomposes a baseline-vs-proposed difference into its emission
+  // half and its transition half. Because the pre-pass fills the same matrices the
+  // loop reads, alpha, beta and the Viterbi recursion all use whichever factor is
+  // selected; mixing them would be a reweighting rather than a posterior.
 
   // Compute forward sum α_t(j) and per-layer softmax
   std::vector<double> layer_fwd;

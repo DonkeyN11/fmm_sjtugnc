@@ -142,7 +142,8 @@ struct CovarianceMapMatchConfig {
                            double direction_kappa_floor_arg = 0.0,
                            double direction_lambda_max_arg = 0.0,
                            double direction_max_interval_arg = 2.0,
-                           bool direction_symmetric_arg = false);
+                           bool direction_symmetric_arg = false,
+                           bool tp_normalized_arg = true);
 
     int k;                          /**< Number of candidates */
     int min_candidates;             /**< Minimum number of candidates to keep */
@@ -159,6 +160,24 @@ struct CovarianceMapMatchConfig {
 
     double cumulative_reverse_pct;       /**< Maximum cumulative reverse travel as fraction of edge length (0.03 = 3%) before blocking same-edge transition. Only applied on one-way edges. */
     bool direction_penalty;              /**< Whether to apply direction-consistency von Mises penalty for reverse-direction candidates (default true). Set to false for ablation studies isolating the contribution of direction awareness. */
+
+    // Row normalisation of the transition factors,
+    //     t_{a->b} = w_{a->b} / sum_b' w_{a->b'},   w = min(1, d_gnss / d_road).
+    // true (default) is the model this matcher describes. The divisor depends on the
+    // SOURCE candidate, so it does not cancel between the forward and backward
+    // recursions; what keeps alpha and beta messages of one chain is that both read this
+    // same setting, which is why the flag is applied to the recursion and to the stored
+    // row together and never to one of them alone. false stores and uses the raw w.
+    //
+    // false is an ABLATION, and the reason it exists is attribution rather than the model:
+    // the FMM baseline's forward recursion uses the raw factor (see the long note in
+    // fmm_algorithm.cpp's update_layer), so the baseline-vs-proposed comparison changes
+    // the emission AND the transition factor at once. A run with tp_normalized=false
+    // against the baseline's constant-sigma emission gives the missing cell of the 2x2
+    // grid -- {constant sigma, per-epoch sigma} x {raw, row-normalised} -- and locates
+    // which of the two changes each reported difference belongs to. It is not a
+    // configuration the paper reports.
+    bool tp_normalized;                  /**< true (default) = row-normalised transition factors; false = raw (attribution ablation only) */
 
     // The von Mises concentration is kappa = |v|^2 / (c * n^T Sigma n), where n is
     // the unit normal to the displacement. c = 2(1-rho) carries the inter-epoch
