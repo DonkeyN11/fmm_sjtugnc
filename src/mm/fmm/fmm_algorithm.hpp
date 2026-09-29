@@ -69,7 +69,7 @@ struct FastMapMatchConfig{
    * Brier 0.1619 -> 0.1404, AUC 0.7876 -> 0.8171, separation 0.3519 -> 0.2827,
    * while segment accuracy falls 95.42 -> 76.36 %. The two must be read together:
    * the arm that is better calibrated here is the worse decoder, and the contrast
-   * with the proposed matcher's emission (where the same change costs 1.14 pp of
+   * with the proposed matcher's emission (where the same change costs 1.16 pp of
    * accuracy rather than 19) is the point of running it. See the long note in
    * update_layer, which also keeps the earlier incoherent probe's numbers (raw
    * forward beside a normalised row) apart from these.

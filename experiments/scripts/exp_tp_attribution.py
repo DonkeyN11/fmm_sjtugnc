@@ -47,7 +47,20 @@ import exp_sim_sigma_sweep as S  # noqa: E402
 import real_final_tables as R  # noqa: E402
 import verify_paper_numbers as v  # noqa: E402
 
-DELIVERED = R.OUTDIR                              # the shipped operating-point runs
+# The delivered operating-point runs, named explicitly rather than taken from R.OUTDIR.
+# R.OUTDIR defaults to `data/archive_20260928/final`, which is the ANISOTROPIC run
+# (use_mahalanobis=true, isotropic_emission_scale=0); the manuscript's numbers and the
+# scalar operating point are in `archive_20260929/scalar`. Anchoring the grid there makes
+# it a genuine 2x2 -- both per-epoch-sigma cells then share one emission shape -- and
+# removes a third, unlabelled difference from the two cells that are supposed to differ
+# only in the transition factor. Cost of not doing it, measured: the anisotropic corner
+# reads 98.13 % against the scalar corner's 98.11 %, so the grid would have priced
+# "normalising beside the per-epoch emission" at 1.14 pp when the scalar pair gives
+# 1.16 pp, and the two axes would not be the two axes. The FMM files are byte-identical
+# between the two archives (md5 0dcbbbe8... for fmm.csv, 0a48ca77... for fmm_post.csv),
+# so the baseline corners do not move.
+DELIVERED = Path(os.environ.get('EXP_TP_DELIVERED')
+                 or (BASE / 'data/archive_20260929/scalar'))
 OUTDIR = Path(os.environ.get('EXP_TP_OUTDIR') or (BASE / 'data/archive_20260930/tpattr'))
 
 CMM_CFG = 'paper1_cmm_scalar.xml'

@@ -58,16 +58,26 @@ EXCLUDE_TRAJ = {"12"}
 #
 # 'cmm' entries below were previously 96.9 / 0.044 / 0.649 / 5.5 / 13.5, which is
 # ablation-ladder row 7 (HPL-adaptive disk, phmi = 1e-5). The paper reports row 5.
+#
+# Re-anchored 2026-09-30 on the scalar run (see the note at CMM_CSV). Four values moved
+# and all four were the anisotropic run's: traj 11 96.69 -> 96.65, traj 21 98.74 -> 98.69,
+# traj 22 97.74 -> 97.79, All 98.13 -> 98.11, plus the alpha AUC 0.836 -> 0.838 and the
+# separation block below. Each is now the value docs/calib/calib.tex prints -- the
+# per-trajectory ones in tab:per_traj and the AUC in tab:intervals -- so the dict can be
+# read as the manuscript's figures rather than as one run's output. The tw_sep block is
+# the exception: the manuscript prints no such row, so those entries are the delivered
+# run's own numbers (CMM column = the FILTERING arm, FMM column = the delta arm) and are
+# anchored only for internal consistency.
 PAPER = {
     'accuracy': {
-        '11': (2385, 96.69, 84.57), '13': (1908, 97.90, 96.80),
-        '14': (352, 100, 67.33), '21': (3581, 98.74, 99.80), '22': (2123, 97.74, 99.01),
-        '23': (2720, 98.79, 99.04), 'ALL': (13069, 98.13, 95.42),
+        '11': (2385, 96.65, 84.57), '13': (1908, 97.90, 96.80),
+        '14': (352, 100, 67.33), '21': (3581, 98.69, 99.80), '22': (2123, 97.79, 99.01),
+        '23': (2720, 98.79, 99.04), 'ALL': (13069, 98.11, 95.42),
     },
-    'tw_sep': {'cmm_corr': 0.957, 'cmm_wrong': 0.533, 'cmm_sep': 0.424,
-               'fmm_corr': 0.781, 'fmm_wrong': 0.350, 'fmm_sep': 0.442, 'ratio': 0.96},
-    'ece': {'cmm': 0.039, 'fmm': 0.193},
-    'auc': {'cmm': 0.836, 'fmm': 0.865},
+    'tw_sep': {'cmm_corr': 0.958, 'cmm_wrong': 0.528, 'cmm_sep': 0.429,
+               'fmm_corr': 0.781, 'fmm_wrong': 0.350, 'fmm_sep': 0.442, 'ratio': 0.97},
+    'ece': {'cmm': 0.038, 'fmm': 0.193},
+    'auc': {'cmm': 0.838, 'fmm': 0.865},
     'pos_err': {'cmm_mean': 5.66, 'cmm_p95': 13.7, 'fmm_mean': 6.0, 'fmm_p95': 15.0},
     # The submitted manuscript reports no false-match rate. The script still measures
     # one; None means "print it, do not score it against a claim that does not exist".
@@ -246,8 +256,21 @@ PROC = BASE / 'data/real_vehicle/hainan_06/processed'
 # because a search radius of exactly HPL admits fewer candidates.
 # Reproduce both with `experiments/scripts/real_final_tables.py`, which reruns the
 # matchers at the paper's operating point and writes these files.
-CMM_CSV = BASE / 'data/archive_20260928/final/cmm.csv'
-FMM_CSV = BASE / 'data/archive_20260928/final/fmm.csv'
+#
+# WHICH ARCHIVE THIS DEFAULTS TO IS PART OF THE CHECK, not an incidental path.
+# These pointed at `archive_20260928/final` until 2026-09-30, and that archive is the
+# ANISOTROPIC run (use_mahalanobis=true, isotropic_emission_scale=0 -- see its cmm.log).
+# The manuscript reports the SCALAR operating point, `input/config/paper1_cmm_scalar.xml`,
+# whose runs are in `archive_20260929/scalar`. Every §V figure in docs/calib/calib.tex
+# matches the scalar run to its printed precision: per-trajectory 96.65 / 97.90 / 100.00 /
+# 98.69 / 97.79 / 98.79 and All 98.11, against the anisotropic run's 96.69 / 97.90 /
+# 100.00 / 98.74 / 97.74 / 98.79 and 98.13. The old anchor still passed -- the two runs
+# differ by less than check()'s tolerance -- so the mismatch was invisible in the output
+# and would have stayed invisible until one archive was regenerated. That is the failure
+# this dict's own comment warns about, one level down: not a stale claim, a wrong run
+# under a correct claim.
+CMM_CSV = BASE / 'data/archive_20260929/scalar/cmm.csv'
+FMM_CSV = BASE / 'data/archive_20260929/scalar/fmm.csv'
 
 
 def main():
@@ -369,7 +392,10 @@ def main():
 
     cmm = load_mr(args.cmm)
     fmm = load_mr(args.fmm)
-    print(f"CMM run: {args.cmm.name}   FMM run: {args.fmm.name}")
+    # The FULL path, not the basename: which archive the claims are checked against is
+    # the one thing a reader cannot infer from the metric names, and printing only
+    # `cmm.csv` is how a wrong anchor stays invisible. See the note at CMM_CSV.
+    print(f"CMM run: {args.cmm}   FMM run: {args.fmm}")
 
     # Evaluate
     cmm_pt = defaultdict(lambda:{'c':0,'t':0,'perr':[]})

@@ -282,7 +282,7 @@ This is the complete set of keys `CovarianceMapMatchConfig::load_from_xml` reads
 | `tw_use_viterbi` | false | false = $\alpha_t(i^*)/\sum_j\alpha_t(j)$, the filtering posterior of Eq. (16); true = $\delta_t(i^*)/\sum_j\delta_t(j)$, the Viterbi score. The same key exists in `FastMapMatchConfig` for the baseline side of the comparison |
 | `direction_symmetric` | false | true makes the von Mises term symmetric — $\kappa(\cos\theta-1)$, penalising any misalignment rather than only a reversal. **Measured net loss** (2026-09-27), which is why it is off: accuracy 97.87 → 96.44 (−1.43 pp, −1.14 pp excluding the 61 GT-defect epochs, so not a labelling artefact), ECE 0.0303 → 0.0452, BSS −0.176 → −0.510, separation 0.435 → 0.305, false alarm at `tw < 0.5` 2.04 % → 3.29 %. It also fails its own goal — Traj 11's window stays 44/44 wrong under it, because the road the vehicle was on is not a candidate at all, so no re-ranking among candidates can recover it |
 | `direction_lambda_max` | 0.0 | Cap on the per-epoch heading penalty in nats; 0 = no cap. Only meaningful with `direction_symmetric`: the one-sided form's penalty at a reversal reaches ~2000 on Haikou, and capping *that* would gut the wrong-way detection the shipped term exists for |
-| `tp_normalized` | **true** | true = the row-normalised factor the model has always used, $t_{a\to b} = w_{a\to b}/\sum_{b'}w_{a\to b'}$; false = the raw $w = \min(1, d_\text{gnss}/d_\text{road})$ instead, which is what the FMM baseline's recursion multiplies. It is the ablation that separates the two changes a baseline-vs-proposed comparison bundles together (emission model and transition factor), and it is the only key in this table whose default is not "off". Forward, backward and Viterbi all read whichever factor is selected — mixing a normalised forward with a raw backward would not be the posterior of any model. Measured on the 2×2 grid, `experiments/scripts/exp_tp_attribution.py`: at the paper's per-epoch emission the raw factor *raises* accuracy 98.13 → 99.27 % while dropping the smoothed ECE from 0.0067 to 0.0171 and the Viterbi AUC from 0.839 to 0.612; at the baseline's constant σ it *destroys* accuracy 95.42 → 76.36 % while improving the smoothed ECE 0.1970 → 0.0601. The sign of the accuracy effect therefore depends on the emission it is paired with, which is the reason the pair is not an additive decomposition. The mechanism is measured rather than inferred: on trajectory 21 the chosen raw factor is exactly 1.000 at 94 % of epochs (the `eu_dist >= sp_dist` cap makes the baseline's transition inert there, leaving the emission to decide), while the row-normalised factor spreads over 0.80–1.00, and its per-step term (0.01–0.2 nats, accumulating along the path) is larger than the emission's own log-difference between the top candidates (0.001–0.09 nats). On the simulation corpus the same arm is neutral-to-better (σ10 1 Hz 99.38 → 99.14 %, σ30 1 Hz 91.13 → 94.01 %), so the effect is dataset-dependent in sign and must not be quoted as a property of normalisation alone |
+| `tp_normalized` | **true** | true = the row-normalised factor the model has always used, $t_{a\to b} = w_{a\to b}/\sum_{b'}w_{a\to b'}$; false = the raw $w = \min(1, d_\text{gnss}/d_\text{road})$ instead, which is what the FMM baseline's recursion multiplies. It is the ablation that separates the two changes a baseline-vs-proposed comparison bundles together (emission model and transition factor), and it is the only key in this table whose default is not "off". Forward, backward and Viterbi all read whichever factor is selected — mixing a normalised forward with a raw backward would not be the posterior of any model. Measured on the 2×2 grid, `experiments/scripts/exp_tp_attribution.py`: at the paper's per-epoch emission the raw factor *raises* accuracy 98.11 → 99.27 % while dropping the smoothed ECE from 0.0067 to 0.0171 and the Viterbi AUC from 0.840 to 0.612; at the baseline's constant σ it *destroys* accuracy 95.42 → 76.36 % while improving the smoothed ECE 0.1970 → 0.0601. The sign of the accuracy effect therefore depends on the emission it is paired with, which is the reason the pair is not an additive decomposition. The mechanism is measured rather than inferred: on trajectory 21 the chosen raw factor is exactly 1.000 at 94 % of epochs (the `eu_dist >= sp_dist` cap makes the baseline's transition inert there, leaving the emission to decide), while the row-normalised factor spreads over 0.80–1.00, and its per-step term (0.01–0.2 nats, accumulating along the path) is larger than the emission's own log-difference between the top candidates (0.001–0.09 nats). On the simulation corpus the same arm is neutral-to-better (σ10 1 Hz 99.38 → 99.14 %, σ30 1 Hz 91.13 → 94.01 %), so the effect is dataset-dependent in sign and must not be quoted as a property of normalisation alone |
 
 App-level keys outside `<parameters>`, i.e. the complete set [`CMMAppConfig::load_from_xml`](src/mm/cmm/cmm_app_config.cpp) reads from `<other>`: `<use_omp>`, `<log_level>`, `<input_epsg>`, `<network_bbox_from_gps>`, `<network_bbox_padding>`. Note that `<step>` is **not** among them — the CMM app never reads it; only `fmm_app_config.cpp` and `stmatch_app_config.cpp` do, as a fallback step distance. `<convert_to_projected>` is likewise read by no app: the CMM app takes the CRS from `<input_epsg>` instead.
 
@@ -419,7 +419,7 @@ fabricated position σ is ~1.5σ_ρ), so **the corpus cannot evaluate the direct
 §IV says so rather than treating it as an ablation. Any corpus meant to test it needs a
 higher sample rate or a smaller position noise.
 
-**Two traps recorded here so they are not re-entered.**
+**Three traps recorded here so they are not re-entered.**
 
 1. *The previous table in this file was a debug configuration.* It carried
    `96.90 / 0.0437 / 0.6493` and `2.92` candidates/epoch, which is ladder row **7**
@@ -438,6 +438,19 @@ higher sample rate or a smaller position noise.
    `uni_seq` and its `timestamp` is not per-epoch (traj 11: 2,696 rows, 25 distinct
    values). Both are implemented in `real_final_tables.py:load_gt/load_run` with the
    measurements that establish them.
+
+3. *A check file has an anchor, and a wrong anchor passes.* `verify_paper_numbers.py`
+   defaulted to `data/archive_20260928/final/` — the **anisotropic** run
+   (`use_mahalanobis=true`, `isotropic_emission_scale=0`, per its `cmm.log`) — while the
+   manuscript reports the scalar one. Every claim still passed, because the two runs differ
+   by less than `check()`'s relative tolerance; the per-trajectory figures in `PAPER` were
+   the anisotropic run's (96.69 / 98.74 / 97.74, All 98.13) where `tab:per_traj` prints the
+   scalar run's (96.65 / 98.69 / 97.79, All 98.11). A regression target that is *one run
+   off* is invisible in exactly the way a stale one is not: nothing is red, and the numbers
+   it defends are not the numbers in the paper. Anchored 2026-09-30 on
+   `data/archive_20260929/scalar/`, and `main()` now prints the **full** paths of the two
+   runs it reads, so the anchor is visible in every run's output rather than inferred from
+   the metric names. `exp_tp_attribution.py` had the same default and was fixed with it.
 
 Evaluate with `experiments/scripts/real_final_tables.py` for the real data and
 `experiments/scripts/eval_sim_corpus.py` for the simulation corpus; all three take their
@@ -544,7 +557,7 @@ See [input/config/](input/config/) for example config XML files. The real-vehicl
 | `compute_raim_pl.py` | Compute RAIM-derived HPL from raw RINEX observations and broadcast ephemeris. **Known defect**: the unit-weight $\sigma_0$ comes out at $1.6\times10^5$–$2.2\times10^5$ (median $1.79\times10^5$) on trajectory 1.4, so the `sigma0 > 500` guard trips and the fallback `cov = 3.0² · (HᵀWH)⁻¹` fires on **100 %** of the 14,620 epochs. The resulting `protection_level` column therefore carries no observation-noise information: it is a pure function of satellite geometry with a fixed $\sigma=3$ m, i.e. a geometry-driven HPL rather than a measurement-driven one. The ephemeris parse is *not* the cause — it is correct (line-2 field 3 parses to √A = 5153.669, A = 26,560 km, the true GPS semi-major axis). |
 | `merge_raim_pl.py` | Merge computed PL into the CMM input table, keyed on `(traj, timestamp)` — never on the RINEX epoch index, which is a 10 Hz counter against a 1 Hz table |
 | `eval_result_csv.py` | **Canonical evaluator**: accuracy, ECE, ROC AUC (tie-corrected Mann–Whitney), mean TW. Metric definitions are imported from `verify_paper_numbers.py` |
-| `verify_paper_numbers.py` | Reproduce the manuscript's reported figures |
+| `verify_paper_numbers.py` | Reproduce the manuscript's reported figures. Defaults to `data/archive_20260929/scalar/`, the delivered scalar run; printing the full run paths is part of the check (see trap 3 above) |
 | `exp3_parameter_sensitivity.py`, `exp4_sigma_mismatch.py`, `exp5_degraded_conditions.py` | Paper simulation studies |
 | `fig_*.py` | Paper figures |
 
