@@ -6,6 +6,31 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 FMM (Fast Map Matching) is an open-source C++17 framework for matching noisy GPS trajectories to road networks using Hidden Markov Models with precomputation. This fork extends the original [FMM](https://github.com/cyang-kth/fmm) with **Covariance Map Matching (CMM)** — integrating GNSS covariance matrices and Protection Levels into the matching objective.
 
+## Reply Discipline and Provenance (adopted 2026-10-11)
+
+**Reply shape.** Conclusion first: the opening ≤3 lines state the conclusion, decision, or key
+numbers; details follow; narrative content ≲30 lines (evidence blocks — command output, file
+citations — do not count toward the cap); anything longer goes to a file with a chat summary.
+No decorative formatting stacks. Process narration is kept in long multi-step tasks only
+(≤1 sentence per step); no step-by-step commentary; no end-of-reply recap — the message closes
+on a 1–3 line actionable bottom line (decision / next step / key numbers), not a restatement.
+An explicit request for full detail overrides the caps.
+
+**Fact provenance.** Every specific fact — file contents, numbers, paths, names, line numbers,
+command output — comes from a tool call in the current session and carries an inline source,
+e.g. `calib.tex:1349 (grep)`, `95.83 % (run: review_20261010_analyses.py)`; a source applying to
+consecutive facts is annotated once. What can be checked is checked rather than labelled; what
+cannot is labelled "unverified (from memory)". Expert judgement is given directly, clearly,
+with its reasons, and is not constrained by the provenance rule — but it must not be dressed in
+verification language ("confirmed"). Completion claims (done / clean / fixed / verified)
+require the check's output in the same message; if no check ran, say so.
+
+**Number provenance (this repo).** Any number entering the manuscript, an archive, or a review
+record must be produced by a committed script with archived output (`data/archive_YYYYMMDD/`)
+or output captured in the same message; cite the script and the output location when quoting.
+One-off shell probes may not enter the manuscript — reproduce them by script first; numbers
+quoted in chat from a probe carry `(probe: …)`.
+
 ## Build System
 
 ### Conda Environment (Required)
@@ -154,7 +179,7 @@ $\sigma=1$ m); under degraded geometry HPL grows proportionally. $k_\text{search
 $\delta_\text{road}$ are the two global constants that replace what used to be a per-epoch
 tuning loop; $\delta_\text{road}$ is an allowance for the two quantities the HPL does not bound — the lateral offset of the driven lane from the mapped centreline, and map georeferencing error. The paper's operating points are $k_\text{search} = 1$ with $\delta_\text{road} = 3.5$ m in simulation (the national urban lane width, CJJ 37--2012) and $\delta_\text{road} = 13.5$ m on the real data (that lane width plus a 10 m map-error allowance, converted to degrees by the $111{,}320$ m/deg convention). The implementation is the pure static `effective_search_radius()` ([src/mm/cmm/cmm_algorithm.cpp:1840](src/mm/cmm/cmm_algorithm.cpp#L1840)).
 
-**An epoch with no candidate is dropped.** The construction above presumes the network intersects the search disk at all, which can fail (an optimistic $\mathrm{HPL}_i$, a multipath-displaced fix, or a road absent from the network). A bounded radius fallback used to double the radius here until a floor was reached (`should_expand_search_radius`, `MAX_SEARCH_RADIUS_DOUBLINGS = 8`, `fixed_search_radius`); **it has been removed in full**, because it was a second, undocumented radius rule firing on exactly the epochs the model was least able to justify. An epoch whose disk admits no road segment is now simply not matched: no row is emitted for it and the remaining epochs are matched as before. On the Haikou set this drops 401 rows, none of which carries a ground-truth label, so the evaluable population is unchanged at 13,123 epochs.
+**An epoch with no candidate is dropped.** The construction above presumes the network intersects the search disk at all, which can fail (an optimistic $\mathrm{HPL}_i$, a multipath-displaced fix, or a road absent from the network). A bounded radius fallback used to double the radius here until a floor was reached (`should_expand_search_radius`, `MAX_SEARCH_RADIUS_DOUBLINGS = 8`, `fixed_search_radius`); **it has been removed in full**, because it was a second, undocumented radius rule firing on exactly the epochs the model was least able to justify. An epoch whose disk admits no road segment is now simply not matched: no row is emitted for it and the remaining epochs are matched as before. On the Haikou set this drops 401 rows, none of which carries a ground-truth label, so the evaluable population is unchanged at 13,069 epochs.
 
 `min_candidates` survives with a narrower meaning than it had under the fallback. It is now a floor on how many candidates are *kept* from the disk, not a trigger for enlarging it: if fewer than `min_candidates` candidates survive the metric-based selection, the nearest remaining candidates from the pool are appended by Euclidean distance ([src/mm/cmm/cmm_algorithm.cpp:1063](src/mm/cmm/cmm_algorithm.cpp#L1063)). The search radius is never changed by it.
 
@@ -185,9 +210,12 @@ where $\mathbf{d}_{i,j} = z_i - x_{i,j}$. Computed in log space as $-\tfrac{1}{2
 
 **Data-side calibration: none is applied.** `extract_spp_for_cmm.py` carries a `GST_COVARIANCE_SCALE` whose value is now **1.0**, so the raw NMEA `GST` covariance is written through unscaled into the CMM input table (`cmm_input_points_k1.csv`, the table every current real-data result consumes).
 
-This reverses an earlier calibration, and the reversal is the load-bearing part. The model consumes only the quadratic form $\mathbf{d}^{\mathrm{T}}\boldsymbol{\Sigma}^{-1}\mathbf{d}$ — $\log|\boldsymbol{\Sigma}|$ cancels in the same-epoch softmax — so the natural scale criterion is $k=\sqrt{\mathbb{E}[\mathbf{d}^{\mathrm{T}}\boldsymbol{\Sigma}_{\mathrm{gst}}^{-1}\mathbf{d}]/2}$, which over 15,034 epochs measured $3.0008$. That factor was a **compensation, not a calibration**. Stripped in stages over the same population: $1.8683$ after removing two ground-truth defects in `build_real_data_gt.py` (a $\pm1$ s RTK substitution, and the 11.3 % of "RTK truth" rows that are not fixed solutions), then $0.9430$ after also removing the antenna lever arm (the SPP and RTK antenna phase centres are not co-located on this vehicle) and a 1.0--2.7 m fixed-azimuth SPP bias. What is left is ~1, and an independent route agrees: raw GST median $\sigma_\mathrm{major}$ 0.815 m against a post-removal residual of ~0.707 m gives 0.87, i.e. the raw GST is already right and slightly conservative. Donkey.Ning's 2026-09-16 ruling is $k = 1$. The constant is retained as the single definition that `apply_gst_calibration.py` imports, and at $k = 1$ that script is the identity.
-
-Do not restore $3.0008$ without re-deriving it: with the ground-truth defects and the lever arm removed, it inflates the covariance by $9\times$ and moves the reported ECE and AUC with it.
+A calibration-scale history preceded this rule (a measured $3.0008$, then $1.8683$, then
+$0.9430$, then an independent $0.87$ route); it is in `memory/paper1_reference.md` §2.
+The constant is retained as the single definition that `apply_gst_calibration.py` imports,
+and at $k = 1$ that script is the identity. **Do not restore $3.0008$ without re-deriving
+it:** with the ground-truth defects and the lever arm removed it inflates the covariance
+by $9\times$ and moves the reported ECE and AUC with it.
 
 ### Level 3: Trustworthiness as Calibrated Posterior
 
@@ -196,7 +224,7 @@ Do not restore $3.0008$ without re-deriving it: with the ground-truth defects an
 2. **Row-normalized transitions**: $t_{a \to b} = w_{a \to b} / \sum_j w_{a \to j}$ where $w_{a \to b} = \min(1, d_{\text{gnss}} / d_{\text{road}})$, ensuring $\sum_j t_{a \to j} = 1$.
 3. **Uniform initial prior**: $\pi(i) = 1/K$ for $K$ road candidates.
 
-An off-road **background state** $p_{\text{bg}} = 0.1$ used to be listed here as a further normalization step. It has been removed from the code: because both the emission and the transition normalisation happen before the softmax that produces trustworthiness, the constant factor cancels, and the only place it did not cancel was layer initialisation, where it was miscounted into $K$. Measured on the Haikou set it changed the reported trustworthiness of exactly 8 of 16155 epochs — the first epoch of each trajectory and sub-segment — and no matched path. It was also actively harmful: appending it made a zero-candidate epoch look non-empty, which let an off-road epoch enter the Viterbi layer and permanently stall the sub-segment. An epoch with no road candidate is now simply skipped.
+An off-road **background state** $p_{\text{bg}} = 0.1$ used to be listed here as a further normalization step; it was removed in full — the constant cancels in the softmax, its only non-cancelling effect was a mis-counted layer initialisation, and it let a zero-candidate epoch enter the Viterbi layer and stall the sub-segment (measurement in `memory/paper1_reference.md` §3). An epoch with no road candidate is simply skipped.
 
 **Forward algorithm (trustworthiness computation).** The per-epoch trustworthiness is the filtering posterior of the Viterbi-optimal candidate $i^*$:
 $$
@@ -217,17 +245,12 @@ Note from the paper (README.md §Trustworthiness Evaluation): $\Delta H$ is info
 
 ### Mechanisms deliberately absent
 
-The CMM implementation is a direct translation of the paper's §III formulas. The following have been removed so that no behaviour needs to be justified outside those formulas; do not reintroduce them without a corresponding paper change.
-
-| Removed | Why |
-|---|---|
-| Adaptive softmax temperature | Was a no-op on the real data (ECE $0.0410 \to 0.0400$, AUC $0.7204 \to 0.7203$, both measured on an older ground truth); never described in the paper. |
-| Fixed-lag smoothing (`lag_steps`, `apply_lag_smoothing`, `flush_lag_buffer`) | Never described in the paper, and it *degrades* TW calibration on real data with tight HPL (ECE $0.04 \to 0.26$ at $L=20$). Use $L=0$ always. |
-| Bounded radius fallback (`should_expand_search_radius`, `MAX_SEARCH_RADIUS_DOUBLINGS`, `radius_doublings`, `fixed_search_radius`) | Was a second radius rule that doubled the disk until `min_candidates` was reached, so it fired on exactly the epochs the covariance model was least able to justify, and the candidates it recovered needed a PHMI weight the model had no principled way to assign. An epoch with no candidate in the disk is now dropped instead. |
-| Protection-level multiplier (search and PHMI boundary) | $r_i = k_\text{search}\mathrm{HPL}_i + \delta_\text{road}$ with $k_\text{search} = 1$ and $\delta_\text{road}$ the documented lane/map allowance. A further multiplicative knob on the radius, or a second independent multiplier on the PHMI classification boundary, is what the paper does not have. |
-| `MIN_SIGMA` floor / `map_error_std` / `min_gps_error_degrees` | Replaced by the covariance validity test plus the isotropic fallback above. |
-| Off-road background state | See the note under Level 3. |
-| Sequential H0 hypothesis test (`h0_prior_log_odds`, `h0_lambda`) | Never described in the paper. Removed in full: the recursion, `MatchedCandidate::h0_lambda`, `ResultConfig::write_h0_lambda`, the `mm_writer` column and the `<h0_lambda/>` field in the configs. The column was constant 1.0 for all 16155 real-data epochs; removing it leaves the other 16 columns bit-identical. |
+The CMM implementation is a direct translation of the paper's §III formulas. The following
+have been removed so that no behaviour needs to be justified outside those formulas; do not
+reintroduce them without a corresponding paper change: adaptive softmax temperature,
+fixed-lag smoothing, the bounded radius fallback, any further protection-level multiplier,
+the `MIN_SIGMA` floor, the off-road background state, and the sequential H0 test. The full
+table, with the measured reason for each removal, is in `memory/paper1_reference.md` §4.
 
 ---
 
@@ -252,7 +275,7 @@ The CMM implementation is a direct translation of the paper's §III formulas. Th
 
 This is the complete set of keys `CovarianceMapMatchConfig::load_from_xml` reads ([src/mm/cmm/cmm_algorithm.cpp:618](src/mm/cmm/cmm_algorithm.cpp#L618)). Any other key under `<parameters>` is silently ignored.
 
-**The "Real-data value" column is ablation-ladder row 5** — the paper's operating point, `input/config/paper1_cmm.xml`. It was row 7 until 2026-09-28 and some cells still carried row-7 numbers afterwards, which is the defect that memory `cmm-operating-point-is-row5-fixed-300m` records; the three that differ between the rows ($k_\text{search}$, $\delta_\text{road}$, $\mathrm{phmi}$) are marked below. When a cell here and `paper1_cmm.xml` disagree, the config is right.
+**The "Real-data value" column is ablation-ladder row 5** — the paper's operating point, `input/config/paper1_cmm_scalar.xml` (its sibling `paper1_cmm.xml` carries the same row-5 disk with the anisotropic emission, which paper 1 does not report). It was row 7 until 2026-09-28 and some cells still carried row-7 numbers afterwards, which is the defect that memory `cmm-operating-point-is-row5-fixed-300m` records; the three that differ between the rows ($k_\text{search}$, $\delta_\text{road}$, $\mathrm{phmi}$) are marked below. When a cell here and `paper1_cmm_scalar.xml` disagree, the config is right.
 
 | Parameter | Default | Real-data value | Meaning |
 |-----------|---------|-----------------|---------|
@@ -350,107 +373,15 @@ $12{,}865$ epochs with finite ground truth; $8.82$ candidates/epoch on both side
 
 **Six trajectories resolve the calibration contrasts and nothing else**
 (`bootstrap_real_metrics.py`: unit = trajectory, 2000 replicates, seed 20260928, shared
-draws; the exact $2^6$ sign-flip test runs alongside):
-
-| contrast | point | 95 % CI | verdict |
-|---|---|---|---|
-| $\alpha\beta$ − baseline $\delta$, ECE | −0.186 | [−0.230, −0.152] | **resolved** (p = 1/64) |
-| $\delta$ − baseline $\delta$, ECE | −0.152 | [−0.185, −0.127] | **resolved** (p = 1/64) |
-| $\alpha$ − baseline $\alpha$, ECE | −0.326 | [−0.398, −0.222] | resolved |
-| $\alpha\beta$ − baseline $\alpha\beta$, ECE | −0.190 | [−0.273, −0.074] | resolved — the fair pair |
-| $\alpha\beta$ − $\delta$, ECE | −0.035 | [−0.055, −0.017] | resolved — the ablation |
-| $\alpha\beta$ − $\delta$, BSS | +1.08 | [+0.52, +1.63] | resolved |
-| $\alpha$ − $\delta$, ECE | −0.003 | [−0.005, +0.000] | unresolved |
-| $\alpha\beta$ − baseline $\delta$, accuracy | +2.69 pp | [−0.62, +8.44] | unresolved (p = 14/64) |
-| $\alpha\beta$ − baseline $\delta$, AUC | −0.043 | [−0.177, +0.207] | unresolved |
-| $\alpha\beta$ − baseline $\delta$, pos. error | −0.34 m | [−0.88, −0.03] | resolved, marginal |
-
-**The 2×3 grid reads as a grid.** Column by column the proposed observation model beats
-the baseline on ECE at all three estimators. Row by row at the proposed model the trade is
-monotone: $\delta \to \alpha \to \alpha\beta$ moves ECE $.042 \to .038 \to .007$ and
-BSS $-0.81 \to -0.75 \to +0.27$ while AUC $.840 \to .838 \to .822$ and separation
-$.465 \to .429 \to .261$ fall — every step toward calibration is a step away from
-discrimination. At the baseline's model no such trade exists: smoothing repairs the
-posterior but not the native score.
-
-**Three findings travel with the numbers.** (1) The log score is negative-skill for every
-arm against its own base-rate constant ($-0.08$ to $-0.67$ relative): $31\,\%$ of the
-proposed arms' errors are reported above $0.9$ (baseline native $2\,\%$), so the mass is
-calibrated and the tail is not. (2) Post-hoc trajectory-LOO recalibration of the baseline
-was measured (`audit_tail_and_recal.py`: isotonic reaches ECE 0.040 with BSS still
-$-0.14$) and is deliberately not an arm of the paper — it lands at the filtering arm's
-level, not the smoothed arm's. (3) On the non-saturated subset (score < 1) the filtering
-arm's ECE is $0.110$ and the smoothed arm's $0.013$ with AUC $0.945$. The smoothed arm's
-false-alarm rate on correctly-matched epochs is $0.09\,\%$ at `tw < 0.5` and $0.00\,\%$
-at `tw < 0.1`, against $3.4\,\%$ and $1.2\,\%$ for the filtering arm; the baseline's
-native score alarms on $21.8\,\%$ and $2.6\,\%$ of its own correct epochs. Runtime:
-cmm 1.80 s vs fmm 1.24 s on the corpus; the backward pass adds nothing measurable.
-
-**Per-trajectory, the baseline's pooled AUC win is a pooling artefact**: it leads on
-traj 11 (0.918 against 0.662) and 13 (0.854 against 0.759) and trails on 21, 22 and 23
-(0.952 / 0.651 / 0.868 against 0.996 / 0.820 / 0.997). The smoothed posterior is still
-saturated (68–75 % of epochs at exactly 1.000), which is why its low ECE is bought partly
-by accuracy rather than by resolving residual error; it is the only audited score with a
-positive Brier skill against the constant at its own base rate.
-
-**CaMM output is content-deterministic but row-order nondeterministic** (OpenMP trajectory-block
-order differs per run), so an `md5` check on `cmm.csv` fails spuriously and any positional or
-`seq`-based join on it is unsafe; the FMM apps are byte-deterministic.
-
-**The candidate-count row no longer differentiates.** Both matchers search the same 300 m
-disk and retain the same 16 candidates, so the "3× candidate reduction" claimed by an
-earlier formulation of this work is gone. That is the price of the row-5 choice, and it is
-the reason the comparison is now a clean one: it isolates the observation model.
-
-**The heading term's constants are a fixed point, and are fitted not assumed.**
-`direction_kappa_scale` (c = 2(1−ρ)) and `direction_kappa_floor` (b, rad²) come from one
-regression, σ_θ² = c·(nᵀΣn)/|v|² + b, over correctly-matched gap-free steps
-(`experiments/scripts/fit_direction_kappa.py`). Because that sample is "epochs the matcher
-got right", it depends on the matcher's parameters, so the constants are a fixed point of
-match-then-fit; iterating converges in one step. Current values: **c = 0.227, b = 0.0084
-rad² (5.2°), z(b) = 9.0, n = 11,792, ρ = 0.89**. The earlier c = 0.36 came from regressing
-on 1/|v|² alone, which omits the per-epoch regressor and is biased — not a second estimate
-of the same quantity.
-
-**The term has a scope, and it is written into §III as Eq. (dir_snr).** The derivation
-linearises θ ≈ nᵀv/|v|, which needs |v| ≫ √(nᵀΣn). Haikou's median ratio is 27.9; the
-simulation corpus is 1.5–7.6 at every level (1 Hz at 12 m/s gives a ~12 m step while its
-fabricated position σ is ~1.5σ_ρ), so **the corpus cannot evaluate the direction term** and
-§IV says so rather than treating it as an ablation. Any corpus meant to test it needs a
-higher sample rate or a smaller position noise.
-
-**Three traps recorded here so they are not re-entered.**
-
-1. *The previous table in this file was a debug configuration.* It carried
-   `96.90 / 0.0437 / 0.6493` and `2.92` candidates/epoch, which is ladder row **7**
-   (HPL-adaptive `k_search=1`, `delta_road=13.5` m, `phmi=1e-5`) — a configuration §III of
-   the manuscript has not described since 2026-09-23, when that material moved to paper 2.
-   The candidate count was the only visible symptom. A related episode in the same week
-   recorded an off-network-state debug run (`bg_radius = 10000 m`) as the delivered
-   configuration; that state has since been removed from the code entirely. When a number
-   in this file changes, check `CovarianceMapMatchConfig::print()` in the run log before
-   believing it.
-
-2. *The join keys differ between the matchers.* CaMM result CSVs must be joined to
-   `processed/aligned.csv` on `(id, timestamp)`; their `seq` column restarts at 0 for each
-   sub-segment (traj 11 emits 2,695 rows whose `seq` stops at 1,239), so a `seq` join maps
-   traj 11 onto the wrong epochs. FMM is the mirror image — its `seq` is a valid index into
-   `uni_seq` and its `timestamp` is not per-epoch (traj 11: 2,696 rows, 25 distinct
-   values). Both are implemented in `real_final_tables.py:load_gt/load_run` with the
-   measurements that establish them.
-
-3. *A check file has an anchor, and a wrong anchor passes.* `verify_paper_numbers.py`
-   defaulted to `data/archive_20260928/final/` — the **anisotropic** run
-   (`use_mahalanobis=true`, `isotropic_emission_scale=0`, per its `cmm.log`) — while the
-   manuscript reports the scalar one. Every claim still passed, because the two runs differ
-   by less than `check()`'s relative tolerance; the per-trajectory figures in `PAPER` were
-   the anisotropic run's (96.69 / 98.74 / 97.74, All 98.13) where `tab:per_traj` prints the
-   scalar run's (96.65 / 98.69 / 97.79, All 98.11). A regression target that is *one run
-   off* is invisible in exactly the way a stale one is not: nothing is red, and the numbers
-   it defends are not the numbers in the paper. Anchored 2026-09-30 on
-   `data/archive_20260929/scalar/`, and `main()` now prints the **full** paths of the two
-   runs it reads, so the anchor is visible in every run's output rather than inferred from
-   the metric names. `exp_tp_attribution.py` had the same default and was fixed with it.
+draws; the exact $2^6$ sign-flip test runs alongside). The full interval table, the three
+findings (the log-score clip disclosure with its $10^{-6}$–$10^{-5}$ crossing; the
+measured-but-unshipped recalibration arm; the non-saturated subset), the per-trajectory
+pooling view, and the candidate-count, heading-term and scope notes are in
+`memory/paper1_reference.md` §1 — **read it before quoting or computing any number from
+this section**. The trap bottoms in one place: CaMM output is row-order nondeterministic
+(never `md5` it, never join on its `seq`); CaMM joins on `(id, timestamp)` and the FMM
+app on `seq -> timestamp`; and every check file must be anchored on
+`data/archive_20260929/scalar/`, because a one-run-off anchor passes silently.
 
 Evaluate with `experiments/scripts/real_final_tables.py` for the real data and
 `experiments/scripts/eval_sim_corpus.py` for the simulation corpus; all three take their
@@ -470,45 +401,12 @@ them produces a warning of any kind:
 | a macro doubled its backslash | `$\\mathbf{r}_i$`, `$\\boldsymbol{\\Sigma}_i$` — also in the emission model | absorbed without error |
 | a duplicated sentence fragment | `The evidence` + newline + `The evidence comes from one city…` | reads as prose |
 
-Guards, all worth running before a build is called good:
-
-```bash
-python3 - <<'EOF'
-import re
-p = 'docs/calib/calib.tex'
-s = open(p, encoding='utf-8').read()
-labels = set(re.findall(r'\\label\{([^}]*)\}', s))
-refs = set(re.findall(r'\\ref\{([^}]*)\}', s)) | set(re.findall(r'\\eqref\{([^}]*)\}', s))
-print('unresolved refs:', sorted(r for r in refs if r not in labels) or 'none')
-for env in ('table', 'table*', 'figure', 'figure*', 'equation', 'align', 'algorithm'):
-    o = len(re.findall(r'\\begin\{' + re.escape(env) + r'\}', s))
-    c = len(re.findall(r'\\end\{' + re.escape(env) + r'\}', s))
-    if o != c:
-        print(f'UNBALANCED {env}: {o} begin, {c} end')
-# a real TAB character -- \t in a regex is not the same thing
-for i, l in enumerate(s.split('\n'), 1):
-    if '\t' in l:
-        print(f'TAB on line {i}: {l.strip()[:70]}')
-# a doubled backslash before a macro name (\\mathbf, \\Sigma, ...)
-for i, l in enumerate(s.split('\n'), 1):
-    if re.search(r'\\\\[A-Za-z]', l):
-        print(f'DOUBLE BACKSLASH on line {i}: {l.strip()[:70]}')
-# a line that repeats the tail of the line before it
-ls = s.split('\n')
-for i in range(1, len(ls)):
-    a, b = ls[i - 1].strip(), ls[i].strip()
-    if b and a.endswith(b.split()[0]) and len(b.split()) > 2 and b[0].isupper():
-        print(f'possible duplicated fragment at line {i + 1}: {b[:60]}')
-# equations outside Section III is a standing requirement of this paper
-a, b = s.index(r'\section{Trustworthiness for Map Matching}'), s.index(r'\section{Simulation Study}')
-print('equations outside Section III:',
-      len(re.findall(r'\\begin\{(equation|align)\}', s[:a] + s[b:])))
-EOF
-```
-
-An unresolved-reference count of zero from the log means the *existing* `\ref`s resolved; it
-says nothing about a `\ref` that is no longer there. The same logic covers everything in the
-table: a clean log says the source is *parseable*, not that it is *correct*.
+Guards, all worth running before a build is called good — the script lives in
+`memory/paper1_reference.md` §5 (it checks unresolved refs against labels, environment
+balance, real TAB characters, doubled backslashes, duplicated fragments, and equations
+outside Section III). A clean log says the source is *parseable*, not that it is
+*correct*: an unresolved-reference count of zero from the log means the *existing* `\ref`s
+resolved and says nothing about a `\ref` that is no longer there.
 
 ## UBODT System
 

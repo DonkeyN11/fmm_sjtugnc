@@ -225,16 +225,24 @@ def print_sim(t):
           f'(median {float(np.median(d_da)):+.4f}) -- on this corpus the two are the same '
           f'score, which is why the real-vehicle gap between them is the informative one')
 
-    # BSS divides by p(1-p) at the arm's own base rate. In a cell that is 99.9 % correct
-    # that denominator is ~1e-3, so a Brier of 1e-3 reads as BSS = -1 and a Brier of
-    # 1e-2 reads as -10: the column is a ratio, and in these cells the ratio is large
-    # because the denominator is small, not because the score is bad.
+    # BSS divides by p(1-p) at the arm's own base rate. Written as -excess/p(1-p), where
+    # the excess is the arm's squared error over the constant's, it is the EXCESS a small
+    # denominator magnifies; an excess is a real quantity, so "the ratio is large because
+    # the denominator is small" is only half the sentence. What the small denominator
+    # takes away is the power to resolve the excess. Both halves matter and the manuscript
+    # says both (Section IV): where the base rate is thick enough the deficit is a property
+    # of the score, and in the thinnest cell here -- sigma_01, about a dozen wrong epochs
+    # in 10^4 and a denominator carrying a ~29 % relative standard error -- neither the
+    # level of the column nor the ordering within it can be tested.
     thin = [f'{c["cell"]} ({c["arms"]["alpha*beta"]["acc"]:.2f}%)' for c in t
             if c['arms']['alpha*beta']['acc'] > 99.0]
     if thin:
         print('  caution: in ' + ', '.join(thin) + ' the base rate is so close to 1 that')
-        print('           p(1-p) is ~1e-3, so BSS is a ratio with a tiny denominator and')
-        print('           ECE and AUC are the readable columns there.')
+        print('           p(1-p) is ~1e-3: BSS is a ratio whose small denominator magnifies')
+        print('           the arm\'s excess of squared error over the constant\'s, and ECE')
+        print('           and AUC are the readable columns. In the thinnest of them the')
+        print('           excess is itself unresolvable, which is not the same as absent:')
+        print('           where the base is thicker the deficit is the score\'s own.')
 
 
 def main():

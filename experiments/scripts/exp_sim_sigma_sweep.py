@@ -120,7 +120,14 @@ import verify_paper_numbers as v  # noqa: E402
 SIM = BASE / 'data/simulation'
 # Overridable, so a candidate operating point's sweep can be written beside the
 # delivered one instead of on top of it.
-OUTDIR = Path(os.environ.get('CMM_SIM_OUTDIR') or (BASE / 'data/archive_20260928/sim'))
+#
+# The default was `archive_20260928/sim` until 2026-10-09, an anisotropic-era corpus that
+# holds no `_cmm_scalar-viterbi.csv` at all. The fifteen cells of tab:sim_estimators were
+# produced from `archive_20260929/scalar/sim`, the same archive as the real-data runs, and
+# `three_estimator_tables.py` could not run unqualified because of it: it stopped with
+# "missing corpus runs for sigma_01". Delivered default now, same archive as CMM_OUTDIR,
+# so the real-data and corpus halves of a table cannot come from different runs.
+OUTDIR = Path(os.environ.get('CMM_SIM_OUTDIR') or (BASE / 'data/archive_20260929/scalar/sim'))
 LEVELS = ['sigma_01', 'sigma_05', 'sigma_10', 'sigma_15', 'sigma_20', 'sigma_25', 'sigma_30']
 
 NET = 'input/map/hainan/edges.shp'

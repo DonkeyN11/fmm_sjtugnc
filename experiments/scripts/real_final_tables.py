@@ -59,7 +59,17 @@ import verify_paper_numbers as v  # noqa: E402
 #
 # The defaults are the delivered operating point, so an unqualified invocation produces
 # exactly the numbers the manuscript reports.
-OUTDIR = Path(os.environ.get('CMM_OUTDIR') or (BASE / 'data/archive_20260928/final'))
+#
+# This line defaulted to `archive_20260928/final` until 2026-10-09. That is the
+# ANISOTROPIC run (`use_mahalanobis=true`, `isotropic_emission_scale=0`); the manuscript
+# reports the SCALAR one, `archive_20260929/scalar`. So the two sentences above were
+# false, and they were false in the way that hides itself: every table and figure that
+# quotes a number from `archive_20260929/scalar` was generated with `CMM_OUTDIR` set,
+# which is why nothing looked wrong, while an unqualified re-run silently read the other
+# archive -- `bootstrap_real_metrics.py` reproduced only 27 of the 42 cells of
+# tab:intervals that way, the BSS rows off by up to 0.024. Fixed here so that the
+# documented default and the delivered one are the same run.
+OUTDIR = Path(os.environ.get('CMM_OUTDIR') or (BASE / 'data/archive_20260929/scalar'))
 CMM_CONFIG = os.environ.get('CMM_CONFIG', 'paper1_cmm.xml')
 GPS = 'data/real_vehicle/hainan_06/cmm_input_points_k1.csv'
 ALIGNED = BASE / 'data/real_vehicle/hainan_06/processed/aligned.csv'

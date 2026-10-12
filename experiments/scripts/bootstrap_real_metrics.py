@@ -32,6 +32,7 @@ dataset cannot resolve the effect", which is a weaker and more accurate statemen
 Usage: python3 experiments/scripts/bootstrap_real_metrics.py [--n 2000]
 """
 import argparse
+import os
 import sys
 from pathlib import Path
 
@@ -44,6 +45,20 @@ import verify_paper_numbers as v  # noqa: E402
 
 SEED = 20260928
 
+# ANCHOR. The manuscript reports the SCALAR operating point, whose runs live in
+# `archive_20260929/scalar` (`use_mahalanobis=false`, `isotropic_emission_scale=1`). This
+# script used to reach its inputs through `R.OUTDIR`, whose default is
+# `archive_20260928/final` -- the ANISOTROPIC run. The table itself was generated with
+# `CMM_OUTDIR` set, so its numbers are the scalar run's; what was wrong is that a bare
+# `python3 bootstrap_real_metrics.py` silently reports the OTHER archive rather than
+# failing. Measured 2026-10-09 by asserting all 42 cells of tab:intervals both ways: on
+# the anisotropic archive 15 of 42 do not reproduce (BSS rows off by up to 0.024) and
+# nothing said so before the assertion block below existed; on the scalar archive all 42
+# agree. This is the failure `verify_paper_numbers.py` documents at its own `CMM_CSV` and
+# was re-anchored for on 2026-09-30; the same fix was missed here.
+# `CMM_OUTDIR` still overrides, for reading another archive deliberately.
+OUTDIR = Path(os.environ.get('CMM_OUTDIR') or (BASE / 'data/archive_20260929/scalar'))
+
 # (label, run file, score column, join through the seq->timestamp map?)
 #
 # Named by ESTIMATOR, not by matcher, because that is the axis the paper ablates: the
@@ -53,12 +68,12 @@ SEED = 20260928
 # tw_use_viterbi is a config key rather than an output column; the baseline's is not,
 # because fmm.csv is already run at tw_use_viterbi=true.
 ARMS = [
-    ('proposed delta', R.OUTDIR / 'cmm_viterbi.csv', 'trustworthiness', False),
-    ('proposed alpha', R.OUTDIR / 'cmm.csv', 'trustworthiness', False),
-    ('proposed ab', R.OUTDIR / 'cmm.csv', 'trustworthiness_smoothed', False),
-    ('baseline delta', R.OUTDIR / 'fmm.csv', 'trustworthiness', True),
-    ('baseline alpha', R.OUTDIR / 'fmm_post.csv', 'trustworthiness', True),
-    ('baseline ab', R.OUTDIR / 'fmm.csv', 'trustworthiness_smoothed', True),
+    ('proposed delta', OUTDIR / 'cmm_viterbi.csv', 'trustworthiness', False),
+    ('proposed alpha', OUTDIR / 'cmm.csv', 'trustworthiness', False),
+    ('proposed ab', OUTDIR / 'cmm.csv', 'trustworthiness_smoothed', False),
+    ('baseline delta', OUTDIR / 'fmm.csv', 'trustworthiness', True),
+    ('baseline alpha', OUTDIR / 'fmm_post.csv', 'trustworthiness', True),
+    ('baseline ab', OUTDIR / 'fmm.csv', 'trustworthiness_smoothed', True),
 ]
 
 
@@ -195,6 +210,83 @@ def main():
         pt = point[a][key] - point[b][key]
         crosses = 'SPANS 0' if lo <= 0.0 <= hi else 'excludes 0'
         print(f'  {name:<11} {a} - {b}: {pt:+8.4f}  [{lo:+8.4f}, {hi:+8.4f}]  {crosses}')
+
+    # ---- tab:intervals, asserted -------------------------------------------------
+    # The 24 marginal cells (table top) and the 18 paired-difference rows (table bottom).
+    # Nothing checked any of these before 2026-10-09: verify_paper_numbers.py asserts the
+    # point ECEs and the accuracies but not one interval endpoint, which is how this
+    # script's wrong archive anchor (see ANCHOR above) moved the BSS rows by up to 0.024
+    # in silence. The tolerance is the project's own, the one verify_paper_numbers.check
+    # uses, so a cell that is off is marked the same way here as anywhere else.
+    def _band(paper_v):
+        return max(0.005, 0.001 * abs(paper_v)), max(0.02, 0.005 * abs(paper_v))
+
+    def _status(paper_v, comp_v):
+        d = abs(comp_v - paper_v)
+        te, to = _band(paper_v)
+        return '✅ EXACT' if d <= te else '🟡 OK' if d <= to else '⚠️  REVIEW'
+
+    PAPER_MARGINAL = {
+        ('proposed delta', 'ece'): (0.042, 0.022, 0.070),
+        ('proposed delta', 'bss'): (-0.81, -1.45, -0.10),
+        ('proposed delta', 'auc'): (0.840, 0.740, 0.956),
+        ('proposed delta', 'sep'): (0.465, 0.297, 0.666),
+        ('proposed alpha', 'ece'): (0.038, 0.022, 0.065),
+        ('proposed alpha', 'bss'): (-0.75, -1.36, -0.09),
+        ('proposed alpha', 'auc'): (0.838, 0.737, 0.955),
+        ('proposed alpha', 'sep'): (0.429, 0.273, 0.622),
+        ('proposed ab', 'ece'): (0.007, 0.004, 0.016),
+        ('proposed ab', 'bss'): (0.27, 0.14, 0.45),
+        ('proposed ab', 'auc'): (0.822, 0.710, 0.957),
+        ('proposed ab', 'sep'): (0.261, 0.175, 0.367),
+        ('baseline delta', 'ece'): (0.193, 0.158, 0.241),
+        ('baseline delta', 'bss'): (-2.08, -11.99, -0.55),
+        ('baseline delta', 'auc'): (0.865, 0.714, 0.936),
+        ('baseline delta', 'sep'): (0.442, 0.109, 0.567),
+        ('baseline alpha', 'ece'): (0.364, 0.280, 0.425),
+        ('baseline alpha', 'bss'): (-4.78, -30.10, -1.04),
+        ('baseline alpha', 'auc'): (0.789, 0.727, 0.842),
+        ('baseline alpha', 'sep'): (0.333, 0.259, 0.397),
+        ('baseline ab', 'ece'): (0.197, 0.089, 0.277),
+        ('baseline ab', 'bss'): (-2.71, -20.23, -0.12),
+        ('baseline ab', 'auc'): (0.788, 0.717, 0.899),
+        ('baseline ab', 'sep'): (0.352, 0.222, 0.622),
+    }
+    PAPER_PAIRED = [  # same order as PAIRS above
+        (-0.0348, -0.0550, -0.0167), (+1.0816, +0.5176, +1.6275), (-0.0186, -0.0384, +0.0075),
+        (-0.0316, -0.0504, -0.0170), (+1.0226, +0.5295, +1.5387), (-0.0164, -0.0356, +0.0096),
+        (-0.0032, -0.0051, +0.0004), (-0.0021, -0.0034, -0.0010),
+        (-0.1864, -0.2299, -0.1524), (+2.3559, +0.7101, +12.3746), (-0.0434, -0.1767, +0.2073),
+        (+2.6857, -0.6235, +8.4417), (-0.3359, -0.8849, -0.0307),
+        (-0.1516, -0.1849, -0.1267), (-0.0248, -0.1446, +0.2022),
+        (-0.1903, -0.2727, -0.0735), (+2.9807, +0.2761, +20.6315),
+        (-0.3258, -0.3983, -0.2217),
+    ]
+
+    print('\n=== tab:intervals, asserted cell by cell ===')
+    print(f'{"cell":<34}{"paper point":>12}{"comp":>10}{"Δ":>10}   '
+          f'{"paper interval":>22}{"comp interval":>22}  status')
+    print('-' * 130)
+    n_bad = 0
+    for (lab, k), (pp, plo, phi) in PAPER_MARGINAL.items():
+        p = point[lab][k]
+        clo, chi = np.percentile(boot[lab][k], [2.5, 97.5])
+        st = max((_status(pp, p), _status(plo, clo), _status(phi, chi)),
+                 key=lambda s: ('EXACT', 'OK', 'REVIEW').index(s.split()[-1]))
+        n_bad += st.endswith('REVIEW')
+        print(f'{lab + " " + k.upper():<34}{pp:>12.4f}{p:>10.4f}{p - pp:>+10.4f}   '
+              f'[{plo:+.4f},{phi:+.4f}]    [{clo:+.4f},{chi:+.4f}]    {st}')
+    print('-' * 130)
+    for (a, b, name, k), (pp, plo, phi) in zip(PAIRS, PAPER_PAIRED):
+        d = np.array(boot[a][k]) - np.array(boot[b][k])
+        lo, hi = np.percentile(d, [2.5, 97.5])
+        p = point[a][k] - point[b][k]
+        st = max((_status(pp, p), _status(plo, lo), _status(phi, hi)),
+                 key=lambda s: ('EXACT', 'OK', 'REVIEW').index(s.split()[-1]))
+        n_bad += st.endswith('REVIEW')
+        print(f'{a + " - " + b + " " + name:<34}{pp:>12.4f}{p:>10.4f}{p - pp:>+10.4f}   '
+              f'[{plo:+.4f},{phi:+.4f}]    [{lo:+.4f},{hi:+.4f}]    {st}')
+    print(f'{len(PAPER_MARGINAL) + len(PAPER_PAIRED)} cells checked, {n_bad} need review')
 
     # Exact sign-flip test. Six clusters make the percentile interval coarse; a
     # sign-flip test on the per-trajectory differences needs no approximation at all,
