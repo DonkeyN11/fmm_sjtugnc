@@ -55,6 +55,8 @@ void FMM::CONFIG::ResultConfig::print() const {
     ss << "posterior_entropy ";
   if (output_config.write_trustworthiness_smoothed)
     ss << "trustworthiness_smoothed ";
+  if (output_config.write_online)
+    ss << "online ";
   if (output_config.point_mode)
     ss << "point_mode ";
   SPDLOG_INFO("ResultConfig");
@@ -176,6 +178,8 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_xml(
         config.output_config.write_posterior_entropy = true;
       } else if (v.first == "trustworthiness_smoothed") {
         config.output_config.write_trustworthiness_smoothed = true;
+      } else if (v.first == "online") {
+        config.output_config.write_online = true;
       } else if (v.first == "point_mode") {
         config.output_config.point_mode = true;
       } else if (v.first == "all") {
@@ -294,6 +298,9 @@ FMM::CONFIG::ResultConfig FMM::CONFIG::ResultConfig::load_from_arg(
     }
     if (dict.find("trustworthiness_smoothed") != dict.end()) {
       config.output_config.write_trustworthiness_smoothed = true;
+    }
+    if (dict.find("online") != dict.end()) {
+      config.output_config.write_online = true;
     }
     if (dict.find("point_mode") != dict.end()) {
       config.output_config.point_mode = true;

@@ -220,6 +220,55 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   // the filtering and the smoothed score come off one forward pass with the
   // candidate held fixed on the Viterbi path.
   smooth_tg(&tg);
+  const auto &layers_fmm = tg.get_layers();
+  // ------------------------------------------------------------------
+  // ONLINE DECISION RECORD. i_on_t = argmax_j delta_t(j) is the Viterbi argmax
+  // read at layer t, which contains z_{1:t} only -- a causal decision. It is NOT
+  // the backtraced i*_t, which may see later fixes; the two disagree exactly at
+  // the epochs a later observation would have overturned. delta_on and alpha_on
+  // are read at the SAME node, so the two online arms differ only in the
+  // statistic fed into the softmax.
+  // ------------------------------------------------------------------
+  std::vector<std::vector<double>> layer_online;
+  layer_online.reserve(layers_fmm.size());
+  {
+      const double NEG_INF_O = -std::numeric_limits<double>::infinity();
+      auto lse_online = [](const std::vector<double> &v, double neg) {
+          double m = neg;
+          for (double x : v) if (x > m) m = x;
+          if (m == neg) return neg;
+          double s = 0.0;
+          for (double x : v) if (x > neg) s += std::exp(x - m);
+          return m + std::log(s);
+      };
+      for (size_t li = 0; li < layers_fmm.size(); ++li) {
+          const TGLayer &layer = layers_fmm[li];
+          int best = -1;
+          double best_d = NEG_INF_O;
+          std::vector<double> dterms, aterms;
+          dterms.reserve(layer.size());
+          aterms.reserve(layer.size());
+          for (size_t b = 0; b < layer.size(); ++b) {
+              if (layer[b].cumu_prob > best_d) { best_d = layer[b].cumu_prob; best = static_cast<int>(b); }
+              if (layer[b].cumu_prob > NEG_INF_O) dterms.push_back(layer[b].cumu_prob);
+              if (layer[b].forward_cumu > NEG_INF_O) aterms.push_back(layer[b].forward_cumu);
+          }
+          const double d_z = lse_online(dterms, NEG_INF_O);
+          const double a_z = lse_online(aterms, NEG_INF_O);
+          double delta_on = 0.0, alpha_on = 0.0;
+          int eid = -1;
+          if (best >= 0) {
+              if (d_z > NEG_INF_O) delta_on = std::exp(best_d - d_z);
+              if (a_z > NEG_INF_O && layer[best].forward_cumu > NEG_INF_O)
+                  alpha_on = std::exp(layer[best].forward_cumu - a_z);
+              if (layer[best].c != nullptr && layer[best].c->edge != nullptr)
+                  eid = layer[best].c->edge->id;
+          }
+          layer_online.push_back({static_cast<double>(eid), delta_on, alpha_on, d_z, a_z,
+                                  static_cast<double>(layer.size())});
+      }
+  }
+
   MatchedCandidatePath matched_candidate_path(tg_opath.size());
   std::transform(tg_opath.begin(), tg_opath.end(),
                  matched_candidate_path.begin(),
@@ -251,6 +300,7 @@ MatchResult FastMapMatch::match_traj(const Trajectory &traj,
   }
   MatchResult match_result{
     traj.id, status, matched_candidate_path, opath, cpath, indices, mgeom};
+  match_result.online_layer = std::move(layer_online);
   match_result.candidate_details = std::move(candidate_details);
   match_result.original_indices = std::move(original_indices);
   return match_result;

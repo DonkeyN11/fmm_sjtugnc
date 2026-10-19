@@ -66,6 +66,11 @@ struct OutputConfig {
   bool write_delta_entropy = false; /**< if true, output delta entropy (information gain H_prior - H_posterior in bits, CMM only) */
   bool write_posterior_entropy = false; /**< if true, output posterior entropy (H_posterior in bits, CMM only) */
   bool write_trustworthiness_smoothed = false; /**< if true, output the smoothed posterior P(state_t | obs_{1:T}) beside the filtering one (both matchers) */
+  bool write_online = false; /**< if true, output the ONLINE decision record per epoch:
+                                 (i_on_edge_id, delta_on, alpha_on, log_sum_delta, log_sum_alpha, n_cand).
+                                 i_on_t = argmax_j delta_t(j) is the Viterbi argmax at layer t, which
+                                 sees only z_{1:t}; it differs from the backtraced i*_t whenever a later
+                                 observation would have changed the decision. Diagnostic only. */
   bool point_mode = true; /**< if true, output in point mode (one row per matched point) */
 };
 

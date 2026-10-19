@@ -51,6 +51,7 @@ void CSVMatchResultWriter::write_header() {
   if (config_.write_delta_entropy) header += ";delta_entropy";
   if (config_.write_posterior_entropy) header += ";posterior_entropy";
   if (config_.write_trustworthiness_smoothed) header += ";trustworthiness_smoothed";
+  if (config_.write_online) header += ";online";
   if (config_.write_candidates) header += ";candidates";
   if (config_.write_length) header += ";length";
   if (config_.write_duration) header += ";duration";
@@ -554,6 +555,9 @@ void CSVMatchResultWriter::write_result(
       }
     }
   }
+  if (config_.write_online) {
+    buf << ";-999";
+  }
   if (config_.write_candidates) {
     buf << ";";
     if (!result.candidate_details.empty()) {
@@ -882,6 +886,11 @@ void CSVMatchResultWriter::write_point_mode(
         buf << ";-999";
       }
 
+      // online: -999 (no online record on a failed epoch)
+      if (config_.write_online) {
+        buf << ";-999";
+      }
+
 
       // candidates: output from result.candidate_details if available
       // candidate_details is aligned with original_indices positionally, not with
@@ -1083,6 +1092,21 @@ void CSVMatchResultWriter::write_point_mode(
       buf << ";" << mc.trustworthiness_smoothed;
     }
 
+    if (config_.write_online) {
+      // (i_on_edge_id, delta_on, alpha_on, log_sum_delta, log_sum_alpha, n_cand)
+      std::ostringstream obuf;
+      obuf << "(";
+      if (i < static_cast<int>(result.online_layer.size()) &&
+          result.online_layer[i].size() == 6) {
+        const auto &v = result.online_layer[i];
+        obuf << std::fixed << std::setprecision(0) << v[0] << ",";
+        obuf << std::fixed << std::setprecision(10) << v[1] << "," << v[2] << ","
+             << v[3] << "," << v[4] << ",";
+        obuf << std::fixed << std::setprecision(0) << v[5];
+      }
+      obuf << ")";
+      buf << ";" << obuf.str();
+    }
 
     if (config_.write_candidates) {
       buf << ";(";

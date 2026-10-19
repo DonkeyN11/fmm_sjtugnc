@@ -115,6 +115,23 @@ struct MatchResult {
   std::vector<double> sp_distances; /**< per-point shortest path distances (aligned with observations) */
   std::vector<double> eu_distances; /**< per-point Euclidean distances between observations */
   std::vector<int> original_indices; /**< original trajectory point indices for filtered points */
+  /**
+   * Per-epoch ONLINE decision record, aligned with opt_candidate_path and written
+   * only when the `online` output field is requested. Six values per epoch:
+   *
+   *   0  i_on_edge_id   edge id of argmax_j delta_t(j) -- the decision the online
+   *                     (causal) Viterbi would emit at epoch t, using z_{1:t} only
+   *   1  delta_on       delta_t(i_on) / sum_j delta_t(j)      (per-layer softmax of the Viterbi score)
+   *   2  alpha_on       alpha_t(i_on) / sum_j alpha_t(j)      (per-layer softmax of the forward sum)
+   *   3  log_sum_delta  log sum_j delta_t(j), the normaliser of column 1
+   *   4  log_sum_alpha  log sum_j alpha_t(j), the normaliser of column 2
+   *   5  n_cand         number of candidates in the layer
+   *
+   * Columns 1 and 2 are read at the SAME node, so the two online arms differ only
+   * in the statistic fed into the softmax -- the same discipline the paper applies
+   * to the three batch arms.
+   */
+  std::vector<std::vector<double>> online_layer;
 };
 
 #ifndef SWIG
