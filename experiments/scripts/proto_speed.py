@@ -195,7 +195,10 @@ def fit_speed_model(per, eval_id):
             if i % 10 or i < 2 or i >= len(seqs) - 2:
                 continue
             a, b = seqs[i - 2], seqs[i + 2]
-            v = math.hypot(P[b][0] - P[a][0], P[b][1] - P[a][1]) / max(TS[b] - TS[a], 1e-6)
+            path = sum(math.hypot(P[seqs[j + 1]][0] - P[seqs[j]][0],
+                                  P[seqs[j + 1]][1] - P[seqs[j]][1])
+                       for j in range(i - 2, i + 2))
+            v = path / max(TS[b] - TS[a], 1e-6)
             c = candidates(P[s][0], P[s][1], edges_xy, R_CAND, 1)
             if not c or c[0][3] > 3.0:
                 continue
@@ -234,7 +237,9 @@ def run_window(tag, rows, edges_xy, lon0, lat0, kx, ky, spd_model, glob, use_spe
     v = np.zeros(T)
     for t in range(T):
         a, b = max(0, t - 2), min(T - 1, t + 2)
-        v[t] = (math.hypot(*(z[b] - z[a])) / max(ts[b] - ts[a], 1e-6)) if b > a else 0.0
+        if b > a:                      # PATH speed, not chord: a U-turn makes the chord
+            path = sum(math.hypot(*(z[j + 1] - z[j])) for j in range(a, b))
+            v[t] = path / max(ts[b] - ts[a], 1e-6)
 
     ns = len(S_GRID)
     cands = [candidates(z[t][0], z[t][1], edges_xy, R_CAND, K_MAX) for t in range(T)]
