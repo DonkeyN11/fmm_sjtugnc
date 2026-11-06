@@ -71,12 +71,12 @@ def load_edges(bbox):
         names = [d.GetFieldDefn(i).GetName() for i in range(d.GetFieldCount())]
         idf = "osmid" if "osmid" in names else names[0]
         cache = []
-        for f in ly:
+        for row_i, f in enumerate(ly):
             g = f.GetGeometryRef()
             if g is None:
                 continue
             hw = norm_class(f.GetField("highway") if "highway" in names else None)
-            eid = str(f.GetField(idf))
+            eid = str(row_i)   # gt_edge in aligned.csv is the shapefile ROW INDEX, not osmid
             for gi in range(g.GetGeometryCount() or 1):
                 gg = g.GetGeometryRef(gi) if g.GetGeometryCount() else g
                 if gg is None:
@@ -223,7 +223,8 @@ def fit_speed_model(per, eval_id):
     return model, (mu_g, sd_g)
 
 
-def run_window(tag, rows, edges_xy, lon0, lat0, kx, ky, spd_model, glob, use_speed):
+def run_window(tag, rows, edges_xy, lon0, lat0, kx, ky, spd_model, glob, use_speed,
+               drop_x0=False):
     T = len(rows)
     z = np.array([to_xy(float(r["obs_x"]), float(r["obs_y"]), lon0, lat0, kx, ky) for r in rows])
     ts = np.array([float(r["timestamp"]) for r in rows])
@@ -306,6 +307,14 @@ def run_window(tag, rows, edges_xy, lon0, lat0, kx, ky, spd_model, glob, use_spe
                 ss = A[t, j].sum()
             A[t, j] /= ss
     A[0] = 1.0 / (Kmax + 1)
+    if drop_x0:                       # MST-style model: no background state at all
+        A[:, :, Kmax] = 0.0
+        A[:, Kmax, :] = 0.0
+        A[:, Kmax, Kmax] = 1.0
+        for _t in range(T):
+            _ss = A[_t, :Kmax, :Kmax].sum(axis=1, keepdims=True)
+            A[_t, :Kmax, :Kmax] = A[_t, :Kmax, :Kmax] / np.maximum(_ss, 1e-300)
+        logE[:, Kmax, :] = -1e9
 
     prior_s = np.exp(-0.5 * (np.log(S_GRID) / S_PRIOR_SD) ** 2)
     As = np.zeros((ns, ns))
@@ -345,55 +354,85 @@ def run_window(tag, rows, edges_xy, lon0, lat0, kx, ky, spd_model, glob, use_spe
     ld_m = np.max(ld, axis=2)
     p00 = np.exp(ld_m[:, Kmax] - logsumexp(ld_m, axis=1))
 
+    ld_all = np.exp(ld_m - logsumexp(ld_m, axis=1)[:, None])
+    pt_d = ld_all[:, :Kmax].max(axis=1)
+    pt_a = pa[:, :Kmax, :].sum(axis=2).max(axis=1)
+    pt_ab = pab[:, :Kmax, :].sum(axis=2).max(axis=1)
+    topid = []
+    for t in range(T):
+        if not cands[t]:
+            topid.append("")
+            continue
+        marg = pa[t, :len(cands[t]), :].sum(axis=1)
+        topid.append(cands[t][int(np.argmax(marg))][0])
     best_d = np.array([c[0][3] if c else np.nan for c in cands])
     best_c = [c[0][6] if c else "-" for c in cands]
     return dict(t=np.array([int(r["uni_seq"]) for r in rows]), v=v, bd=best_d, cls=best_c,
                 p0d=p00, p0a=pa[:, Kmax, :].sum(axis=1), p0ab=pab[:, Kmax, :].sum(axis=1),
+                ptd=pt_d, pta=pt_a, ptab=pt_ab, topid=topid,
                 gt=[r.get("gt_edge", "") for r in rows])
+
+
+def _score(cfg, labels):
+    P = np.column_stack([cfg["ptd"], cfg["p0d"], 1.0 - cfg["ptd"] - cfg["p0d"]])
+    P = np.clip(P, 1e-12, None)
+    P = P / P.sum(axis=1, keepdims=True)
+    keys = ("top", "x0", "other")
+    Y = np.array([[1.0 if l == k else 0.0 for k in keys] for l in labels])
+    return (-np.log((P * Y).sum(axis=1)), ((P - Y) ** 2).sum(axis=1))
 
 
 def main():
     per = read_rows()
     print("ids:", sorted(per), "| eval:", EVAL_ID)
-    model, glob = fit_speed_model(per, EVAL_ID)
+    model = {"primary": (math.log(18.98), 0.62),
+             "motorway": (math.log(22.11), 0.35),
+             "motorway_link": (math.log(17.72), 0.35)}
+    glob = (math.log(17.97), 0.63)
+    print("speed model CACHED from the fitted run; global", glob)
     rows_all = per[EVAL_ID]
     lon0, lat0, kx, ky, bbox = frame(rows_all)
     edges_xy = build_edges(load_edges(bbox), lon0, lat0, kx, ky)
     print("edges in bbox: %d" % len(edges_xy))
 
-    dump = []
+    CFGS = [("no_x0 MST-style", dict(drop_x0=True, use_speed=False)),
+            ("x0 no speed", dict(drop_x0=False, use_speed=False)),
+            ("x0 + speed", dict(drop_x0=False, use_speed=True))]
+    res = {}
+    keeps = {}
     for tag, lo, hi in WINDOWS:
-        seq = [i for i in range(lo - PAD, hi + PAD + 1) if i in rows_all]
-        if not seq:
-            print("!! no rows", tag)
-            continue
-        rr = [rows_all[i] for i in seq]
-        off = run_window(tag, rr, edges_xy, lon0, lat0, kx, ky, model, glob, False)
-        on = run_window(tag, rr, edges_xy, lon0, lat0, kx, ky, model, glob, True)
-        T = len(seq)
-        sl = slice(6, max(7, T - 6))
-        bd = off["bd"][sl]
-        near, far = bd < 3.0, bd > 8.0
-        print("\n=== %s (%d epochs) ===" % (tag, T))
-        for nm, r in (("speed OFF", off), ("speed ON ", on)):
-            f = r["p0d"][sl]
-            print("  %s  p0_d: mean=%.3f | near=%.3f | far=%.3f | frac(p0>0.5)=%.0f%%"
-                  % (nm, f.mean(), f[near].mean() if near.any() else float("nan"),
-                     f[far].mean() if far.any() else float("nan"),
-                     100.0 * float((f > 0.5).mean())))
-        for i in range(T):
-            dump.append((tag, off["t"][i], float(off["bd"][i]), float(off["v"][i]),
-                         off["cls"][i], float(off["p0d"][i]), float(on["p0d"][i]),
-                         float(off["p0a"][i]), float(on["p0a"][i]),
-                         float(off["p0ab"][i]), float(on["p0ab"][i]), off["gt"][i]))
-    with open(OUT_CSV, "w", newline="") as fh:
-        w = csv.writer(fh)
-        w.writerow(["window", "t", "bestD", "v", "cls", "p0d_off", "p0d_on",
-                    "p0a_off", "p0a_on", "p0ab_off", "p0ab_on", "gt_edge"])
-        for r in dump:
-            w.writerow([r[0], r[1], "%.4f" % r[2], "%.3f" % r[3], r[4]]
-                       + ["%.6f" % x for x in r[5:11]] + [r[11]])
-    print("\ndumped %d rows -> %s" % (len(dump), OUT_CSV))
+        padseq = [i for i in range(lo - PAD, hi + PAD + 1) if i in rows_all]
+        rrp = [rows_all[i] for i in padseq]
+        keeps[tag] = [j for j, i in enumerate(padseq) if lo <= i <= hi]
+        for nm, kw in CFGS:
+            res[(tag, nm)] = run_window(tag, rrp, edges_xy, lon0, lat0, kx, ky,
+                                        model, glob, **kw)
+
+    print("\n== three-class proper scores on the evaluation epochs (pad excluded) ==")
+    print("   %-6s %-16s %4s %10s %8s | %s" % ("win", "model", "n", "logscore", "Brier",
+                                              "split by outcome"))
+    for tag, _, _ in WINDOWS:
+        keep = keeps[tag]
+        for nm, _ in CFGS:
+            r = res[(tag, nm)]
+            gt = [(r["gt"][j] or "").strip() for j in keep]
+            tid = [r["topid"][j] for j in keep]
+            labels = []
+            for g, tp in zip(gt, tid):
+                if g in ("0", "0.0", ""):
+                    labels.append("x0")
+                elif any(g == x.strip() for x in tp.split(",")):
+                    labels.append("top")
+                else:
+                    labels.append("other")
+            sub = dict(t=r["t"][keep], ptd=r["ptd"][keep], p0d=r["p0d"][keep])
+            ls, br = _score(sub, labels)
+            lab = np.array(labels)
+            mt, mx = lab == "top", lab == "x0"
+            print("   %-6s %-16s %4d %10.3f %8.4f | y=top n=%2d ls=%7.3f  y=x0 n=%2d ls=%s"
+                  % (tag, nm, len(labels), ls.mean(), br.mean(), int(mt.sum()),
+                     ls[mt].mean() if mt.any() else float("nan"), int(mx.sum()),
+                     ("%7.3f" % ls[mx].mean()) if mx.any() else "   -   "))
 
 
 if __name__ == "__main__":
